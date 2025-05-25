@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tauri + SvelteKit App</title>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover" class="app-root" >
+    <div class="app-root">%sveltekit.body%</div>
+  </body>
+</html>
+
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: sans-serif;
+  }
+
+  body, .app-root {
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .navbar {
+    height: 48px;
+    flex: 0 0 48px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #ccc;
+    display: flex;
+    align-items: center;
+    padding: 0 1rem;
+    box-sizing: border-box;
+  }
+
+  .main-content {
+    flex: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    flex: none;
+    width: 260px;
+    min-width: 120px;
+    max-width: 50vw;
+    background: #fff;
+    border-right: 1px solid #ccc;
+    box-sizing: border-box;
+    resize: horizontal;
+    overflow-y: auto;
+    overflow-x: hidden;
+    height: 100%;
+    max-height: 100%;
+  }
+
+  .sidebar-category {
+    padding: 5px;
+    text-align: center;
+    margin-bottom: 5px;
+    background: #f6f6f6;
+  }
+
+  .sidebar-item {
+    margin: 0;
+    padding-bottom: 3px;
+    text-align: center;
+    p {
+      margin: 0;
+    }
+    img {
+      max-height: 100px;
+      max-width: 100px;
+      margin: 0;
+    }
+  }
+
+  .editor {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 1rem;
+    box-sizing: border-box;
+    overflow: auto;
+    background: #fff;
+  }
+
+  .footer {
+    height: 40px;
+    flex: 0 0 40px;
+    background: #f8f9fa;
+    border-top: 1px solid #ccc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+  }
+
+  /* Navbar dropdowns (pure CSS) */
+  .navbar-nav {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+  }
+
+  .nav-item {
+    position: relative;
+  }
+
+  .nav-link {
+    display: block;
+    padding: 1rem;
+    color: #333;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .nav-link:hover,
+  .nav-link:focus {
+    background: #e2e6ea;
+  }
+
+  .dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 160px;
+    background: #fff;
+    border: 1px solid #ccc;
+    z-index: 1000;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .nav-item:hover .dropdown-menu,
+  .nav-item:focus-within .dropdown-menu {
+    display: block;
+  }
+
+  .dropdown-item {
+    padding: 0.5rem 1rem;
+    color: #333;
+    text-decoration: none;
+    display: block;
+    white-space: nowrap;
+  }
+
+  .dropdown-item:hover,
+  .dropdown-item:focus {
+    background: #f8f9fa;
+  }
+</style>
