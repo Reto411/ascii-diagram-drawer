@@ -13,6 +13,13 @@
 </html>
 
 <style>
+  .noselect, .noselect * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -ms-user-select: none !important;
+    -moz-user-select: none !important;
+  }
+
   html, body {
     height: 100%;
     margin: 0;
@@ -49,18 +56,21 @@
   }
 
   .sidebar {
-    flex: none;
-    width: 260px;
     min-width: 120px;
     max-width: 50vw;
     background: #fff;
     border-right: 1px solid #ccc;
     box-sizing: border-box;
-    resize: horizontal;
     overflow-y: auto;
-    overflow-x: hidden;
     height: 100%;
-    max-height: 100%;
+  }
+
+  .sidebar-resizer {
+    width: 5px;
+    cursor: col-resize;
+    background: #eee;
+    border-right: 1px solid #ccc;
+    z-index: 10;
   }
 
   .sidebar-category {
@@ -89,8 +99,36 @@
     min-width: 0;
     padding: 1rem;
     box-sizing: border-box;
-    overflow: auto;
+    overflow: hidden;
+    min-height: 0;
+    height: 100%;
     background: #fff;
+  }
+
+  .editor-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    margin-bottom: 0.5em;
+  }
+
+  .editor-grid {
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    background-color: #fff;
+    background-image:
+            linear-gradient(to right, #e0e0e0 1px, transparent 1px),
+            linear-gradient(to bottom, #e0e0e0 1px, transparent 1px);
+    position: relative;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+    outline: none;
+    cursor: crosshair;
+    user-select: none;
+    padding: 0;
   }
 
   .footer {
