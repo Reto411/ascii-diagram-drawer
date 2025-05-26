@@ -1,19 +1,16 @@
-<script>
+<script lang="ts">
     import {invoke} from "@tauri-apps/api/core";
 
     let sidebarWidth = $state(260);
-    let isResizing = false;
-
+    let isResizing = $state(false);
     let gridSize = $state(32);
     let offsetX = $state(0);
     let offsetY = $state(0);
     let isPanning = $state(false);
-    let lastX, lastY;
+    let lastX =  $state(0.0)
+    let lastY = $state(0.0);
 
-    let name = $state("");
-    let greetMsg = $state("");
-
-    function handleWheel(event) {
+    function handleWheel(event : WheelEvent) {
         if (event.ctrlKey) {
             event.preventDefault();
             const oldGridSize = gridSize;
@@ -29,7 +26,7 @@
         }
     }
 
-    function handleMouseDown(event) {
+    function handleMouseDown(event : MouseEvent) {
         if (event.button === 1) { // Middle mouse button
             event.preventDefault();
             isPanning = true;
@@ -40,7 +37,7 @@
             document.body.style.cursor = 'grab';
         }
 
-        function handleMouseMove(event) {
+        function handleMouseMove(event : MouseEvent) {
             if (isPanning) {
                 offsetX += event.clientX - lastX;
                 offsetY += event.clientY - lastY;
@@ -49,7 +46,7 @@
             }
         }
 
-        function handleMouseUp(event) {
+        function handleMouseUp(event : MouseEvent) {
             if (event.button === 1) {
                 isPanning = false;
                 window.removeEventListener('mousemove', handleMouseMove);
@@ -59,7 +56,7 @@
         }
     }
 
-    function startResize(e) {
+    function startResize() {
         document.body.classList.add('noselect');
         isResizing = true;
         document.body.style.cursor = 'col-resize';
@@ -87,71 +84,52 @@
         gridSize = Math.max(gridSize / 1.25, 8);
     }
 
-    async function greet(event) {
-        event.preventDefault();
-        // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-        greetMsg = await invoke("greet", {name});
+    let errors = $state([]);
+    let shape_collections = $state([]);
+    async function load_all_shape_collections()
+    {
+        await invoke("route_load_all_shape_collections")
+            .then((res) => shape_collections = shape_collections.concat(res))
+            .catch((e) => errors.push(e.toString()));
     }
+    load_all_shape_collections();
 </script>
 
+{#if errors && errors.length > 0 }
+    <div class="errors">
+            <ul>
+                {#each errors as error }
+                    <li>{error}</li>
+                {/each}
+            </ul>
+    </div>
+{/if}
 <main class="main-content">
     <div class="sidebar" style="width: {sidebarWidth}px !important;">
         <div class="sidebar-category" style="border-bottom: 5px #333333; margin: 0;">
         Templates
         </div>
-        <div>
+        {#each shape_collections as collection}
             <div class="sidebar-category">
-                Class 1
+                { collection["name"] }
             </div>
-            <div class="sidebar-item">
-                <img src="/box.png" alt="the image to insert">
-                <p>Box</p>
-            </div>
-            <div class="sidebar-item">
-                <img src="/box.png" alt="the image to insert">
-                <p>Box</p>
-            </div>
-            <div class="sidebar-item">
-                <img src="/box.png" alt="the image to insert">
-                <p>Box</p>
-            </div>
-            <div class="sidebar-item">
-                <img src="/box.png" alt="the image to insert">
-                <p>Box</p>
-            </div>
-        </div>
-        <div>
-            <div class="sidebar-category">
-                Class 2
-            </div>
-            <div class="sidebar-item">
-                <img src="/box.png" alt="the image to insert">
-                <p>Box</p>
-            </div>
-            <div class="sidebar-item">
-                <img src="/box.png" alt="the image to insert">
-                <p>Box</p>
-            </div>
-            <div class="sidebar-item">
-                <img src="/box.png" alt="the image to insert">
-                <p>Box</p>
-            </div>
-            <div class="sidebar-item">
-                <img src="/box.png" alt="the image to insert">
-                <p>Box</p>
-            </div>
-        </div>
+            {#each collection["shapes"] as shape }
+                <div class="sidebar-item">
+                    {@html shape['preview'] }
+                    <p>{shape["name"]}</p>
+                </div>
+            {/each}
+        {/each}
     </div>
-    <div class="sidebar-resizer" aria-orientation="vertical" role="separator"  onmousedown={startResize}></div>
+    <div class="sidebar-resizer" role="presentation"  onmousedown={startResize}></div>
     <div class="editor">
         <div class="editor-toolbar">
             <button onclick={zoomOut}>-</button>
             <span>Grid: {Math.round(gridSize)}px</span>
             <button onclick={zoomIn}>+</button>
         </div>
-        <div onwheel="{handleWheel}" onmousedown={handleMouseDown} class="editor-grid" style="
+        <div role="presentation" onwheel="{handleWheel}" onmousedown={handleMouseDown} class="editor-grid" style="
              --grid-size: {gridSize}px; background-size: var(--grid-size) var(--grid-size);">
         </div>
     </div>
-    <p>{greetMsg}</p>
 </main>

@@ -7,16 +7,16 @@
 <nav class="navbar">
     <ul class="navbar-nav">
         <li class="nav-item dropdown">
-            <a href="#" class="nav-link">File</a>
+            <p class="nav-link">File</p>
             <ul class="dropdown-menu">
-                <li><a class="dropdown-item" href="#">New</a></li>
-                <li><a class="dropdown-item" href="#">Save as ...</a></li>
+                <li><p class="dropdown-item">New</p></li>
+                <li><p class="dropdown-item">Save as ...</p></li>
             </ul>
         </li>
         <li class="nav-item dropdown">
-            <a href="#" class="nav-link">Settings</a>
+            <p class="nav-link">Settings</p>
             <ul class="dropdown-menu">
-                <li><a class="dropdown-item" href="#">Preferences</a></li>
+                <li><p class="dropdown-item" >Preferences</p></li>
             </ul>
         </li>
     </ul>

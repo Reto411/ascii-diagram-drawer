@@ -40,6 +40,23 @@
           "character": "|"
         }
       ]
+    },
+    {
+      "name": "Circle",
+      "type": "diagram_object",
+      "representation": [
+        "       ______     ",
+        "     ,'      `.   ",
+        "    /          \\  ",
+        "   |            | ",
+        "   |            | ",
+        "    \\          /  ",
+        "     `.______.'   "
+        ],
+      "resize-width-indexes": [
+      ],
+      "resize-height-indexes": [
+      ]
     }
   ]
 }
