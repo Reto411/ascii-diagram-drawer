@@ -4,6 +4,12 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+include = [
+    "src/**",
+    "res/**",
+    "Cargo.toml",
+    "Cargo.lock"
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -22,4 +28,6 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+bytes = "1.10.1"
+svgbob = "0.7.6"
 

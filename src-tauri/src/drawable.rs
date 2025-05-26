@@ -1,0 +1,20 @@
+use std::todo;
+use bytes::Bytes;
+
+pub trait Drawable{
+    fn get_name(&self) -> String;
+    fn draw(&self) -> String;
+    fn save(&self);
+    fn expand(&self);
+    fn shrink(&self);
+    fn render(&self) -> String;
+}
+
+/*
+struct DiagramObject {
+    name: String,
+    x: u64,
+    y: u64,
+    representation: Vec<Vec<u64>>,
+    image: bytes::Bytes,
+}*/

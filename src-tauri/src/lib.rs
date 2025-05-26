@@ -1,7 +1,17 @@
+use std::ptr::null;
+
+pub mod drawable;
+mod shape;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn get_all_shapes() {
+
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

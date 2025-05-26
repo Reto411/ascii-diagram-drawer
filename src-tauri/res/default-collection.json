@@ -1,0 +1,45 @@
+{
+  "$schema": "drawable-collection-schema.json",
+  "file-type": "drawable-collection",
+  "name": "Basic Shapes",
+  "shapes": [
+    {
+      "name": "Box",
+      "type": "diagram_object",
+      "representation": [
+        "+-+",
+        "| |",
+        "+-+"
+      ],
+      "resize-width-indexes": [
+        {
+          "x": 1,
+          "y": 0,
+          "character": "-"
+        },
+        {
+          "x": 1,
+          "y": 1,
+          "character": " "
+        },
+        {
+          "x": 1,
+          "y": 2,
+          "character": "-"
+        }
+      ],
+      "resize-height-indexes": [
+        {
+          "x": 0,
+          "y": 1,
+          "character": "|"
+        },
+        {
+          "x": 2,
+          "y": 1,
+          "character": "|"
+        }
+      ]
+    }
+  ]
+}
