@@ -1,15 +1,15 @@
 
-use crate::{ResultLoadAllShapeCollections, ShapeTemplateCollection, ShapeTemplate, ErrorInformation};
+use crate::messages;
 use crate::shape::ShapeCollection;
 
-pub(crate) fn to_result_route_load_all_shape_collections(load_result : Result<Vec<ShapeCollection>, std::io::Error>) -> Result<ResultLoadAllShapeCollections, String> {
+pub(crate) fn to_result_route_load_all_shape_collections(load_result : Result<Vec<ShapeCollection>, std::io::Error>) -> Result<messages::events::AllShapeCollectionsReloaded, String> {
     match load_result {
         Ok(collections) => {
             let shape_collections = collections.into_iter().map(|col| {
-                ShapeTemplateCollection {
+                messages::types::ShapeTemplateCollection {
                     name: col.name,
                     shapes: col.shapes.into_iter().map(|shape| {
-                        ShapeTemplate {
+                        messages::types::ShapeTemplate {
                             id: shape.name.clone(), // Use a real unique id if available
                             name: shape.name,
                             prerender: shape.preview,
@@ -18,7 +18,7 @@ pub(crate) fn to_result_route_load_all_shape_collections(load_result : Result<Ve
                 }
             }).collect();
 
-            Ok(ResultLoadAllShapeCollections {
+            Ok(messages::events::AllShapeCollectionsReloaded {
                 shape_collections
             })
         }

@@ -1,5 +1,6 @@
 <script lang="ts">
-    import {ResultLoadAllShapeCollections, ShapeTemplateCollection} from "../gen/shape_template.js";
+    import {AllShapeCollectionsReloaded} from "../gen/events/AllShapeCollectionsReloaded";
+    import { ShapeTemplateCollection } from "../gen/types/ShapeTemplate.js";
     import {callAndReceiveAsync} from "../utils/communication.js";
     import {showError} from "$lib/stores/error";
 
@@ -7,7 +8,7 @@
     async function load_all_shape_collections()
     {
         try {
-            const res = await callAndReceiveAsync("route_load_all_shape_collections", ResultLoadAllShapeCollections);
+            const res = await callAndReceiveAsync("route_load_all_shape_collections", AllShapeCollectionsReloaded);
             shape_collections = res.shapeCollections;
         }
         catch (e : unknown)

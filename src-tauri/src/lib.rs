@@ -1,9 +1,17 @@
-include!(concat!(env!("OUT_DIR"), "/ascii_diagram_drawer.rs"));
 use std::io::Error;
 use std::path::{Path, PathBuf};
 use log::info;
 use prost::Message;
 use crate::shape::ShapeCollection;
+
+pub mod messages {
+    pub mod events{
+        include!(concat!(env!("OUT_DIR"), "/ascii_diagram_drawer.events.rs"));
+    }
+   pub mod types {
+       include!(concat!(env!("OUT_DIR"), "/ascii_diagram_drawer.types.rs"));
+   }
+}
 
 pub mod drawable;
 mod shape;
