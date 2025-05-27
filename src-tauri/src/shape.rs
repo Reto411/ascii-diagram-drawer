@@ -1,3 +1,5 @@
+use std::fs;
+use std::path::Path;
 use serde::{Deserialize, Serialize};
 use crate::drawable::Drawable;
 use svgbob;
@@ -8,6 +10,11 @@ pub async fn load_all_shape_collections() -> Result<Vec<shape::ShapeCollection>,
     let _current_path = std::fs::read_dir("./")?;
     for entry in std::fs::read_dir(RESOURCE_PATH)? {
         let file = entry?.path();
+        // ignore dirs
+        if file.is_dir() {
+            continue;
+        }
+
         // Ignore files that have "schema" in their filename
         if let Some(filename) = file.file_name().and_then(|n| n.to_str()) {
             if filename.contains("schema") {
@@ -17,7 +24,7 @@ pub async fn load_all_shape_collections() -> Result<Vec<shape::ShapeCollection>,
         let reader = std::fs::File::open(file)?;
         let mut collection : ShapeCollection = serde_json::from_reader(reader)?;
         for mut item in &mut collection.shapes {
-            item.preview = item.render();
+            item.preview = item.render()?;
         }
         collections.push(collection);
     }
@@ -38,7 +45,8 @@ pub struct Shape {
     pub name: String,
     #[serde(rename = "type")]
     pub shape_type: String,
-    pub representation: Vec<String>,
+    #[serde(rename = "representation-filepath")]
+    pub representation_filepath: String,
     #[serde(rename = "resize-width-indexes")]
     pub resize_width_indexes: Vec<ResizeIndex>,
     #[serde(rename = "resize-height-indexes")]
@@ -75,8 +83,9 @@ impl Drawable for Shape {
         todo!()
     }
     
-    fn render(&self) -> String {
-        let assembled = self.representation.join("\n");
-        svgbob::to_svg(assembled.as_str())
+    fn render(&self) -> Result<String, std::io::Error> {
+        let path = Path::new(RESOURCE_PATH).join(&self.representation_filepath);
+        let representation = fs::read_to_string(path)?;
+        Ok(svgbob::to_svg(representation.as_str()))
     }
 }

@@ -21,7 +21,7 @@ async fn route_load_all_shape_collections() -> Result<Vec<shape::ShapeCollection
     let result = shape::load_all_shape_collections().await;
     match result {
         Ok(_) => { Ok(result.unwrap()) }
-        Err(_) => { Err("Error loading shape collections".to_string()) }
+        Err(error) => { Err(format!("Error loading shape collections. Detailed information: {}", error.to_string())) }
     }
 }
 

@@ -15,9 +15,8 @@
         "properties": {
           "name": { "type": "string" },
           "type": { "type": "string", "enum": ["diagram_object"] },
-          "representation": {
-            "type": "array",
-            "items": { "type": "string" }
+          "representation-filepath": {
+            "type": "string"
           },
           "resize-width-indexes": {
             "type": "array",
@@ -47,7 +46,7 @@
         "required": [
           "name",
           "type",
-          "representation",
+          "representation-filepath",
           "resize-width-indexes",
           "resize-height-indexes"
         ]

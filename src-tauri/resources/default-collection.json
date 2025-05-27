@@ -6,11 +6,7 @@
     {
       "name": "Box",
       "type": "diagram_object",
-      "representation": [
-        "+-+",
-        "| |",
-        "+-+"
-      ],
+      "representation-filepath": "./default-collection-shapes/box.shape",
       "resize-width-indexes": [
         {
           "x": 1,
@@ -44,15 +40,7 @@
     {
       "name": "Circle",
       "type": "diagram_object",
-      "representation": [
-        "       ______     ",
-        "     ,'      `.   ",
-        "    /          \\  ",
-        "   |            | ",
-        "   |            | ",
-        "    \\          /  ",
-        "     `.______.'   "
-        ],
+      "representation-filepath": "./default-collection-shapes/circle.shape",
       "resize-width-indexes": [
       ],
       "resize-height-indexes": [

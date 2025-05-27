@@ -6,7 +6,7 @@ pub trait Drawable{
     fn save(&self);
     fn expand(&self);
     fn shrink(&self);
-    fn render(&self) -> String;
+    fn render(&self) -> Result<String, std::io::Error>;
 }
 
 /*
