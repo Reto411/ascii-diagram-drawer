@@ -22,6 +22,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+prost-build = "0.13"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -32,3 +33,6 @@ bytes = "1.10.1"
 svgbob = "0.7.6"
 log = "0.4.27"
 
+# communication
+prost = "0.13"
+prost-types = "0.13"

@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package ascii_diagram_drawer;
+
+message ResultLoadAllShapeCollections
+{
+  repeated ShapeTemplateCollection shape_collections = 1;
+}
+
+message ShapeTemplateCollection {
+  string name = 1;
+  repeated ShapeTemplate shapes = 2;
+}
+
+message ShapeTemplate {
+  string id = 1;
+  string name = 2;
+  string prerender = 3;
+}
+
+
+message ErrorInformation {
+  string description = 1;
+}

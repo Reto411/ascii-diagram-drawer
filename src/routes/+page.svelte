@@ -1,5 +1,7 @@
 <script lang="ts">
     import {invoke} from "@tauri-apps/api/core";
+    import {ResultLoadAllShapeCollections, ShapeTemplateCollection} from "../gen/shape_template";
+    import {callAndReceiveAsync} from "../utils/communication";
 
     let sidebarWidth = $state(260);
     let isResizing = $state(false);
@@ -84,13 +86,28 @@
         gridSize = Math.max(gridSize / 1.25, 8);
     }
 
-    let errors = $state([]);
-    let shape_collections = $state([]);
+    function base64ToUint8Array(base64: string): Uint8Array {
+        const binary = atob(base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    let errors = $state<String[]>([]);
+    let shape_collections = $state<ShapeTemplateCollection[]>([]);
     async function load_all_shape_collections()
     {
-        await invoke("route_load_all_shape_collections")
-            .then((res) => shape_collections = shape_collections.concat(res))
-            .catch((e) => errors.push(e.toString()));
+        try {
+            const res = await callAndReceiveAsync("route_load_all_shape_collections", ResultLoadAllShapeCollections);
+            shape_collections = res.shapeCollections;
+        }
+        catch (e : unknown)
+        {
+            errors.push(String(e))
+        }
     }
     load_all_shape_collections();
 </script>
@@ -111,12 +128,12 @@
         </div>
         {#each shape_collections as collection}
             <div class="sidebar-category">
-                { collection["name"] }
+                { collection.name }
             </div>
-            {#each collection["shapes"] as shape }
+            {#each collection.shapes as shape }
                 <div class="sidebar-item">
-                    {@html shape['preview'] }
-                    <p>{shape["name"]}</p>
+                    {@html shape.prerender }
+                    <p>{shape.name}</p>
                 </div>
             {/each}
         {/each}

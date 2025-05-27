@@ -1,10 +1,13 @@
+include!(concat!(env!("OUT_DIR"), "/ascii_diagram_drawer.rs"));
 use std::io::Error;
 use std::path::{Path, PathBuf};
 use log::info;
+use prost::Message;
 use crate::shape::ShapeCollection;
 
 pub mod drawable;
 mod shape;
+mod message_utlis;
 
 // Constants
 const RESOURCE_PATH : &str = "./resources/";
@@ -17,12 +20,10 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-async fn route_load_all_shape_collections() -> Result<Vec<shape::ShapeCollection>, String> {
+async fn route_load_all_shape_collections() -> Result<Vec<u8>, String> {
     let result = shape::load_all_shape_collections().await;
-    match result {
-        Ok(_) => { Ok(result.unwrap()) }
-        Err(error) => { Err(format!("Error loading shape collections. Detailed information: {}", error.to_string())) }
-    }
+    let proto = message_utlis::to_result_route_load_all_shape_collections(result)?;
+    Ok(proto.encode_to_vec())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
