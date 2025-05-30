@@ -1,22 +1,25 @@
 <script lang="ts">
     import {AllShapeCollectionsReloaded} from "../gen/events/AllShapeCollectionsReloaded";
     import { ShapeTemplateCollection } from "../gen/types/ShapeTemplate.js";
-    import {callAndReceiveAsync} from "../utils/communication.js";
+    import {ShapeCollectionLoaded} from "../gen/events/ShapeCollectionLoaded.js";
+    import {callAndReceiveAsync, listenBackendEvent} from "../utils/communication.js";
     import {showError} from "$lib/stores/error";
+    import {onMount} from "svelte";
+    import {invoke} from "@tauri-apps/api/core";
 
     let shape_collections = $state<ShapeTemplateCollection[]>([]);
-    async function load_all_shape_collections()
-    {
-        try {
-            const res = await callAndReceiveAsync("route_load_all_shape_collections", AllShapeCollectionsReloaded);
-            shape_collections = res.shapeCollections;
-        }
-        catch (e : unknown)
-        {
-            showError(String(e))
-        }
-    }
-    load_all_shape_collections();
+
+    onMount(() => {
+        shape_collections = []
+        listenBackendEvent('ShapeCollectionLoaded', ShapeCollectionLoaded, (event: ShapeCollectionLoaded) => {
+            if (event.shapeCollection != undefined) {
+                if (!shape_collections.some(c => c.name === event.shapeCollection!.name)) {
+                    shape_collections.push(event.shapeCollection);
+                }
+            }
+        });
+        invoke("initialize");
+    });
 </script>
 
 <div class="sidebar-templates">

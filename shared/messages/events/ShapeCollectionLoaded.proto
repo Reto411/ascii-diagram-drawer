@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+import "types/ShapeTemplate.proto";
+
+package ascii_diagram_drawer.events;
+
+message ShapeCollectionLoaded
+{
+  types.ShapeTemplateCollection shape_collection = 1;
+}

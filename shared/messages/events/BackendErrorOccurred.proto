@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package ascii_diagram_drawer.events;
+
+message BackendErrorOccurred {
+  string error_message = 1;
+}

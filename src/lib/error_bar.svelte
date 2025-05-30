@@ -1,7 +1,15 @@
 <script lang="ts">
     import {writable} from "svelte/store";
-    import {errorBar, ErrorBarType} from "$lib/stores/error";
+    import {errorBar, ErrorBarType, showError} from "$lib/stores/error";
+    import {onMount} from "svelte";
+    import {BackendErrorOccurred} from "../gen/events/BackendErrorOccurred";
+    import {listenBackendEvent} from "../utils/communication";
 
+    onMount(() => {
+        listenBackendEvent('BackendErrorOccurred', BackendErrorOccurred,(event) => {
+            showError(event.errorMessage)
+        });
+    });
 </script>
 
 {#if $errorBar.visible}

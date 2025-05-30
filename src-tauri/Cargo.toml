@@ -37,3 +37,4 @@ log = "0.4.27"
 # communication
 prost = "0.13"
 prost-types = "0.13"
+tokio = "1.45.1"
