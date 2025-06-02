@@ -42,8 +42,8 @@ async fn initialize(app: AppHandle, session: tauri::State<'_, Mutex<Session>>) -
             "Failed to initialize session: {}",
             res.err().unwrap().to_string()
         );
-        let error = clone_io_error_to_backend_error_occurred(error_message);
-        app.emit("BackendErrorOccurred", error.encode_to_vec());
+        let error_event = clone_io_error_to_backend_error_occurred(error_message);
+        app.emit(error_event.0, error_event.1.encode_to_vec());
     }
 
     for mut shape_template_collection in &mut lock_session.loaded_shape_template_collections {
@@ -52,7 +52,7 @@ async fn initialize(app: AppHandle, session: tauri::State<'_, Mutex<Session>>) -
         match res {
             Ok(res) => {
                 let collection = clone_to_event_message_collection_loaded(&res);
-                let res = app.emit("ShapeCollectionLoaded", collection.encode_to_vec());
+                let res = app.emit(collection.0, collection.1.encode_to_vec());
                 if(res.is_err())
                 {
                     panic!("Failed to emit ShapeCollectionLoaded event: {}", res.err().unwrap().to_string());
@@ -67,8 +67,8 @@ async fn initialize(app: AppHandle, session: tauri::State<'_, Mutex<Session>>) -
                         .unwrap_or("<invalid path>"),
                     e
                 );
-                let error = clone_io_error_to_backend_error_occurred(error_message);
-                let res = app_handle.emit("BackendErrorOccurred", error.encode_to_vec());
+                let error_event = clone_io_error_to_backend_error_occurred(error_message);
+                let res = app_handle.emit(error_event.0, error_event.1.encode_to_vec());
                 if(res.is_err())
                 {
                     panic!("Failed to emit BackendErrorOccurred event: {}", res.err().unwrap().to_string());
@@ -95,7 +95,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![route_load_all_shape_collections, initialize])
+        .invoke_handler(tauri::generate_handler![initialize])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

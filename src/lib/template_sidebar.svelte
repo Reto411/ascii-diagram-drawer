@@ -6,12 +6,11 @@
     import {showError} from "$lib/stores/error";
     import {onMount} from "svelte";
     import {invoke} from "@tauri-apps/api/core";
-
     let shape_collections = $state<ShapeTemplateCollection[]>([]);
 
     onMount(() => {
         shape_collections = []
-        listenBackendEvent('ShapeCollectionLoaded', ShapeCollectionLoaded, (event: ShapeCollectionLoaded) => {
+        listenBackendEvent(ShapeCollectionLoaded, (event: ShapeCollectionLoaded) => {
             if (event.shapeCollection != undefined) {
                 if (!shape_collections.some(c => c.name === event.shapeCollection!.name)) {
                     shape_collections.push(event.shapeCollection);

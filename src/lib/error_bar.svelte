@@ -6,7 +6,7 @@
     import {listenBackendEvent} from "../utils/communication";
 
     onMount(() => {
-        listenBackendEvent('BackendErrorOccurred', BackendErrorOccurred,(event) => {
+        listenBackendEvent(BackendErrorOccurred,(event) => {
             showError(event.errorMessage)
         });
     });

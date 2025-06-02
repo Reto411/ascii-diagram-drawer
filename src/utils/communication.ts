@@ -25,11 +25,10 @@ export async function callAndReceiveAsync<T>(
  * @param handler - Function to call with the decoded message.
  */
 export function listenBackendEvent<T>(
-    eventName: string,
-    message: { decode: (bytes: Uint8Array) => T },
+    message: { $type: string, decode: (bytes: Uint8Array) => T },
     handler: (msg: T) => void
 ) {
-    listen<Uint8Array>(eventName, (event) => {
+    listen<Uint8Array>(message.$type.split(".").at(-1)!, (event) => {
         try {
             // Convert payload to Uint8Array if necessary
             let bytes: Uint8Array;
@@ -43,7 +42,7 @@ export function listenBackendEvent<T>(
             const msg = message.decode(bytes);
             handler(msg);
         } catch (e) {
-            console.error(`Failed to decode event ${eventName}:`, e);
+            console.error(`Failed to decode event ${message.$type.split(".").at(-1)!}:`, e);
         }
     });
 }

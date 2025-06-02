@@ -4,7 +4,7 @@
   "description": "",
   "type": "module",
   "scripts": {
-    "gen:proto": "npx protoc --plugin=protoc-gen-ts_proto=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=src/gen/ --ts_proto_opt=esModuleInterop=true,forceLong=string -I ./shared/messages ./shared/messages/**/*.proto",
+    "gen:proto": "npx protoc --ts_proto_opt=outputTypeAnnotations=true --plugin=protoc-gen-ts_proto=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=src/gen/ --ts_proto_opt=esModuleInterop=true,forceLong=string -I ./shared/messages ./shared/messages/**/*.proto",
     "dev": "npm run gen:proto && vite dev",
     "build": "npm run gen:proto && vite build",
     "preview": "npm run gen:proto && vite preview",
