@@ -47,7 +47,8 @@
 2. **Plain-text output.** The result is pure monospace text that can be copied and pasted anywhere: terminals, READMEs, chat, commit messages, docs.
 3. **Reusable shape templates.** Users can define their own shapes and group them into collections for reuse across diagrams.
 4. **Local desktop app.** Runs as a local desktop application (Tauri) — no server, works offline.
-5. **Low learning curve.** Minimal UI: a template sidebar to pick shapes from and an editor canvas to compose the diagram.
+5. **Vector/raster export.** Unlike the previous project, diagrams can be rendered as SVG (vector) and PNG (raster) in addition to plain text.
+6. **Low learning curve.** Minimal UI: a template sidebar to pick shapes from and an editor canvas to compose the diagram.
 
 ### 1.2 Quality Goals (top-level)
 
