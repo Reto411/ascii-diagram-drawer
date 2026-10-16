@@ -14,7 +14,7 @@
 
 | § | Section | Status |
 |---|---------|--------|
-| 1 | Introduction and Context | ⬜ empty / 🟨 partial / ✅ done |
+| 1 | Introduction and Context | 🟨 (1.1 draft) |
 | 2 | Architecture Vision | ⬜ |
 | 3 | Business Scope | ⬜ |
 | 4 | Stakeholders and Users | ⬜ |
@@ -41,7 +41,13 @@
 
 > *Project goals in 3–7 bullet points. What must the finished product be able to do? Why does it exist?*
 
-- [TBD]
+**Draft — pending confirmation:**
+
+1. **Draw ASCII diagrams visually.** Users compose diagrams by placing, moving, and resizing predefined shapes (boxes, circles, …) on a canvas — instead of hand-typing box-drawing characters.
+2. **Plain-text output.** The result is pure monospace text that can be copied and pasted anywhere: terminals, READMEs, chat, commit messages, docs.
+3. **Reusable shape templates.** Users can define their own shapes and group them into collections for reuse across diagrams.
+4. **Local desktop app.** Runs as a local desktop application (Tauri) — no server, works offline.
+5. **Low learning curve.** Minimal UI: a template sidebar to pick shapes from and an editor canvas to compose the diagram.
 
 ### 1.2 Quality Goals (top-level)
 
