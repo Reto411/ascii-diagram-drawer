@@ -46,7 +46,7 @@
 1. **Draw ASCII diagrams visually.** Users compose diagrams by placing, moving, and resizing predefined shapes (boxes, circles, …) on a canvas — instead of hand-typing box-drawing characters.
 2. **Plain-text output.** The result is pure monospace text that can be copied and pasted anywhere: terminals, READMEs, chat, commit messages, docs.
 3. **Reusable shape templates.** Users can define their own shapes and group them into collections for reuse across diagrams.
-4. **Local desktop app.** Runs as a local desktop application (Tauri) — no server, works offline.
+4. **OS-independent GUI.** A single codebase that compiles to all major platforms (Windows, macOS, Linux) and is also available as a web GUI — no platform-specific reimplementations. (Replaces the previous Tauri-based approach.)
 5. **Vector/raster export.** Unlike the previous project, diagrams can be rendered as SVG (vector) and PNG (raster) in addition to plain text.
 6. **Low learning curve.** Minimal UI: a template sidebar to pick shapes from and an editor canvas to compose the diagram.
 
@@ -190,7 +190,7 @@ Conflicts & trade-offs:
 
 ### 5.3 Technical Framework Conditions
 
-> *Mandated or assumed technology: e.g. SvelteKit + TypeScript + Vite (inferred from repo — confirm), Node.js version, build tooling, package manager.*
+> *Mandated or assumed technology: GUI framework must target native desktop (Windows/macOS/Linux) **and** web/WASM from one codebase (see §1.1 objective 4). Framework choice: [TBD — open]. Build tooling, language version: [TBD].*
 
 - [TBD]
 
