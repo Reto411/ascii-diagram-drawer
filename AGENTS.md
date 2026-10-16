@@ -1,3 +1,11 @@
+---
+title: agent-instructions
+description: canonical instructions for AI agents in this repo — behavior rules, project summary, conventions; read before any task
+scope: whole repository
+status: stable
+updated: 2026-10-17
+---
+
 # AGENTS.md — ascii-diagram-drawer
 
 Instructions for AI coding agents (pi) working in this repository.
@@ -46,6 +54,25 @@ Key goals (from `doc/arch/arc42.md` §1.1):
 - Follow `cargo fmt` and `cargo clippy` (deny warnings in CI once CI exists).
 - **Code coverage target: 80%.** Measure with `cargo tarpaulin` (or agreed tool) and don't land changes that drop coverage below the target.
 - **The rendering logic must be unit-testable without a GUI.** Keep it in platform-independent Rust crates (shared by all GUI targets), driven by plain data in → text/SVG/PNG out, with no windowing or event-loop dependencies. GUI code stays thin.
+
+## Writing docs/instructions for agents
+
+Context is limited (~100k). When writing any file intended for agents (instructions, notes, skills, docs in `.agents/`):
+
+- **Always start with a machine-readable YAML frontmatter header** so an agent can decide whether to read the full file without loading it:
+
+  ```yaml
+  ---
+  title: short-file-title
+  description: one line — what this is and when to read it
+  scope: which part of the project it covers
+  status: draft | stable | superseded
+  updated: YYYY-MM-DD
+  ---
+  ```
+
+- Keep files short and scannable; put the most decision-relevant content first.
+- Mark outdated content `status: superseded` instead of deleting history that may still be referenced.
 
 ## Working agreements for agents
 
