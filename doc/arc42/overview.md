@@ -34,6 +34,6 @@ updated: 2026-10-17
 | 11 | Cross-cutting Concerns | [11](11-cross-cutting-concerns.md) | ⬜ |
 | 12 | Concepts | [12](12-concepts.md) | 🟨 (C1) |
 | 13 | Building Blocks (detail) | [13](13-building-blocks-detail.md) | ⬜ |
-| 14 | Identification of Important Requirements | [14](14-important-requirements.md) | ⬜ |
+| 14 | Identification of Important Requirements | [14](14-important-requirements.md) | 🟨 (FR/NFR draft) |
 | 15 | Risks and Technical Risks | [15](15-risks.md) | ⬜ |
 | 16 | Glossary | [16](16-glossary.md) | ⬜ |
