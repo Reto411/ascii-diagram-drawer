@@ -159,36 +159,7 @@ Conflicts & trade-offs:
 | [TBD] | | |
 
 ### 4.2 List of Users / User Groups
-
-| User group | Description | Primary need |
-|------------|-------------|--------------|
-| [TBD] | | |
-
-### 4.3 Requirements from the Perspective of Stakeholders/Users
-
-> *Free-form list of expectations per stakeholder/user group (will be formalized in §14).*
-
-- [TBD]
-
----
-
-## 5. Constraints
-
-> *All hard constraints, grouped by category.*
-
-### 5.1 Legal Constraints
-
-> *Licensing (project license + dependency policy), copyright, data protection.*
-
-- [TBD]
-
-### 5.2 Boundary Conditions
-
-> *Input size limits, supported character sets / Unicode, terminal/screen sizes, browser support.*
-
-- [TBD]
-
-### 5.3 Technical Framework Conditions
+1nical Framework Conditions
 
 > *Mandated or assumed technology: GUI framework must target native desktop (Windows/macOS/Linux) **and** web/WASM from one codebase (see §1.1 objective 4). Framework choice: [TBD — open]. Build tooling, language version: [TBD].*
 
