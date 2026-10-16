@@ -74,6 +74,16 @@ Context is limited (~100k). When writing any file intended for agents (instructi
 - Keep files short and scannable; put the most decision-relevant content first.
 - Mark outdated content `status: superseded` instead of deleting history that may still be referenced.
 
+### Concepts
+
+Whenever work introduces or clarifies a **concept** (a domain term, mechanism, or reusable idea — e.g. "shape template", "grid cell", "render pipeline"), create a concept doc:
+
+- Location: `doc/concepts/<kebab-case-name>.md`
+- Must carry the standard frontmatter header (`scope` = the concept's area)
+- Content: one-line definition, why it exists, how it works/behaves, relations to other concepts (link them), and where it is implemented (once code exists)
+- One concept per file; update the existing doc instead of creating a duplicate
+- Keep arc42 §12 (Concepts) as the index: add a one-line pointer per concept there
+
 ## Working agreements for agents
 
 - **Always `git add` any files you create or modify** so new work is staged immediately.
