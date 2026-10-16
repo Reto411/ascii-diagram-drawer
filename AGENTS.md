@@ -31,6 +31,7 @@ A tool to **draw ASCII diagrams visually**: users place, move, and resize predef
 
 - The single source of truth for design decisions is the **arc42 documentation**: `doc/arc42/` — one markdown file per chapter, [ADR 002](doc/adr/002-mkdocs-documentation-site.md). `doc/arc42/overview.md` holds the progress tracker.
 - Documentation is an **MkDocs** site (`mkdocs.yml` at repo root, `docs_dir: doc`). New doc pages should be added to its `nav`.
+- **Diagrams in documentation use PlantUML** (text-based, in ```plantuml fences) until ascii-diagram-drawer itself can produce them — [ADR 003](doc/adr/003-plantuml-for-doc-diagrams.md).
 - Read only the relevant chapter(s) before implementing — not the whole set (context budget).
 - When a decision is made or changes, **update the affected chapter file(s) in the same change** — including the progress tracker in `overview.md`. Remove guidance/TBD notes as chapters are finalized.
 

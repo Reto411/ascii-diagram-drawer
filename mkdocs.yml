@@ -25,6 +25,7 @@ nav:
   - ADRs:
       - "001 Unicode glyph-matching renderer": adr/001-unicode-glyph-matching-renderer.md
       - "002 MkDocs documentation site": adr/002-mkdocs-documentation-site.md
+      - "003 PlantUML for doc diagrams": adr/003-plantuml-for-doc-diagrams.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md
