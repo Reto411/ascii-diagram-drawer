@@ -15,29 +15,24 @@ Instructions for AI coding agents (pi) working in this repository.
 Before starting a task:
 
 1. Inspect the applicable repository instructions (this file, plus any nested `AGENTS.md`).
-2. **Always search the `.agents/` folder** (especially `.agents/skills/`) and check available project skills; if a skill matches the task, read its `SKILL.md` before making changes. Treat notes in `.agents/` as authoritative alongside `doc/arch/arc42.md`.
-3. **Before implementing anything, check the relevant Design Decision Records (`doc/adr/`) and concept docs (`doc/concepts/`)** — if they are not already in context, read them first and implement in line with them. If a planned implementation contradicts a recorded decision or concept definition, stop and point out the conflict.
-4. Follow nested `AGENTS.md` files for files in their respective directories.
-5. Prefer repository-local instructions over global defaults when they conflict.
+2. **Always read the objectives file** — `doc/arc42/01-introduction-and-context.md` (§1.1). It defines what we are building; every task should be checkable against it.
+3. **Always search the `.agents/` folder** (especially `.agents/skills/`) and check available project skills; if a skill matches the task, read its `SKILL.md` before making changes. Treat notes in `.agents/` as authoritative alongside the arc42 docs (`doc/arc42/`).
+4. **Before implementing anything, check the relevant Design Decision Records (`doc/adr/`) and concept docs (`doc/concepts/`)** — if they are not already in context, read them first and implement in line with them. If a planned implementation contradicts a recorded decision or concept definition, stop and point out the conflict.
+5. Follow nested `AGENTS.md` files for files in their respective directories.
+6. Prefer repository-local instructions over global defaults when they conflict.
 
 ## What this project is
 
-A tool to **draw ASCII diagrams visually**: users place, move, and resize predefined shapes on a canvas instead of hand-typing box-drawing characters. The result is plain monospace text that can be pasted anywhere (terminals, READMEs, docs), plus SVG/PNG export.
+A tool to **draw ASCII diagrams visually**: users place, move, and resize predefined shapes on a canvas instead of hand-typing box-drawing characters. The result is plain monospace text (Unicode box-drawing) that can be pasted anywhere, plus SVG/PNG export.
 
-Key goals (from `doc/arch/arc42.md` §1.1):
+**Objectives: see the objectives file** `doc/arc42/01-introduction-and-context.md` §1.1 — it is the single source of truth for goals; do not duplicate the list here.
 
-1. Visual canvas editing of shapes (boxes, circles, …)
-2. Plain-text output as the primary result
-3. Reusable shape templates / collections
-4. OS-independent GUI — one codebase for Windows, macOS, Linux, **and** a web build (replaces the previous Tauri approach)
-5. Vector (SVG) and raster (PNG) export in addition to text
-6. Minimal UI: template sidebar + editor canvas
+## Architecture documentation (MkDocs, one file per chapter)
 
-## Architecture documentation
-
-- The single source of truth for design decisions is **`doc/arch/arc42.md`** (arc42 format, draft).
-- Read the relevant arc42 sections before implementing anything architectural.
-- When a decision is made or changes, **update `doc/arch/arc42.md` in the same change** — including its progress tracker table. Remove guidance/TBD notes as sections are finalized.
+- The single source of truth for design decisions is the **arc42 documentation**: `doc/arc42/` — one markdown file per chapter, [ADR 002](doc/adr/002-mkdocs-documentation-site.md). `doc/arc42/overview.md` holds the progress tracker.
+- Documentation is an **MkDocs** site (`mkdocs.yml` at repo root, `docs_dir: doc`). New doc pages should be added to its `nav`.
+- Read only the relevant chapter(s) before implementing — not the whole set (context budget).
+- When a decision is made or changes, **update the affected chapter file(s) in the same change** — including the progress tracker in `overview.md`. Remove guidance/TBD notes as chapters are finalized.
 
 ## Tech stack
 
@@ -133,7 +128,7 @@ Work **self-reliantly**. The human is usually absent; local compute (incl. GPU) 
 
 Docs are part of the change, not an afterthought. In the **same commit** as the change that makes them stale, update:
 
-- `doc/arch/arc42.md` — when architecture, scope, quality goals, or its progress tracker is affected
+- `doc/arc42/*.md` chapter files — when architecture, scope, or quality goals are affected; plus the progress tracker in `doc/arc42/overview.md`
 - `doc/concepts/*.md` — when behavior, definitions, relations, or implementation locations of a documented concept change (incl. the "Implementation" section once code lands)
 - `doc/adr/*.md` — flip `status: proposed` → `accepted` when the decision is implemented; open new ADRs for reversals
 - `.agents/` notes — when conventions or gotchas change
@@ -146,7 +141,7 @@ If a change makes a doc wrong and you cannot fix it fully, mark the affected par
 - **Autocommit whenever a meaningful step is achieved** (a working feature, a finished doc section, a recorded decision/ADR/concept — anything reviewable on its own). Write a concise, descriptive commit message for what was achieved. Don't bundle unrelated changes into one commit.
 - **The commit is mechanical, not optional: if you created or modified files in this turn and the work is complete, commit before ending the turn.** Never leave finished docs or decisions uncommitted "for review" — the commit itself is the review artifact. Holding work back is only allowed while it is genuinely incomplete.
 - Prefer small, reviewable changes; don't restructure the repo without being asked.
-- Don't delete or rewrite `doc/arch/arc42.md` guidance notes — replace them with real content.
-- If a request conflicts with a decision recorded in arc42, point out the conflict before implementing.
-- If a task produces new durable knowledge (decisions, gotchas, conventions), record it in `.agents/` (or `doc/arch/arc42.md` for architecture) rather than only in chat.
+- Don't delete or rewrite arc42 chapter guidance notes (`doc/arc42/*.md`) — replace them with real content.
+- If a request conflicts with a decision recorded in arc42 or an ADR, point out the conflict before implementing.
+- If a task produces new durable knowledge (decisions, gotchas, conventions), record it in `.agents/` (or the arc42 docs / an ADR for architecture) rather than only in chat.
 - Keep this file updated when conventions change; it is short on purpose.
