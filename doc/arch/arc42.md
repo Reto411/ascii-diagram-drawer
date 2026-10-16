@@ -49,6 +49,7 @@
 4. **Cross-platform GUI.** One app that runs on Windows, macOS, Linux, and in the browser.
 5. **Vector/raster export.** Unlike the previous project, diagrams can be rendered as SVG (vector) and PNG (raster) in addition to plain text.
 6. **Low learning curve.** Minimal UI: a template sidebar to pick shapes from and an editor canvas to compose the diagram.
+7. **Grid alignment & scaling.** Shapes align to a grid, and a scale button in the top-right corner scales the entire diagram up — mostly important for the ASCII representation (larger spacing = more readable text output).
 
 ### 1.2 Quality Goals (top-level)
 
@@ -355,11 +356,11 @@ Diagram:
 
 > *Important concepts with stable identities — the vocabulary of the architecture (e.g. "DiagramModel", "Cell grid", "Box-drawing renderer").*
 
-### Concept C1: [TBD]
+### Concept C1: Glyph Resolution
 
 - **ID:** C1
-- **Purpose:** [TBD]
-- **Properties / invariants:** [TBD]
+- **Purpose:** the renderer assigns one matching Unicode box-drawing character per occupied grid cell, wherever possible (corners, T-junctions, crossings)
+- **Details:** `doc/concepts/glyph-resolution.md` · decided in [ADR 001](../adr/001-unicode-glyph-matching-renderer.md)
 - **Interfaces (provided/required):** [TBD]
 - **Dependencies:** [TBD]
 
