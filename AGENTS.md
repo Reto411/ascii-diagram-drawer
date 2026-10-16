@@ -143,7 +143,8 @@ If a change makes a doc wrong and you cannot fix it fully, mark the affected par
 ## Working agreements for agents
 
 - **Always `git add` any files you create or modify** so new work is staged immediately.
-- **Autocommit whenever a meaningful step is achieved** (a working feature, a finished doc section, a resolved issue — anything reviewable on its own). Write a concise, descriptive commit message for what was achieved. Don't bundle unrelated changes into one commit.
+- **Autocommit whenever a meaningful step is achieved** (a working feature, a finished doc section, a recorded decision/ADR/concept — anything reviewable on its own). Write a concise, descriptive commit message for what was achieved. Don't bundle unrelated changes into one commit.
+- **The commit is mechanical, not optional: if you created or modified files in this turn and the work is complete, commit before ending the turn.** Never leave finished docs or decisions uncommitted "for review" — the commit itself is the review artifact. Holding work back is only allowed while it is genuinely incomplete.
 - Prefer small, reviewable changes; don't restructure the repo without being asked.
 - Don't delete or rewrite `doc/arch/arc42.md` guidance notes — replace them with real content.
 - If a request conflicts with a decision recorded in arc42, point out the conflict before implementing.
