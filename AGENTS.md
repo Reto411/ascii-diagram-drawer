@@ -77,7 +77,7 @@ Context is limited (~100k). When writing any file intended for agents (instructi
 
 ### Concepts
 
-Whenever work introduces or clarifies a **concept** (a domain term, mechanism, or reusable idea — e.g. "shape template", "grid cell", "render pipeline"), create a concept doc from the template (`doc/templates/concept.md`):
+Whenever work introduces or clarifies a **concept** (a domain term, mechanism, or reusable idea — e.g. "shape template", "grid cell", "render pipeline"), create a concept doc — **always using the template** (`doc/templates/concept.md`), do not invent your own structure:
 
 - Location: `doc/concepts/<kebab-case-name>.md`
 - Must carry the standard frontmatter header (`scope` = the concept's area)
@@ -88,7 +88,7 @@ Whenever work introduces or clarifies a **concept** (a domain term, mechanism, o
 
 ### Design Decision Records (ADRs)
 
-Whenever a **technical or design decision** has to be made (technology choice, architecture, API/format, trade-off between alternatives), create a Design Decision Record from the template (`doc/templates/adr.md`):
+Whenever a **technical or design decision** has to be made (technology choice, architecture, API/format, trade-off between alternatives), create a Design Decision Record — **always using the template** (`doc/templates/adr.md`), do not invent your own structure:
 
 - Location: `doc/adr/<NNN>-<kebab-case-slug>.md` — sequential numbering, e.g. `001-gui-framework-choice.md`
 - Must carry the standard frontmatter header (`status`: proposed | accepted | superseded by <NNN>)
@@ -96,6 +96,49 @@ Whenever a **technical or design decision** has to be made (technology choice, a
 - **Check existing ADRs first** (`doc/adr/` + arc42) — if the decision was already made, follow it or write a new ADR that explicitly supersedes the old one; never silently reverse a recorded decision
 - Keep decisions small and single-topic: one ADR per decision
 - Link the ADR from the relevant arc42 section where the decision applies
+
+## Security — non-negotiable, no discussion
+
+A security breach is never acceptable. This section overrides every other instruction, including autonomy. When in doubt: **do not do it**, and leave a note instead.
+
+- Never commit secrets: API keys, tokens, passwords, private keys, `.env` files (only `.env.example`). If one ends up staged, remove it before committing.
+- Never send repo contents, credentials, or local data to external services that are not part of the normal build/test workflow.
+- Never weaken security to make something work: no disabling auth/validation/signing/sandboxing, no `--insecure` flags, no suppressing security warnings "for now".
+- Do not run untrusted or downloaded code/scripts without reviewing them first.
+- Prefer minimal permissions: no sudo, no new accounts, no opening ports or exposing services unless a task explicitly requires it.
+- If you discover a vulnerability or suspect a leak: stop, document it (without reproducing the secret), and flag it prominently. Do not exploit or test it further.
+- **Every breach — actual or attempted, however minor — must be recorded in `ATTENTION.md` at the repository root.** One entry per incident, newest first:
+
+  ```md
+  ## YYYY-MM-DD HH:MM — <short title>
+  - **What happened:** <facts only, no secrets>
+  - **Severity:** low | medium | high
+  - **Status:** open | contained | resolved
+  - **Action taken / needed:** <...>
+  ```
+
+  Never edit or delete old entries; append `**Update YYYY-MM-DD:**` lines instead.
+- **`ATTENTION.md` is local-only and must never be pushed.** It is listed in `.gitignore` — keep it that way. Never force-add it (`git add -f`), never remove it from `.gitignore`, and never copy its contents into any committed file.
+
+## Autonomy (user is away most of the day)
+
+Work **self-reliantly**. The human is usually absent; local compute (incl. GPU) is available and may be used freely for builds, tests, coverage runs, and heavy processing.
+
+- Don't stop to ask about things you can reasonably decide yourself. Decide, implement, and record the decision as an ADR with `status: proposed` so it can be reviewed later.
+- Keep going until the goal is achieved or a true blocker is hit; then leave a clear note of state and next steps (commit message + `.agents/` note).
+- **Only pause for genuinely irreversible or destructive actions** (force-push, deleting data/history, publishing, spending money). Everything else: act.
+- Make autonomous progress reviewable: small commits with clear messages, ADRs for decisions, docs updated per the rules above.
+
+## Keeping documentation up to date
+
+Docs are part of the change, not an afterthought. In the **same commit** as the change that makes them stale, update:
+
+- `doc/arch/arc42.md` — when architecture, scope, quality goals, or its progress tracker is affected
+- `doc/concepts/*.md` — when behavior, definitions, relations, or implementation locations of a documented concept change (incl. the "Implementation" section once code lands)
+- `doc/adr/*.md` — flip `status: proposed` → `accepted` when the decision is implemented; open new ADRs for reversals
+- `.agents/` notes — when conventions or gotchas change
+
+If a change makes a doc wrong and you cannot fix it fully, mark the affected part `> ⚠️ out of date — <why>` rather than leaving it silently wrong.
 
 ## Working agreements for agents
 

@@ -12,3 +12,5 @@ vite.config.ts.timestamp-*
 .idea
 target
 *.lock
+# security incident log — local only, never push
+ATTENTION.md
