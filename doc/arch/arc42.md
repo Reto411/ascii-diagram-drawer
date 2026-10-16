@@ -46,7 +46,7 @@
 1. **Draw ASCII diagrams visually.** Users compose diagrams by placing, moving, and resizing predefined shapes (boxes, circles, …) on a canvas — instead of hand-typing box-drawing characters.
 2. **Plain-text output.** The result is pure monospace text that can be copied and pasted anywhere: terminals, READMEs, chat, commit messages, docs.
 3. **Reusable shape templates.** Users can define their own shapes and group them into collections for reuse across diagrams.
-4. **OS-independent GUI.** A single codebase that compiles to all major platforms (Windows, macOS, Linux) and is also available as a web GUI — no platform-specific reimplementations. (Replaces the previous Tauri-based approach.)
+4. **Cross-platform GUI.** One app that runs on Windows, macOS, Linux, and in the browser.
 5. **Vector/raster export.** Unlike the previous project, diagrams can be rendered as SVG (vector) and PNG (raster) in addition to plain text.
 6. **Low learning curve.** Minimal UI: a template sidebar to pick shapes from and an editor canvas to compose the diagram.
 
