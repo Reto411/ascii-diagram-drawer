@@ -16,8 +16,9 @@ Before starting a task:
 
 1. Inspect the applicable repository instructions (this file, plus any nested `AGENTS.md`).
 2. **Always search the `.agents/` folder** (especially `.agents/skills/`) and check available project skills; if a skill matches the task, read its `SKILL.md` before making changes. Treat notes in `.agents/` as authoritative alongside `doc/arch/arc42.md`.
-3. Follow nested `AGENTS.md` files for files in their respective directories.
-4. Prefer repository-local instructions over global defaults when they conflict.
+3. **Before implementing anything, check the relevant Design Decision Records (`doc/adr/`) and concept docs (`doc/concepts/`)** — if they are not already in context, read them first and implement in line with them. If a planned implementation contradicts a recorded decision or concept definition, stop and point out the conflict.
+4. Follow nested `AGENTS.md` files for files in their respective directories.
+5. Prefer repository-local instructions over global defaults when they conflict.
 
 ## What this project is
 
@@ -76,13 +77,25 @@ Context is limited (~100k). When writing any file intended for agents (instructi
 
 ### Concepts
 
-Whenever work introduces or clarifies a **concept** (a domain term, mechanism, or reusable idea — e.g. "shape template", "grid cell", "render pipeline"), create a concept doc:
+Whenever work introduces or clarifies a **concept** (a domain term, mechanism, or reusable idea — e.g. "shape template", "grid cell", "render pipeline"), create a concept doc from the template (`doc/templates/concept.md`):
 
 - Location: `doc/concepts/<kebab-case-name>.md`
 - Must carry the standard frontmatter header (`scope` = the concept's area)
 - Content: one-line definition, why it exists, how it works/behaves, relations to other concepts (link them), and where it is implemented (once code exists)
-- One concept per file; update the existing doc instead of creating a duplicate
+- **Before creating any concept doc, always check whether the concept already exists** — search `doc/concepts/` and the arc42 §12 index (and grep the repo for the term). If it exists, update that doc; never create a second file for the same concept.
+- One concept per file
 - Keep arc42 §12 (Concepts) as the index: add a one-line pointer per concept there
+
+### Design Decision Records (ADRs)
+
+Whenever a **technical or design decision** has to be made (technology choice, architecture, API/format, trade-off between alternatives), create a Design Decision Record from the template (`doc/templates/adr.md`):
+
+- Location: `doc/adr/<NNN>-<kebab-case-slug>.md` — sequential numbering, e.g. `001-gui-framework-choice.md`
+- Must carry the standard frontmatter header (`status`: proposed | accepted | superseded by <NNN>)
+- Content: **Context** (the problem/question), **Decision** (what was chosen), **Alternatives considered** (with why they were rejected), **Consequences** (trade-offs, follow-ups)
+- **Check existing ADRs first** (`doc/adr/` + arc42) — if the decision was already made, follow it or write a new ADR that explicitly supersedes the old one; never silently reverse a recorded decision
+- Keep decisions small and single-topic: one ADR per decision
+- Link the ADR from the relevant arc42 section where the decision applies
 
 ## Working agreements for agents
 
