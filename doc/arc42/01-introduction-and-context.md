@@ -10,6 +10,14 @@ updated: 2026-10-17
 
 > *What is this project, what problem does it solve, and in which world does it live?*
 
+## Background & Motivation
+
+The target is a diagramming tool **similar to Visio**, but built on an **open source format**:
+
+- Diagrams are stored in an open, plain-text format that can be **easily rendered** — and remains **human-readable even without a renderer** (any text editor or `cat` shows the diagram).
+- Text-based diagram languages exist already (e.g. PlantUML), but they have a fundamental problem: in complex diagrams the **automatic layout engine rearranges the diagram by itself**, and the result turns into spaghetti.
+- This tool prevents that with its **graphical overlay**: shapes are placed manually on a canvas (with grid alignment, see §1.1 objective 7), giving the user full control over where every element ends up — while still producing the plain-text output.
+
 ## 1.1 Objectives
 
 > *Project goals in 3–7 bullet points. What must the finished product be able to do? Why does it exist?*
