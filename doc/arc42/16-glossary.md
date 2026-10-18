@@ -12,7 +12,7 @@ updated: 2026-10-18
 
 | Term | Definition |
 |------|------------|
-| **Glyph resolution** | Assigning exactly one svgbob input-alphabet character to each occupied grid cell, based on all edges/content passing through it (concept C1 — [glyph-resolution](12-concepts/glyph-resolution.md), ADR 006) |
+| **Glyph resolution** | Assigning exactly one svgbob input-alphabet character to each occupied grid cell, based on all edges/content passing through it (concept C1 — [glyph-resolution](12-concepts/glyph-resolution.md), ADR 001) |
 | **Cell grid** | The monospace character grid a diagram is placed on and rendered into; shapes occupy cells (concept doc not yet written) |
 | **Diagram object** | A placeable element on the canvas — a predefined or user-defined shape, connector, or text; user-defined objects are stored in collections ([§1.1](01-introduction-and-context.md#11-objectives) Obj. 3, [ADR 007](../adr/007-user-defined-diagram-objects.md)) |
 | **Shape collection** | A named group of diagram object definitions (shape templates) that users can store and reuse across diagrams ([ADR 007](../adr/007-user-defined-diagram-objects.md)) |

@@ -3,8 +3,8 @@ title: 003 - plantuml-for-doc-diagrams
 description: diagrams inside project documentation use PlantUML until ascii-diagram-drawer itself can produce them
 scope: documentation / tooling
 status: accepted
-updated: 2026-10-17
-supersedes: null
+updated: 2026-10-18
+version: 1
 ---
 
 # ADR 003: PlantUML for diagrams in documentation
@@ -17,7 +17,7 @@ The arc42 chapters and concept docs need diagrams (building block views, runtime
 
 - **PlantUML** is used for all diagrams in project documentation until ascii-diagram-drawer can generate its own output.
 - Diagrams are written as PlantUML source (```plantuml code fences or `.puml` files) so they remain plain text, reviewable in diffs, and renderable by MkDocs tooling.
-- When ascii-diagram-drawer reaches a usable state, a follow-up ADR will decide whether to migrate existing diagrams to the native format (and supersede this ADR).
+- When ascii-diagram-drawer reaches a usable state, a version bump of this ADR will record the decision on migrating existing diagrams to the native format.
 
 ## Alternatives considered
 

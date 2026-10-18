@@ -87,9 +87,10 @@ Whenever work introduces or clarifies a **concept** (a domain term, mechanism, o
 Whenever a **technical or design decision** has to be made (technology choice, architecture, API/format, trade-off between alternatives), create a Design Decision Record — **always using the template** (`doc/templates/adr.md`), do not invent your own structure:
 
 - Location: `doc/adr/<NNN>-<kebab-case-slug>.md` — sequential numbering, e.g. `001-gui-framework-choice.md`
-- Must carry the standard frontmatter header (`status`: proposed | accepted | superseded by <NNN>)
-- Content: **Context** (the problem/question), **Decision** (what was chosen), **Alternatives considered** (with why they were rejected), **Consequences** (trade-offs, follow-ups)
-- **Check existing ADRs first** (`doc/adr/` + arc42) — if the decision was already made, follow it or write a new ADR that explicitly supersedes the old one; never silently reverse a recorded decision
+- Must carry the standard frontmatter header (`status`: proposed | accepted, `version`: integer)
+- Content: **Context** (the problem/question), **Decision** (what was chosen), **Alternatives considered** (with why they were rejected), **Consequences** (trade-offs, follow-ups), **Version history** (see below)
+- **Check existing ADRs first** (`doc/adr/` + arc42) — if the decision was already made, follow it or bump its `version` (see below); never silently reverse a recorded decision
+- **Versioning instead of superseding:** when a recorded decision changes, bump `version` in the header, update the body to reflect the *current* decision, and add an entry to the "Version history" section (newest first) recording what changed, why, and when. Do not write a new ADR that supersedes an old one; keep the original number.
 - Keep decisions small and single-topic: one ADR per decision
 - Link the ADR from the relevant arc42 section where the decision applies
 
@@ -131,7 +132,7 @@ Docs are part of the change, not an afterthought. In the **same commit** as the 
 
 - `doc/arc42/*.md` chapter files — when architecture, scope, or quality goals are affected; plus the progress tracker in `doc/arc42/overview.md`
 - `doc/arc42/12-concepts/*.md` — when behavior, definitions, relations, or implementation locations of a documented concept change (incl. the "Implementation" section once code lands)
-- `doc/adr/*.md` — flip `status: proposed` → `accepted` when the decision is implemented; open new ADRs for reversals
+- `doc/adr/*.md` — flip `status: proposed` → `accepted` when the decision is implemented; bump `version` + add a Version history entry when a decision changes (no superseding ADRs)
 - `.agents/` notes — when conventions or gotchas change
 
 If a change makes a doc wrong and you cannot fix it fully, mark the affected part `> ⚠️ out of date — <why>` rather than leaving it silently wrong.

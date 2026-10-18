@@ -4,7 +4,7 @@ description: documentation moves to an MkDocs site; each arc42 chapter becomes i
 scope: tooling / documentation
 status: accepted
 updated: 2026-10-17
-supersedes: null
+version: 1
 ---
 
 # ADR 002: MkDocs documentation site, one file per arc42 chapter

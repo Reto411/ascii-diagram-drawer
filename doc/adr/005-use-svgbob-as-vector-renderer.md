@@ -4,7 +4,7 @@ description: SVG export delegates grid→vector interpretation to the svgbob cra
 scope: rendering
 status: proposed
 updated: 2026-10-18
-supersedes: null
+version: 1
 ---
 
 # ADR 005: Use svgbob as the grid→vector renderer
@@ -15,14 +15,14 @@ The render pipeline's emit stage ([concept C2](../arc42/12-concepts/render-pipel
 
 Product direction sharpens this: the tool is a **Visio-like visual editor for SVG-compatible diagrams** — vector rendering should reuse a proven component rather than be reinvented.
 
-One constraint was in play: [ADR 001](001-unicode-glyph-matching-renderer.md) (now superseded by [ADR 006](006-svgbob-compatible-ascii-alphabet.md)) fixed our text output to **Unicode box-drawing characters** (`─ │ ┌ …`), while svgbob's input alphabet is **ASCII** (`+ - | . , ' \` < > ^ V …`). Originally bridged by a transliteration adapter; ADR 006 later removed the need for it by making svgbob's alphabet canonical.
+One constraint was in play: [ADR 001 v1](001-glyph-resolution-alphabet.md) fixed our text output to **Unicode box-drawing characters** (`─ │ ┌ …`), while svgbob's input alphabet is **ASCII** (`+ - | . , ' \` < > ^ V …`). Originally bridged by a transliteration adapter; ADR 001 v2 later removed the need for it by making svgbob's alphabet canonical.
 
 ## Decision
 
 **Depend on the `svgbob` crate as the grid→vector renderer for SVG export.** Specifically:
 
-1. **The canonical resolved grid uses svgbob's input alphabet** ([ADR 006](006-svgbob-compatible-ascii-alphabet.md) supersedes ADR 001): text output and the SVG input are the *same bytes*.
-2. **No transliteration adapter:** `svgbob::to_svg` consumes the resolved grid directly. Labels containing drawing characters are double-quote-escaped in the grid itself (ADR 006), so text and SVG stay identical.
+1. **The canonical resolved grid uses svgbob's input alphabet** ([ADR 001 v2](001-glyph-resolution-alphabet.md)): text output and the SVG input are the *same bytes*.
+2. **No transliteration adapter:** `svgbob::to_svg` consumes the resolved grid directly. Labels containing drawing characters are double-quote-escaped in the grid itself (ADR 001 v2), so text and SVG stay identical.
 3. **PNG (FR5)** = rasterization of the produced SVG; the rasterizer is a separate follow-up decision (candidate: `resvg` — pure Rust, WASM-compatible).
 4. The `svgbob` integration lives in the platform-independent rendering crate (NFR5) and is unit-tested headlessly with golden files (same grid → identical SVG).
 
@@ -31,8 +31,8 @@ One constraint was in play: [ADR 001](001-unicode-glyph-matching-renderer.md) (n
 | Alternative | Why rejected |
 |-------------|--------------|
 | Build our own grid→vector interpreter (C2 as originally sketched) | Re-implements solved, battle-tested geometry logic (fragment merging, shape promotion) at real cost and risk; no benefit while svgbob suffices |
-| Switch the canonical alphabet to svgbob's ASCII (supersedes ADR 001) | Rejected at the time as reversing an accepted decision — **later adopted on 2026-10-18 as [ADR 006](006-svgbob-compatible-ascii-alphabet.md)** after the user requested svgbob-compatible ASCII output |
-| Fork/extend svgbob to accept Unicode box-drawing input directly | Upstream divergence and fork maintenance for what a thin, fully testable adapter achieves with less risk (moot after ADR 006 — the alphabets now coincide) |
+| Switch the canonical alphabet to svgbob's ASCII | Rejected at the time as reversing an accepted decision — **later adopted on 2026-10-18 as [ADR 001 v2](001-glyph-resolution-alphabet.md)** after the user requested svgbob-compatible ASCII output |
+| Fork/extend svgbob to accept Unicode box-drawing input directly | Upstream divergence and fork maintenance for what a thin, fully testable adapter achieves with less risk (moot after ADR 001 v2 — the alphabets now coincide) |
 
 ## Consequences
 

@@ -4,7 +4,7 @@ description: diagram files use a custom, versioned, line-based plain-text format
 scope: format
 status: proposed
 updated: 2026-10-18
-supersedes: null
+version: 1
 ---
 
 # ADR 004: Open plain-text diagram file format

@@ -4,7 +4,7 @@ description: users define their own diagram objects as named shape templates (pl
 scope: domain model / file format
 status: proposed
 updated: 2026-10-18
-supersedes: null
+version: 1
 ---
 
 # ADR 007: User-defined diagram objects and collections
@@ -13,7 +13,7 @@ supersedes: null
 
 [FR3](../arc42/14-important-requirements.md) (High): users must be able to define their own diagram objects **entirely themselves** — custom geometry/glyphs beyond the predefined set — and store them in named **collections** for grouping and reuse across diagrams ([§1.1 Obj. 3](../arc42/01-introduction-and-context.md#11-objectives)). Usage-model reference: asciilogic (canvas editing; connectors snap to shape anchors and stay bound, FR9).
 
-Constraints in play: rendering must remain a **pure deterministic function** of the model (NFR3) on the svgbob-compatible grid ([ADR 006](006-svgbob-compatible-ascii-alphabet.md)); storage is the open plain-text format family ([ADR 004](004-diagram-file-format.md)); custom objects must not break clean connector joins (glyph resolution, concept C1).
+Constraints in play: rendering must remain a **pure deterministic function** of the model (NFR3) on the svgbob-compatible grid ([ADR 001](001-glyph-resolution-alphabet.md)); storage is the open plain-text format family ([ADR 004](004-diagram-file-format.md)); custom objects must not break clean connector joins (glyph resolution, concept C1).
 
 Open questions: what is a user-defined object *made of*, and how do custom objects interact with glyph resolution and connector binding?
 
@@ -21,7 +21,7 @@ Open questions: what is a user-defined object *made of*, and how do custom objec
 
 A **shape template** is the unit of user-defined content; a **collection** groups templates.
 
-1. **Representation — stamped ASCII art.** A shape template is a named, fixed-size grid of svgbob-alphabet characters (the same alphabet as the resolved grid, ADR 006) plus declared **anchor points**: named cells where connectors may bind. Templates are authored by the user in plain text — the same look-and-feel as typing an ASCII diagram by hand; no separate DSL in v1.
+1. **Representation — stamped ASCII art.** A shape template is a named, fixed-size grid of svgbob-alphabet characters (the same alphabet as the resolved grid, ADR 001) plus declared **anchor points**: named cells where connectors may bind. Templates are authored by the user in plain text — the same look-and-feel as typing an ASCII diagram by hand; no separate DSL in v1.
 2. **Collections.** Templates live in **collections**: named, open plain-text files (ADR 004 format family) that group related templates. Diagrams reference templates as `collection/name`. Collections make custom objects shareable between users and projects as ordinary files.
 3. **Rendering — opaque stamp with live anchors.** At render time the template grid is stamped onto the cell grid at the object's position: non-anchor cells are copied verbatim (like text — they do *not* participate in glyph resolution), while anchor cells resolve against connecting edges like built-in shape borders, so connectors join cleanly and stay bound when the object moves (FR9).
 4. **Fixed size in v1.** Custom objects are not resizable; only predefined shapes (FR1) resize. Resizing a stamp would require re-rasterizing user art — out of scope for v1.
