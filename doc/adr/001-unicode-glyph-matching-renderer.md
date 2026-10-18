@@ -2,12 +2,14 @@
 title: 001 - unicode-glyph-matching-renderer
 description: rendering uses Unicode box-drawing characters; the renderer resolves the matching glyph per cell wherever possible
 scope: rendering
-status: accepted
+status: superseded by 006
 updated: 2026-10-18
 supersedes: null
 ---
 
 # ADR 001: Unicode glyph-matching renderer
+
+> **⚠️ Superseded by [ADR 006](006-svgbob-compatible-ascii-alphabet.md) (2026-10-18).** The Unicode box-drawing alphabet was replaced by svgbob's ASCII input alphabet as the canonical grid output. The glyph-resolution *mechanism* (one character per cell, resolved from all edges/content through it) is retained — only the target alphabet changed. Kept for history.
 
 ## Context
 

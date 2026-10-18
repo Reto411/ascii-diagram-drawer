@@ -24,9 +24,12 @@ nav:
       - "15. Risks and Technical Risks": arc42/15-risks.md
       - "16. Glossary": arc42/16-glossary.md
   - ADRs:
-      - "001 Unicode glyph-matching renderer": adr/001-unicode-glyph-matching-renderer.md
+      - "001 Unicode glyph-matching renderer (superseded)": adr/001-unicode-glyph-matching-renderer.md
       - "002 MkDocs documentation site": adr/002-mkdocs-documentation-site.md
       - "003 PlantUML for doc diagrams": adr/003-plantuml-for-doc-diagrams.md
+      - "004 Plain-text diagram file format": adr/004-diagram-file-format.md
+      - "005 Use svgbob as the vector renderer": adr/005-use-svgbob-as-vector-renderer.md
+      - "006 svgbob-compatible ASCII alphabet": adr/006-svgbob-compatible-ascii-alphabet.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md

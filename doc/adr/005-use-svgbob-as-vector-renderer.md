@@ -1,6 +1,6 @@
 ---
 title: 005 - use-svgbob-as-vector-renderer
-description: SVG export delegates grid→vector interpretation to the svgbob crate, bridged by a deterministic Unicode→ASCII transliteration of our resolved grid
+description: SVG export delegates grid→vector interpretation to the svgbob crate, consuming the canonical svgbob-compatible ASCII grid directly (no transliteration)
 scope: rendering
 status: proposed
 updated: 2026-10-18
@@ -15,14 +15,14 @@ The render pipeline's emit stage ([concept C2](../arc42/12-concepts/render-pipel
 
 Product direction sharpens this: the tool is a **Visio-like visual editor for SVG-compatible diagrams** — vector rendering should reuse a proven component rather than be reinvented.
 
-One constraint in play: accepted [ADR 001](001-unicode-glyph-matching-renderer.md) fixes our text output to **Unicode box-drawing characters** (`─ │ ┌ …`), while svgbob's input alphabet is **ASCII** (`+ - | . , ' \` < > ^ V …`). The two alphabets must be bridged without reversing ADR 001.
+One constraint was in play: [ADR 001](001-unicode-glyph-matching-renderer.md) (now superseded by [ADR 006](006-svgbob-compatible-ascii-alphabet.md)) fixed our text output to **Unicode box-drawing characters** (`─ │ ┌ …`), while svgbob's input alphabet is **ASCII** (`+ - | . , ' \` < > ^ V …`). Originally bridged by a transliteration adapter; ADR 006 later removed the need for it by making svgbob's alphabet canonical.
 
 ## Decision
 
 **Depend on the `svgbob` crate as the grid→vector renderer for SVG export.** Specifically:
 
-1. **ADR 001 stays intact.** The canonical resolved grid and the text output remain Unicode box-drawing characters.
-2. **Deterministic transliteration adapter (our code, small):** before calling `svgbob::to_svg`, the resolved Unicode grid is mapped 1:1 onto svgbob's ASCII alphabet — `─`→`-`, `│`→`|`, `┌/┐`→`.`, `└`→`` ` ``, `┘`→`'`, junctions (`├ ┤ ┬ ┴ ┼`)→`+`; label text passes through unchanged. The v1 glyph set (ADR 001) has no rounded corners, so nothing is lost; if rounded glyphs are added later, they map onto svgbob's `.` `,` `` ` `` `'` corner characters.
+1. **The canonical resolved grid uses svgbob's input alphabet** ([ADR 006](006-svgbob-compatible-ascii-alphabet.md) supersedes ADR 001): text output and the SVG input are the *same bytes*.
+2. **No transliteration adapter:** `svgbob::to_svg` consumes the resolved grid directly. Labels containing drawing characters are double-quote-escaped in the grid itself (ADR 006), so text and SVG stay identical.
 3. **PNG (FR5)** = rasterization of the produced SVG; the rasterizer is a separate follow-up decision (candidate: `resvg` — pure Rust, WASM-compatible).
 4. The adapter lives in the platform-independent rendering crate (NFR5) and is unit-tested headlessly with golden files (same grid → identical SVG).
 
@@ -31,11 +31,11 @@ One constraint in play: accepted [ADR 001](001-unicode-glyph-matching-renderer.m
 | Alternative | Why rejected |
 |-------------|--------------|
 | Build our own grid→vector interpreter (C2 as originally sketched) | Re-implements solved, battle-tested geometry logic (fragment merging, shape promotion) at real cost and risk; no benefit while svgbob suffices |
-| Switch the canonical alphabet to svgbob's ASCII (supersedes ADR 001) | Reverses an accepted decision: Unicode text output was explicitly chosen ("Unicode output is desired despite the project name"); degrades the core paste-anywhere UX |
+| Switch the canonical alphabet to svgbob's ASCII (supersedes ADR 001) | Rejected at the time as reversing an accepted decision — **later adopted on 2026-10-18 as [ADR 006](006-svgbob-compatible-ascii-alphabet.md)** after the user requested svgbob-compatible ASCII output |
 | Fork/extend svgbob to accept Unicode box-drawing input directly | Upstream divergence and fork maintenance for what a thin, fully testable adapter achieves with less risk |
 
 ## Consequences
 
 - **Positive:** vector interpretation comes from a proven, widely used project; much smaller codebase; upstream fixes/features flow in for free; high-quality SVG (clean lines, arcs, promoted shapes) without writing geometry code ourselves.
-- **Negative / costs:** coupling to an external 0.x API and roadmap (expect breaking changes); feature ceiling — diagram content outside svgbob's vocabulary degrades to literal text glyphs in the SVG (degradation, not failure); the transliteration adapter must stay in sync with both the ADR 001 glyph set and the svgbob spec; WASM build compatibility is unverified.
-- **Follow-ups:** verify `svgbob` compiles for `wasm32` (NFR1 gate before acceptance); choose the PNG rasterizer; if a needed feature is missing upstream → evaluate contributing vs. forking; on acceptance, C2's emit stage is final as documented.
+- **Negative / costs:** coupling to an external 0.x API and roadmap (expect breaking changes); feature ceiling — diagram content outside svgbob's vocabulary degrades to literal text glyphs in the SVG (degradation, not failure).
+- **Follow-ups:** ~~verify `svgbob` compiles for `wasm32`~~ — ✅ verified 2026-10-18: `svgbob v0.7.6` and candidate rasterizer `resvg v0.45.1` both compile for `wasm32-unknown-unknown` (rustc 1.98.0, scratch crate, `cargo check` clean); API confirmed as `to_svg(&str) -> String`. Remaining: choose the PNG rasterizer (`resvg` remains the candidate — WASM-compatible per the same check); if a needed feature is missing upstream → evaluate contributing vs. forking; on acceptance, C2's emit stage is final as documented.

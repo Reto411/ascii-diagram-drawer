@@ -8,7 +8,7 @@ updated: 2026-10-18
 
 # ascii-diagram-drawer — Documentation
 
-A tool to draw ASCII (Unicode box-drawing) diagrams visually. See [arc42 §1](arc42/01-introduction-and-context.md) for objectives.
+A tool to draw ASCII (svgbob-compatible) diagrams visually. See [arc42 §1](arc42/01-introduction-and-context.md) for objectives.
 
 ## Where things live
 

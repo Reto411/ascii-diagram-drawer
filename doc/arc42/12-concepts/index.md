@@ -15,8 +15,8 @@ updated: 2026-10-18
 ## Concept C1: Glyph Resolution
 
 - **ID:** C1
-- **Purpose:** the renderer assigns one matching Unicode box-drawing character per occupied grid cell, wherever possible (corners, T-junctions, crossings)
-- **Details:** [`doc/arc42/12-concepts/glyph-resolution.md`](glyph-resolution.md) · decided in [ADR 001](../../adr/001-unicode-glyph-matching-renderer.md)
+- **Purpose:** the renderer assigns one matching svgbob-alphabet character per occupied grid cell, wherever possible (corners, T-junctions, crossings)
+- **Details:** [`doc/arc42/12-concepts/glyph-resolution.md`](glyph-resolution.md) · mechanism decided in [ADR 001](../../adr/001-unicode-glyph-matching-renderer.md) (superseded), target alphabet fixed by [ADR 006](../../adr/006-svgbob-compatible-ascii-alphabet.md)
 - **Interfaces (provided/required):** [TBD]
 - **Dependencies:** [TBD]
 
