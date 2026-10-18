@@ -3,7 +3,7 @@ title: "arc42-1-introduction-and-context"
 description: project objectives (1.1), top-level quality goals, constraints, stakeholders — agents: always check 1.1 before work
 scope: architecture
 status: draft
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # 1. Introduction and Context
@@ -38,9 +38,13 @@ The target is a diagramming tool **similar to Visio**, but built on an **open so
 
 | # | Quality goal | Priority (H/M/L) |
 |---|--------------|------------------|
-| Q1 | [TBD] | |
-| Q2 | [TBD] | |
-| Q3 | [TBD] | |
+| Q1 | **Deterministic output** — the rendered diagram is exactly what the user placed: no automatic layout; same model → reproducible text | H |
+| Q2 | **Cross-platform portability** — one codebase runs on Windows, macOS, Linux, and in the browser (WASM) | H |
+| Q3 | **Open, readable format** — diagram files are plain text: human-readable without a renderer, easy to diff in version control | H |
+| Q4 | **Low learning curve** — minimal UI; a new user can compose their first diagram quickly | M |
+| Q5 | **Testable core** — rendering/export logic is platform-independent and unit-testable headlessly (no GUI) | M |
+
+> *Draft, derived from §1.1 objectives and Background (inherits their "pending confirmation" status). Measurable scenarios: [§6](06-quality-model.md).*
 
 ## 1.3 Constraints
 

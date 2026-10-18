@@ -21,7 +21,7 @@ updated: 2026-10-18
 
 | § | Chapter | File | Status |
 |---|---------|------|--------|
-| 1 | Introduction and Context | [01](01-introduction-and-context.md) | 🟨 (1.1 draft) |
+| 1 | Introduction and Context | [01](01-introduction-and-context.md) | 🟨 (1.1+1.2 draft) |
 | 2 | Architecture Vision | [02](02-architecture-vision.md) | ⬜ |
 | 3 | Business Scope | [03](03-business-scope.md) | ⬜ |
 | 4 | Stakeholders and Users | [04](04-stakeholders-and-users.md) | ⬜ |
@@ -34,6 +34,6 @@ updated: 2026-10-18
 | 11 | Cross-cutting Concerns | [11](11-cross-cutting-concerns.md) | ⬜ |
 | 12 | Concepts | [12](12-concepts/index.md) | 🟨 (C1) |
 | 13 | Building Blocks (detail) | [13](13-building-blocks-detail.md) | ⬜ |
-| 14 | Identification of Important Requirements | [14](14-important-requirements.md) | 🟨 (FR/NFR draft) |
+| 14 | Identification of Important Requirements | [14](14-important-requirements.md) | 🟨 (FR/NFR, Q-linked) |
 | 15 | Risks and Technical Risks | [15](15-risks.md) | ⬜ |
 | 16 | Glossary | [16](16-glossary.md) | ⬜ |
