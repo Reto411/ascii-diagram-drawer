@@ -17,6 +17,7 @@ The target is a diagramming tool **similar to Visio**, but built on an **open so
 - Diagrams are stored in an open, plain-text format that can be **easily rendered** — and remains **human-readable even without a renderer** (any text editor or `cat` shows the diagram).
 - Text-based diagram languages exist already (e.g. PlantUML), but they have a fundamental problem: in complex diagrams the **automatic layout engine rearranges the diagram by itself**, and the result turns into spaghetti.
 - This tool prevents that with its **graphical overlay**: shapes are placed manually on a canvas (with grid alignment, see §1.1 objective 7), giving the user full control over where every element ends up — while still producing the plain-text output.
+- **Usage-model reference:** [asciilogic](https://asciilogic.com) — canvas-based editing with tools for shapes, connectors, and text; connectors snap to shape anchors and stay bound when shapes move or resize. Our differentiators on top of that model: **fully user-defined diagram objects** and **collections** for grouping/reuse (Obj. 3).
 
 ## 1.1 Objectives
 
@@ -26,7 +27,7 @@ The target is a diagramming tool **similar to Visio**, but built on an **open so
 
 1. **Draw ASCII diagrams visually.** Users compose diagrams by placing, moving, and resizing predefined shapes (boxes, circles, …) on a canvas — instead of hand-typing box-drawing characters.
 2. **Plain-text output.** The result is pure monospace text that can be copied and pasted anywhere: terminals, READMEs, chat, commit messages, docs.
-3. **Reusable shape templates.** Users can define their own shapes and group them into collections for reuse across diagrams.
+3. **Custom diagram objects & collections.** Users can define their own diagram objects entirely — beyond the predefined set — and store them in named collections (groups) for reuse across diagrams.
 4. **Cross-platform GUI.** One app that runs on Windows, macOS, Linux, and in the browser.
 5. **Vector/raster export.** Unlike the previous project, diagrams can be rendered as SVG (vector) and PNG (raster) in addition to plain text.
 6. **Low learning curve.** Minimal UI: a template sidebar to pick shapes from and an editor canvas to compose the diagram.
@@ -38,7 +39,7 @@ The target is a diagramming tool **similar to Visio**, but built on an **open so
 
 | # | Quality goal | Priority (H/M/L) |
 |---|--------------|------------------|
-| Q1 | **Deterministic output** — the rendered diagram is exactly what the user placed: no automatic layout; same model → reproducible text | H |
+| Q1 | **Deterministic output** — rendering is a pure, deterministic function of the diagram model: no auto-layout, no randomness; same model → identical text | H |
 | Q2 | **Cross-platform portability** — one codebase runs on Windows, macOS, Linux, and in the browser (WASM) | H |
 | Q3 | **Open, readable format** — diagram files are plain text: human-readable without a renderer, easy to diff in version control | H |
 | Q4 | **Low learning curve** — minimal UI; a new user can compose their first diagram quickly | M |

@@ -14,4 +14,6 @@ updated: 2026-10-18
 |------|------------|
 | **Glyph resolution** | Assigning exactly one Unicode box-drawing character to each occupied grid cell, based on all edges/content passing through it (concept C1 — [glyph-resolution](12-concepts/glyph-resolution.md)) |
 | **Cell grid** | The monospace character grid a diagram is placed on and rendered into; shapes occupy cells (concept doc not yet written) |
-| **Shape template** | A predefined, reusable shape definition users can place on the canvas and group into collections (see [§1.1](01-introduction-and-context.md#11-objectives)) |
+| **Diagram object** | A placeable element on the canvas — a predefined or user-defined shape, connector, or text; user-defined objects are stored in collections ([§1.1](01-introduction-and-context.md#11-objectives) Obj. 3) |
+| **Shape collection** | A named group of diagram object definitions that users can store and reuse across diagrams |
+| **Shape template** | A predefined, reusable shape definition users can place on the canvas (see [§1.1](01-introduction-and-context.md#11-objectives)) |
