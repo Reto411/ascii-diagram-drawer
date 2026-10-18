@@ -30,6 +30,7 @@ nav:
       - "004 Plain-text diagram file format": adr/004-diagram-file-format.md
       - "005 Use svgbob as the vector renderer": adr/005-use-svgbob-as-vector-renderer.md
       - "006 svgbob-compatible ASCII alphabet": adr/006-svgbob-compatible-ascii-alphabet.md
+      - "007 User-defined diagram objects and collections": adr/007-user-defined-diagram-objects.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md
