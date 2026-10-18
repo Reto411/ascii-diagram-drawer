@@ -3,7 +3,7 @@ title: "arc42-7-solution-strategy"
 description: architectural approach at high level — cross-cutting concepts, runtime/deployment/development strategy
 scope: architecture
 status: draft
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # 7. Solution Strategy
@@ -21,7 +21,7 @@ updated: 2026-10-17
 > *Which major runtime interactions exist? (e.g. "user edits diagram → model updates → renderer produces ASCII text"). Diagram:*
 
 ```
-[diagram placeholder — e.g. mermaid or ASCII]
+[PlantUML diagram placeholder — add PlantUML source here, see ADR 003 (doc/adr/003-plantuml-for-doc-diagrams.md)]
 ```
 
 ## 7.3 Deployment View (strategy level)

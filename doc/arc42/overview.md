@@ -3,7 +3,7 @@ title: arc42-overview
 description: arc42 document header, usage notes, and progress tracker for all 16 chapters
 scope: architecture
 status: draft
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # arc42 — ascii-diagram-drawer (Overview)
@@ -32,7 +32,7 @@ updated: 2026-10-17
 | 9 | Runtime View | [09](09-runtime-view.md) | ⬜ |
 | 10 | Deployment View | [10](10-deployment-view.md) | ⬜ |
 | 11 | Cross-cutting Concerns | [11](11-cross-cutting-concerns.md) | ⬜ |
-| 12 | Concepts | [12](12-concepts.md) | 🟨 (C1) |
+| 12 | Concepts | [12](12-concepts/index.md) | 🟨 (C1) |
 | 13 | Building Blocks (detail) | [13](13-building-blocks-detail.md) | ⬜ |
 | 14 | Identification of Important Requirements | [14](14-important-requirements.md) | 🟨 (FR/NFR draft) |
 | 15 | Risks and Technical Risks | [15](15-risks.md) | ⬜ |

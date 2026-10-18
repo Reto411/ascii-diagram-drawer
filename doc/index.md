@@ -3,7 +3,7 @@ title: documentation-home
 description: entry point of the project documentation site — links to arc42, concepts, ADRs, templates
 scope: documentation
 status: stable
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # ascii-diagram-drawer — Documentation
@@ -16,7 +16,7 @@ A tool to draw ASCII (Unicode box-drawing) diagrams visually. See [arc42 §1](ar
 |------|-------|
 | Architecture (arc42, one file per chapter) | [arc42/overview.md](arc42/overview.md) |
 | **Objectives** (agents: always check before work) | [arc42/01-introduction-and-context.md](arc42/01-introduction-and-context.md) |
-| Concepts | `concepts/` (indexed in [arc42 §12](arc42/12-concepts.md)) |
+| Concepts | `arc42/12-concepts/` ([arc42 §12 index](arc42/12-concepts/index.md)) |
 | Design decisions (ADRs) | `adr/` |
 | Templates for new docs | `templates/` |
 

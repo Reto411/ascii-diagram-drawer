@@ -3,12 +3,24 @@ title: "arc42-5-constraints"
 description: hard constraints — legal, boundary conditions, technical framework conditions
 scope: architecture
 status: draft
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # 5. Constraints
 
 > *All hard constraints, grouped by category.*
+
+## 5.1 Legal & Regulatory Constraints
+
+> *[TBD — e.g. licensing of dependencies and glyph/font data.]*
+
+- [TBD]
+
+## 5.2 Boundary Conditions
+
+> *[TBD — what the system must work with or not depend on (platforms, I/O formats). Note: platform targets are already a framework condition in §5.3.]*
+
+- [TBD]
 
 ## 5.3 Technical Framework Conditions
 

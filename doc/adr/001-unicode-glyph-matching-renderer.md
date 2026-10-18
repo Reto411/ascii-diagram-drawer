@@ -3,7 +3,7 @@ title: 001 - unicode-glyph-matching-renderer
 description: rendering uses Unicode box-drawing characters; the renderer resolves the matching glyph per cell wherever possible
 scope: rendering
 status: accepted
-updated: 2026-10-17
+updated: 2026-10-18
 supersedes: null
 ---
 
@@ -28,4 +28,4 @@ The renderer works on a cell grid and **searches for a matching Unicode box-draw
 
 - **Positive:** clean joins between shapes, much more readable diagrams
 - **Negative / costs:** need a glyph-resolution table/algorithm; ambiguous cells (e.g. 5+ connections, text under an edge) need defined fallback rules
-- **Follow-ups:** overlap/collision precedence for non-edge content (text vs. borders) is still open — see arc42 §1.1 open points
+- **Follow-ups:** overlap/collision precedence for non-edge content (text vs. borders) is still open — tracked in concept C1, [glyph resolution](../arc42/12-concepts/glyph-resolution.md) ("How it works / behaves", fallback rules [TBD])

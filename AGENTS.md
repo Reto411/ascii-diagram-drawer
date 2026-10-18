@@ -17,7 +17,7 @@ Before starting a task:
 1. Inspect the applicable repository instructions (this file, plus any nested `AGENTS.md`).
 2. **Always read the objectives file** — `doc/arc42/01-introduction-and-context.md` (§1.1). It defines what we are building; every task should be checkable against it.
 3. **Always search the `.agents/` folder** (especially `.agents/skills/`) and check available project skills; if a skill matches the task, read its `SKILL.md` before making changes. Treat notes in `.agents/` as authoritative alongside the arc42 docs (`doc/arc42/`).
-4. **Before implementing anything, check the relevant Design Decision Records (`doc/adr/`) and concept docs (`doc/concepts/`)** — if they are not already in context, read them first and implement in line with them. If a planned implementation contradicts a recorded decision or concept definition, stop and point out the conflict.
+4. **Before implementing anything, check the relevant Design Decision Records (`doc/adr/`) and concept docs (`doc/arc42/12-concepts/`)** — if they are not already in context, read them first and implement in line with them. If a planned implementation contradicts a recorded decision or concept definition, stop and point out the conflict.
 5. Follow nested `AGENTS.md` files for files in their respective directories.
 6. Prefer repository-local instructions over global defaults when they conflict.
 
@@ -75,10 +75,10 @@ Context is limited (~100k). When writing any file intended for agents (instructi
 
 Whenever work introduces or clarifies a **concept** (a domain term, mechanism, or reusable idea — e.g. "shape template", "grid cell", "render pipeline"), create a concept doc — **always using the template** (`doc/templates/concept.md`), do not invent your own structure:
 
-- Location: `doc/concepts/<kebab-case-name>.md`
+- Location: `doc/arc42/12-concepts/<kebab-case-name>.md` (inside the arc42 §12 chapter folder)
 - Must carry the standard frontmatter header (`scope` = the concept's area)
 - Content: one-line definition, why it exists, how it works/behaves, relations to other concepts (link them), and where it is implemented (once code exists)
-- **Before creating any concept doc, always check whether the concept already exists** — search `doc/concepts/` and the arc42 §12 index (and grep the repo for the term). If it exists, update that doc; never create a second file for the same concept.
+- **Before creating any concept doc, always check whether the concept already exists** — search `doc/arc42/12-concepts/` (the arc42 §12 chapter — index plus concept docs) and grep the repo for the term. If it exists, update that doc; never create a second file for the same concept.
 - One concept per file
 - Keep arc42 §12 (Concepts) as the index: add a one-line pointer per concept there
 
@@ -130,7 +130,7 @@ Work **self-reliantly**. The human is usually absent; local compute (incl. GPU) 
 Docs are part of the change, not an afterthought. In the **same commit** as the change that makes them stale, update:
 
 - `doc/arc42/*.md` chapter files — when architecture, scope, or quality goals are affected; plus the progress tracker in `doc/arc42/overview.md`
-- `doc/concepts/*.md` — when behavior, definitions, relations, or implementation locations of a documented concept change (incl. the "Implementation" section once code lands)
+- `doc/arc42/12-concepts/*.md` — when behavior, definitions, relations, or implementation locations of a documented concept change (incl. the "Implementation" section once code lands)
 - `doc/adr/*.md` — flip `status: proposed` → `accepted` when the decision is implemented; open new ADRs for reversals
 - `.agents/` notes — when conventions or gotchas change
 

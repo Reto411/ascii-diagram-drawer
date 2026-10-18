@@ -3,7 +3,7 @@ title: glyph-resolution
 description: how the renderer picks one Unicode box-drawing character per grid cell when multiple edges meet — read before working on text rendering
 scope: rendering
 status: draft
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # Concept: Glyph Resolution
@@ -14,7 +14,7 @@ The process by which the renderer assigns exactly **one** Unicode box-drawing ch
 
 ## Why it exists
 
-Characters occupy single cells; where shape borders meet or cross (corners, T-junctions, crossings), several logical edges share one cell. Without resolution, joins would render as broken or overlapping glyphs. Decided in [ADR 001](../adr/001-unicode-glyph-matching-renderer.md).
+Characters occupy single cells; where shape borders meet or cross (corners, T-junctions, crossings), several logical edges share one cell. Without resolution, joins would render as broken or overlapping glyphs. Decided in [ADR 001](../../adr/001-unicode-glyph-matching-renderer.md).
 
 ## How it works / behaves
 
@@ -25,7 +25,7 @@ Characters occupy single cells; where shape borders meet or cross (corners, T-ju
 
 ## Relations
 
-- **Cell grid** — the coordinate system glyph resolution operates on (`doc/concepts/cell-grid.md`, not yet written)
+- **Cell grid** — the coordinate system glyph resolution operates on (concept doc not yet written; will live in this folder)
 - **Diagram model** — shapes declare edges; they never choose glyphs themselves
 
 ## Implementation

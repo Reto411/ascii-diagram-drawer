@@ -15,13 +15,13 @@ nav:
       - "9. Runtime View": arc42/09-runtime-view.md
       - "10. Deployment View": arc42/10-deployment-view.md
       - "11. Cross-cutting Concerns": arc42/11-cross-cutting-concerns.md
-      - "12. Concepts": arc42/12-concepts.md
+      - "12. Concepts":
+          - Overview: arc42/12-concepts/index.md
+          - Glyph resolution: arc42/12-concepts/glyph-resolution.md
       - "13. Building Blocks (Detail)": arc42/13-building-blocks-detail.md
       - "14. Important Requirements": arc42/14-important-requirements.md
       - "15. Risks and Technical Risks": arc42/15-risks.md
       - "16. Glossary": arc42/16-glossary.md
-  - Concepts:
-      - Glyph resolution: concepts/glyph-resolution.md
   - ADRs:
       - "001 Unicode glyph-matching renderer": adr/001-unicode-glyph-matching-renderer.md
       - "002 MkDocs documentation site": adr/002-mkdocs-documentation-site.md

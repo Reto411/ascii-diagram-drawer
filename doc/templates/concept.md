@@ -22,7 +22,7 @@ updated: YYYY-MM-DD
 
 ## Relations
 
-- **<other-concept>** — <how they interact> (link: `doc/concepts/<other>.md`)
+- **<other-concept>** — <how they interact> (link: `doc/arc42/12-concepts/<other>.md`)
 
 ## Implementation
 
