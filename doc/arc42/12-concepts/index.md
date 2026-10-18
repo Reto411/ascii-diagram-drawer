@@ -20,4 +20,12 @@ updated: 2026-10-18
 - **Interfaces (provided/required):** [TBD]
 - **Dependencies:** [TBD]
 
+## Concept C2: Render Pipeline
+
+- **ID:** C2
+- **Purpose:** deterministic model → resolved character grid → text/SVG/PNG; vector output is derived from the same grid as the text (svgbob-style interpretation), so all outputs match exactly
+- **Details:** [`doc/arc42/12-concepts/render-pipeline.md`](render-pipeline.md) · rendering reference: svgbob (§1 Background)
+- **Interfaces (provided/required):** [TBD]
+- **Dependencies:** C1 (glyph resolution is stage 2 of the pipeline)
+
 *(Repeat per concept.)*

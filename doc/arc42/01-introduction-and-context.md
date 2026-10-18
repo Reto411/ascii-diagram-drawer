@@ -18,6 +18,7 @@ The target is a diagramming tool **similar to Visio**, but built on an **open so
 - Text-based diagram languages exist already (e.g. PlantUML), but they have a fundamental problem: in complex diagrams the **automatic layout engine rearranges the diagram by itself**, and the result turns into spaghetti.
 - This tool prevents that with its **graphical overlay**: shapes are placed manually on a canvas (with grid alignment, see §1.1 objective 7), giving the user full control over where every element ends up — while still producing the plain-text output.
 - **Usage-model reference:** [asciilogic](https://asciilogic.com) — canvas-based editing with tools for shapes, connectors, and text; connectors snap to shape anchors and stay bound when shapes move or resize. Our differentiators on top of that model: **fully user-defined diagram objects** and **collections** for grouping/reuse (Obj. 3).
+- **Rendering-model reference:** [svgbob](https://ivanceras.github.io/svgbob/) — the character grid is interpreted deterministically: each glyph's shape depends on its neighboring cells, fragments merge into lines/arcs, and patterns are promoted to high-level shapes (rects, circles). We adopt this grid→vector interpretation for SVG/PNG export so **every output matches the text representation exactly**. Difference from svgbob: our character grid is *derived* from the object model at render time — it is not the storage format ([ADR 004](../adr/004-diagram-file-format.md)).
 
 ## 1.1 Objectives
 
