@@ -16,7 +16,7 @@ The deterministic path from diagram model to output: objects with explicit grid 
 
 - **Single source of truth for all outputs.** Deriving vector output from the resolved grid — not from raw object geometry — guarantees SVG/PNG always look like the text ([FR5](../14-important-requirements.md)).
 - **Pure deterministic logic** ([Q1](../01-introduction-and-context.md#12-quality-goals-top-level) / NFR3): no layout engine, no randomness; same model → byte-identical text *and* geometrically identical vector output.
-- One grid stage serves both output families; the interpretation logic is shared and unit-testable headlessly (NFR5).
+- One grid stage serves all outputs; the transliteration adapter is deterministic and unit-testable headlessly (NFR5), and the heavy vector interpretation is delegated to the proven `svgbob` crate ([ADR 005](../../adr/005-use-svgbob-as-vector-renderer.md)).
 
 ## How it works / behaves
 
@@ -26,7 +26,8 @@ Three stages, all pure functions:
 2. **Resolve** — every occupied cell gets exactly one glyph via [glyph resolution](glyph-resolution.md) (C1), based on the N/E/S/W connections and content passing through the cell.
 3. **Emit** — per output family:
    - *Text*: dump the resolved grid (UTF-8, LF).
-   - *SVG/PNG* (svgbob-style): each glyph + its connection set maps to vector fragments (line segments, arcs, arrowheads); collinear fragments merge into lines; recognizable patterns are promoted to high-level shapes (rects from box borders, circles from ellipse outlines); text cells become text elements. PNG is a rasterization of the same SVG geometry.
+   - *SVG* (svgbob-style interpretation, [ADR 005](../../adr/005-use-svgbob-as-vector-renderer.md)): the resolved Unicode grid is transliterated deterministically into svgbob's ASCII alphabet (`─`→`-`, `┌`→`.`, junctions → `+`, label text unchanged), and the interpretation — per-cell fragments, merging of collinear fragments, promotion to high-level shapes (rects, circles) — is delegated to the `svgbob` crate.
+   - *PNG*: rasterization of the produced SVG (rasterizer TBD).
 
 The character grid is a **derived intermediate representation** — it is never stored as the file format ([ADR 004](../../adr/004-diagram-file-format.md)).
 
