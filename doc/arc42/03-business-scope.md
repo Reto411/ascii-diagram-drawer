@@ -29,7 +29,7 @@ ascii-diagram-drawer is an **open-source visual editor for text-based diagrams**
 | # | Feature | Description | As of |
 |---|---------|-------------|-------|
 | F1 | Visual canvas editor | Place, move, and resize predefined shapes (boxes, circles, …) on a grid-aligned canvas | v1 |
-| F2 | Connectors & anchor points | Draw lines/arrows between objects; they snap to **anchor points** that the user can define per object, and stay connected when the object moves or is resized | v1 |
+| F2 | Connectors & anchor points | Draw lines/arrows between objects; they snap to **anchor points** and stay connected when the object moves or is resized. Predefined shapes come with standard anchors (basic positions + official UML connection points); for your own shapes you define the anchor points yourself | v1 |
 | F3 | Plain-text output | The diagram *is* plain monospace text — pasteable into terminals, READMEs, design docs, chat, commit messages | v1 |
 | F4 | Image export | SVG (vector) and PNG (raster) exports that always match the text representation exactly | v1 |
 | F5 | Custom diagram objects | Define your own shapes entirely in plain text, including their anchor points | v1 |

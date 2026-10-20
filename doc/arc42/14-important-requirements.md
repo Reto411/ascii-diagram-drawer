@@ -26,7 +26,7 @@ updated: 2026-10-18
 | FR8 | A scale control scales the entire diagram's rendered output up (larger spacing → more readable text output), not just a display zoom | §1.1 Obj. 7 | Medium |
 | FR9 | Connectors (lines/arrows) can be drawn between/around shapes; they bind to shape anchors and stay attached when the bound shape moves or resizes | Usage reference: asciilogic (§1 Background) | Medium |
 | FR10 | Free text can be placed as an element on the canvas (independent of shapes) | Usage reference: asciilogic (§1 Background) | Low |
-| FR11 | Anchor points can be defined per object — including on predefined shapes, not only on user-defined ones — so connectors can bind at user-chosen positions (extends FR9; user-defined templates already carry declared anchors per [ADR 007](../adr/007-user-defined-diagram-objects.md)) | §3.2 F2 (product interview 2026-10-18) | Medium |
+| FR11 | Every object type exposes anchor points for connectors (FR9): user-defined shape templates declare their own anchor cells ([ADR 007](../adr/007-user-defined-diagram-objects.md)); predefined shapes ship with standard default anchors (basic positions + official UML connection points); imported/registered shapes receive anchors when registered (FR12). The exact default anchor set per predefined shape is an open spec point | §3.2 F2, Q3 (product interview 2026-10-18) | Medium |
 | FR12 | Existing ASCII diagrams can be imported: regions matching known shape templates load as fully editable objects; unknown regions load with a warning in reduced form (no resizing/grouping) and can optionally be registered as new custom shapes (**v1+**, not in v1 scope) | §3.2 F9 (product interview 2026-10-18) | Medium |
 
 ## 14.2 Non-functional Requirements
