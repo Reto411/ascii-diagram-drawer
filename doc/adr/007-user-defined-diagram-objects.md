@@ -4,7 +4,7 @@ description: users define their own diagram objects as named shape templates (pl
 scope: domain model / file format
 status: proposed
 updated: 2026-10-18
-version: 1
+version: 2
 ---
 
 # ADR 007: User-defined diagram objects and collections
@@ -22,6 +22,7 @@ Open questions: what is a user-defined object *made of*, and how do custom objec
 A **shape template** is the unit of user-defined content; a **collection** groups templates.
 
 1. **Representation — stamped ASCII art.** A shape template is a named, fixed-size grid of svgbob-alphabet characters (the same alphabet as the resolved grid, ADR 001) plus declared **anchor points**: named cells where connectors may bind. Templates are authored by the user in plain text — the same look-and-feel as typing an ASCII diagram by hand; no separate DSL in v1.
+   - **Anchors are per type** (v2): the anchor set is part of the template definition and shared by all instances of that shape. It can be defined in two equivalent modes from v1: **textually** in the plain-text template file, or **graphically** in a template editor — same underlying data, the file remains the source of truth (FR11).
 2. **Collections.** Templates live in **collections**: named, open plain-text files (ADR 004 format family) that group related templates. Diagrams reference templates as `collection/name`. Collections make custom objects shareable between users and projects as ordinary files.
 3. **Rendering — opaque stamp with live anchors.** At render time the template grid is stamped onto the cell grid at the object's position: non-anchor cells are copied verbatim (like text — they do *not* participate in glyph resolution), while anchor cells resolve against connecting edges like built-in shape borders, so connectors join cleanly and stay bound when the object moves (FR9).
 4. **Fixed size in v1.** Custom objects are not resizable; only predefined shapes (FR1) resize. Resizing a stamp would require re-rasterizing user art — out of scope for v1.
@@ -39,4 +40,9 @@ A **shape template** is the unit of user-defined content; a **collection** group
 
 - **Positive:** trivially authorable (plain text, no DSL), shareable (plain files), deterministic; connectors still bind cleanly via anchors; no new rendering machinery beyond stamping + anchor resolution.
 - **Negative / costs:** custom objects are fixed-size in v1 (visible limitation vs built-in shapes); templates with dense art cannot merge borders with neighbours (by design — opaque stamps); collection naming and collision rules need a spec.
-- **Follow-ups:** spec template + collection file syntax and the anchor marker character(s) (must not collide with svgbob drawing characters or the double-quote escape) in ADR 004's format chapter; on acceptance: concept docs for "shape template" and "collection" (§12), GUI editing flow for templates, `collection/name` resolution rules.
+- **Follow-ups:** spec template + collection file syntax and the anchor marker character(s) (must not collide with svgbob drawing characters or the double-quote escape) in ADR 004's format chapter; on acceptance: concept docs for "shape template" and "collection" (§12), graphical anchor-definition mode in the template editor (in v1 scope since v2, FR11), `collection/name` resolution rules. ⚠️ Open conflict: FR12's registration flow (v1+) lets users specify resize behavior for registered shapes, which contradicts point 4 (custom objects fixed-size in v1) — resolve when scoping FR12.
+
+## Version history
+
+- **v2 (2026-10-18):** anchor sets are per type and definable both textually and graphically from v1 (product interview, recorded as FR11); flagged the resize-rule conflict with FR12's registration flow (open, v1+).
+- **v1 (2026-10-18):** initial decision — shape templates as stamped ASCII art with declared anchors, grouped in collections.
