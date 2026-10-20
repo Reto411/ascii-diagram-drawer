@@ -17,6 +17,23 @@ updated: 2026-10-18
 
 > **How to use this documentation:** Each chapter is its own file in this folder and contains italic guidance text (what belongs here) and `[TBD]` placeholders. Fill chapters incrementally; keep the progress table below updated. Remove guidance notes as chapters are finalized.
 
+> **Relation to the official arc42 template:** this documentation follows a *tailored* 16-chapter layout (arc42 is explicitly tailorable). Mapping to the official 12 sections ([arc42.org/overview](https://arc42.org/overview/)):
+>
+> | Official section | Here |
+> |---|---|
+> | 01 Introduction and Goals | §1 (+ §3, §4) |
+> | 02 Constraints | §5 |
+> | 03 Context and Scope | §3 |
+> | 04 Solution Strategy | §7 |
+> | 05–07 Building Block / Runtime / Deployment View | §8–§10 |
+> | 08 Crosscutting Concepts | §11, §12 |
+> | 09 Architectural Decisions | ADRs in `doc/adr/` |
+> | 10 Quality Requirements | §6 |
+> | 11 Risks and Technical Debt | §15 |
+> | 12 Glossary | §16 |
+>
+> Local chapters without an official counterpart: §2 Architecture Vision, §13 Building Blocks (detail), §14 Important Requirements.
+
 ## Progress tracker
 
 | § | Chapter | File | Status |

@@ -38,15 +38,15 @@ The target is a diagramming tool **similar to Visio**, but built on an **open so
 
 > *The 3–5 most important quality attributes of this system (e.g. "fast rendering", "zero-dependency output", "works offline"). Detailed scenarios go in [§6](06-quality-model.md).*
 
-| # | Quality goal | Priority (H/M/L) |
-|---|--------------|------------------|
-| Q1 | **Deterministic output** — rendering is a pure, deterministic function of the diagram model: no auto-layout, no randomness; same model → identical text | H |
-| Q2 | **Cross-platform portability** — one codebase runs on Windows, macOS, Linux, and in the browser (WASM) | H |
-| Q3 | **Open, readable format** — diagram files are plain text: human-readable without a renderer, easy to diff in version control | H |
-| Q4 | **Low learning curve** — minimal UI; a new user can compose their first diagram quickly | M |
-| Q5 | **Testable core** — rendering/export logic is platform-independent and unit-testable headlessly (no GUI) | M |
+| # | Quality goal | Concrete scenario (one line) | Priority (H/M/L) |
+|---|--------------|------------------------------|------------------|
+| Q1 | **Deterministic output** — rendering is a pure, deterministic function of the diagram model: no auto-layout, no randomness | Rendering the same model twice — on any platform, at any time — yields byte-identical text *and* SVG | H |
+| Q2 | **Cross-platform portability** — one codebase runs on Windows, macOS, Linux, and in the browser (WASM) | The same codebase builds and passes the full test suite on all four targets without target-specific forks | H |
+| Q3 | **Open, readable format** — diagram files are plain text: human-readable without a renderer, easy to diff in version control | `cat diagram.ad` shows every shape, label, and position; git diffs read as per-element changes | H |
+| Q4 | **Low learning curve** — minimal UI; a new user can compose their first diagram quickly | A first-time user places shapes, connects them with arrows, and exports text — without reading the docs | M |
+| Q5 | **Testable core** — rendering/export logic is platform-independent and unit-testable headlessly (no GUI) | The entire render/export pipeline runs in headless unit tests; core crates stay ≥80% line coverage | M |
 
-> *Draft, derived from §1.1 objectives and Background (inherits their "pending confirmation" status). Measurable scenarios: [§6](06-quality-model.md).*
+> *Draft, derived from §1.1 objectives and Background (inherits their "pending confirmation" status). Detailed, measurable quality scenarios (usage **and** change scenarios, official arc42 scenario format: context/stimulus/metric) live in [§6](06-quality-model.md).*
 
 ## 1.3 Constraints
 
