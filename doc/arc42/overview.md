@@ -43,7 +43,7 @@ updated: 2026-10-18
 | 3 | Business Scope | [03](03-business-scope.md) | 🟨 (drafted from product interview) |
 | 4 | Stakeholders and Users | [04](04-stakeholders-and-users.md) | ⬜ |
 | 5 | Constraints | [05](05-constraints.md) | 🟨 drafted (2026-10-18) — legal/boundary/framework conditions from existing decisions; performance budgets *proposed, pending confirmation*; GUI framework decided → [ADR 008](../adr/008-gui-framework-choice.md) (egui/eframe, `proposed`; Slint fallback) |
-| 6 | Quality Model | [06](06-quality-model.md) | ⬜ |
+| 6 | Quality Model | [06](06-quality-model.md) | 🟨 drafted (2026-10-18) — quality tree, 13 measurable scenarios (usage + change, official short form), test goals T1–T7 with coverage gate ≥80% and golden-file determinism as CI invariant; perf scenarios await §5.3 budget confirmation |
 | 7 | Solution Strategy | [07](07-solution-strategy.md) | ⬜ |
 | 8 | Building Block View | [08](08-building-block-view.md) | ⬜ |
 | 9 | Runtime View | [09](09-runtime-view.md) | ⬜ |
