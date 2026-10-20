@@ -31,7 +31,7 @@ updated: 2026-10-18
 | Language | Rust — workspace with platform-independent core crates shared by all GUI targets (AGENTS.md convention) |
 | Core independence | Rendering/export/format logic: plain data in → text/SVG/PNG out, **no windowing or event-loop dependencies** in core; unit-testable headlessly (AGENTS.md, Q5/NFR5) |
 | Vector rendering | `svgbob` crate interprets the resolved grid — no second vector path ([ADR 005](../adr/005-use-svgbob-as-vector-renderer.md)) |
-| GUI framework | Must target native desktop (Win/macOS/Linux) **and** web/WASM from one codebase (NFR1/Q2). **Choice: open — [ADR 008](../adr/008-gui-framework-choice.md), under joint evaluation with decision matrix** |
+| GUI framework | Must target native desktop (Win/macOS/Linux) **and** web/WASM from one codebase (NFR1/Q2). **Chosen: egui / eframe** — [ADR 008](../adr/008-gui-framework-choice.md) (status `proposed`; Slint recorded as fallback) |
 | Build tooling | `cargo`; web target `wasm32-unknown-unknown`; frontend bundling follows the GUI framework choice |
 | Quality gates | `cargo fmt`, `cargo clippy` (deny warnings), `cargo tarpaulin` ≥80% line coverage on core crates (AGENTS.md) |
 | Performance budgets (proposed, pending confirmation) | First render < 100 ms for a 500-object diagram; interactive drag/resize feedback ≤ 16 ms per frame on desktop; WASM initial download < 2 MB compressed |

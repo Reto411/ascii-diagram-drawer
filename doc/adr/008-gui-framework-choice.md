@@ -1,10 +1,10 @@
----
+a---
 title: 008 - gui-framework-choice
-description: which GUI framework targets native desktop AND web/WASM from one Rust codebase — under joint evaluation with weighted decision matrix; read before any GUI code
+description: which GUI framework targets native desktop AND web/WASM from one Rust codebase — decided egui/eframe via weighted decision matrix (status proposed); read before any GUI code
 scope: GUI / tech stack
 status: proposed
 updated: 2026-10-18
-version: 1
+version: 2
 ---
 
 # ADR 008: GUI framework choice
@@ -15,7 +15,7 @@ The GUI must run on **Windows, macOS, Linux (native desktop) and in the browser 
 
 Fixed by earlier ADRs: the platform-independent core (model, `.ad` format, render pipeline, svgbob SVG) is already framework-agnostic Rust; whatever GUI we pick only has to (a) draw the canvas, (b) translate user gestures into model mutations, (c) call the core — natively on desktop and via WASM in the browser.
 
-**Decision status: pending.** Candidates and a weighted decision matrix are below for **joint evaluation** — weights and scores are provisional drafts, not a decided outcome.
+**Decision status: decided 2026-10-18** (joint evaluation; weights and scores agreed as drafted). Status stays `proposed` until the first GUI milestone is implemented.
 
 ## Candidates & Evaluation
 
@@ -31,7 +31,7 @@ Fixed by earlier ADRs: the platform-independent core (model, `.ad` format, rende
 
 Considered and dropped: **Flutter** (mature desktop+web, but Dart UI contradicts the all-Rust workspace convention); **druid** (low activity); **GPUI/Zed** (young, built for one editor, not a general toolkit).
 
-### Weighted decision matrix (PROVISIONAL — for joint review)
+### Weighted decision matrix (agreed in joint review, 2026-10-18)
 
 Gates must pass; scores 1–5 (5 = best fit); weights sum to 12.
 
@@ -47,16 +47,21 @@ Gates must pass; scores 1–5 (5 = best fit); weights sum to 12.
 | Team fit / maintainability (1) | Long-term: Rust-only UI code is a plus for this repo | **5** — pure Rust | **5** — Rust (+`.slint` markup) | **5** — pure Rust | **5** — pure Rust | **2** — TS/Svelte + Rust to maintain in parallel |
 | **Weighted total (max 50)** | | **48** | **46** | **41** | **41** ⚠️ | **44** |
 
-> *Totals computed from the provisional scores above — they will shift as we review. `?`/⚠️ cells need verification (spike or docs) before the final scoring round.*
+> *`?`/⚠️ cells: iced web maturity and Dioxus desktop canvas story remain unverified — moot for the outcome, since both candidates trail the top three by ≥3 points under the agreed scores.*
 
 ## Decision
 
-**Pending joint evaluation.** Proposed next steps:
+**egui / eframe** (Rust, immediate mode) is the GUI framework:
 
-1. Review weights together (esp. "canvas editing UX fit" vs "team fit").
-2. Verify flagged cells: iced web maturity; Dioxus desktop canvas story; Slint FemtoVG perf at our scale.
-3. Optional 1-day spike on the top 2–3 candidates (grid canvas + drag + live re-render + one core call, built for both targets).
-4. Record the outcome here (bump `version`, fill Decision/Consequences) and flip status to `accepted` when implemented.
+- One Rust codebase compiles to native desktop (Windows/macOS/Linux via `egui-winit` + wgpu/glow) **and** browser wasm (WebGL) — satisfies NFR1/Q2 with an official, demoed web target.
+- The immediate-mode redraw loop *is* our canvas-editor model: every gesture invalidates → grid + shapes re-rendered; no retained scene-graph synchronization to build. `egui::Painter` provides custom 2D drawing; interaction/hit-testing is built in.
+- Core integration is all-Rust on **both** targets — the GUI calls the same platform-independent core directly (desktop) and inside wasm (web). No JS boundary, no second UI language.
+
+**Fallback:** Slint (46) if eframe's API churn proves painful during the first GUI milestone — revisit by bumping this ADR's `version`, not a new ADR.
+
+Not selected: Tauri + SvelteKit (44 — most mature canvas tooling, but TS+Rust two-language UI and a wasm/JS core boundary on *both* targets); Dioxus (41 — desktop 2D-drawing story unverified); iced (41⚠️ — web support unverified).
+
+Remaining verification happens *inside* the first GUI milestone, not before it: workspace scaffold + spike (grid canvas with drag + live re-render, built for desktop **and** browser), plus per-target checks of file dialogs/clipboard.
 
 ## Alternatives considered
 
@@ -69,8 +74,13 @@ Gates must pass; scores 1–5 (5 = best fit); weights sum to 12.
 
 ## Consequences
 
-TBD — filled in with the decision.
+- **+** Single language end-to-end; first-class web target; `Painter` API purpose-built for custom drawing; fast iteration on a canvas app.
+- **−** egui/eframe APIs are explicitly in flux (breaking changes between releases). Mitigation: pin versions, keep the GUI layer thin so churn never reaches the platform-independent core; revisit via ADR version bump if it hurts.
+- **−** Immediate mode re-renders every frame. Fine at our scale boundary (§5.2: ≤500 objects) because the pure core pipeline bounds per-frame cost deterministically — but canvas draw calls must stay bounded (no per-cell allocations in hot paths).
+- **−** No DOM conveniences: file dialogs/clipboard come from eframe native APIs or small crates (`rfd`, `arboard`) — each must be verified on all four targets during the first milestone.
+- The SvelteKit/Vite entries in `.gitignore` are obsolete hints (no separate web frontend); cleanup optional.
 
 ## Version history
 
+- **v2 (2026-10-18):** joint evaluation completed — weights and scores agreed as drafted; **egui/eframe selected** (48/50), Slint recorded as fallback (46). Verification of trailing candidates deprioritized. Decision pending implementation (status `proposed`).
 - **v1 (2026-10-18):** opened for joint evaluation — candidate evidence gathered, weighted matrix drafted (provisional). No decision yet.

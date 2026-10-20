@@ -42,7 +42,7 @@ updated: 2026-10-18
 | 2 | Architecture Vision | [02](02-architecture-vision.md) | 🟨 (drafted from existing ADRs/concepts, pending review) |
 | 3 | Business Scope | [03](03-business-scope.md) | 🟨 (drafted from product interview) |
 | 4 | Stakeholders and Users | [04](04-stakeholders-and-users.md) | ⬜ |
-| 5 | Constraints | [05](05-constraints.md) | 🟨 drafted (2026-10-18) — legal/boundary/framework conditions from existing decisions; performance budgets *proposed, pending confirmation*; GUI framework choice deliberately left open → [ADR 008](../adr/008-gui-framework-choice.md), under joint evaluation |
+| 5 | Constraints | [05](05-constraints.md) | 🟨 drafted (2026-10-18) — legal/boundary/framework conditions from existing decisions; performance budgets *proposed, pending confirmation*; GUI framework decided → [ADR 008](../adr/008-gui-framework-choice.md) (egui/eframe, `proposed`; Slint fallback) |
 | 6 | Quality Model | [06](06-quality-model.md) | ⬜ |
 | 7 | Solution Strategy | [07](07-solution-strategy.md) | ⬜ |
 | 8 | Building Block View | [08](08-building-block-view.md) | ⬜ |

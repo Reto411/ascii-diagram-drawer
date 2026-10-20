@@ -40,8 +40,8 @@ A tool to **draw ASCII diagrams visually**: users place, move, and resize predef
 > [TBD — fill in once decided]
 
 - Language: Rust (workspace layout: [TBD])
-- GUI framework: [under evaluation — doc/adr/008-gui-framework-choice.md (joint decision matrix); hard requirement: native desktop + web/WASM from one codebase]
-- Web frontend: [follows the ADR 008 outcome; .gitignore already hints SvelteKit/Vite]
+- GUI framework: **egui / eframe** (immediate-mode Rust, compiles to native desktop + browser wasm) — [ADR 008](doc/adr/008-gui-framework-choice.md), status `proposed` (Slint = recorded fallback)
+- Web frontend: none separate — eframe builds the same app to wasm; the SvelteKit/Vite hints in `.gitignore` are obsolete
 - Rendering/export: [TBD — text rasterizer for monospace grid, SVG/PNG exporters]
 
 ## Conventions
