@@ -1,9 +1,9 @@
 ---
 title: "009 - ui-api-service-layer"
-description: GUI talks to core only through a small trait-based service layer (ui-api) with pluggable backends wired at a composition root — loose coupling, per-target stores, swappable PNG rasterizer, fakeable GUI tests
+description: GUI talks to core only through a small trait-based service layer (ui-api) with pluggable backends wired at a composition root — loose coupling, per-target stores, swappable PNG rasterizer, fakeable GUI tests; five services incl. ASCII import (v1+)
 scope: architecture
 status: proposed
-version: 1
+version: 2
 updated: 2026-10-18
 ---
 
@@ -26,18 +26,20 @@ Introduce two crates forming the seam between GUI and core:
 - **`ui-api`** — the service interface layer. Defines four small, object-safe traits plus shared service types (e.g. `StoreError`). Depends only on `diagram-model` and `render-pipeline` (for the `ResolvedGrid` type).
 - **`core-services`** — concrete backends + composition root. Contains the trait implementations and a `Services { store, renderer, exporter, catalog }` aggregate with per-target constructors (`native()` / `web()`, PNG optional).
 
-The four services:
+Five services (the last is v1+ scope):
 
 | Service | Trait responsibility | Backends |
 |---------|----------------------|----------|
-| `DiagramStore` | load/save `.ad` files (FR4) | native fs store; browser store (wasm) |
+| `DiagramStore` | load/save `.ad` files (FR4) — `load` is the importer for *our own* format: file bytes → `ad-format` parser → `Diagram` | native fs store; browser store (wasm) |
 | `Renderer` | `render(&Diagram, &ShapeCatalog) -> ResolvedGrid` | render-pipeline (thin wrapper over its pure functions) |
 | `Exporter` | grid → text / SVG / PNG (FR2/FR5); `png()` may return `Err(Unsupported)` | svgbob exporter + optional rasterizer backend |
 | `ShapeCatalog` | list/lookup shape types & anchor sets; registration (v1+, FR12) | builtin catalog + file-backed collections |
+| `DiagramImporter` | **ASCII import of foreign diagrams** (F9, **v1+**): text → grid → region segmentation → template matching → editable `Diagram`; unknown regions → fixed-size reduced objects + warnings (FR12) | new `ascii-import` core crate (pure logic); adapter in `core-services` |
 
 Rules:
 
-- **`gui-app` depends only on `ui-api`, `core-services` (construction only), and `diagram-model` value types** — never on `ad-format`, `shape-registry`, `render-pipeline`, or `exporters` directly. All behavior goes through the traits (`Arc<dyn …>` held by the eframe app struct; dispatch cost is negligible at our scale).
+- **`gui-app` depends only on `ui-api`, `core-services` (construction only), and `diagram-model` value types** — never on `ad-format`, `shape-registry`, `render-pipeline`, `exporters`, or `ascii-import` directly. All behavior goes through the traits (`Arc<dyn …>` held by the eframe app struct; dispatch cost is negligible at our scale).
+- `ascii-import` sits in the **core tier** (depends on model, registry, pipeline grid type) — pure and headless-testable like the rest of core; only reachable through the seam.
 - **Deliberate non-abstraction:** diagram *mutation* (place/move/resize/connect) stays direct manipulation of the pure `Diagram` value type inside the GUI — no "model service" trait. The data is cheap to clone and involves no IO; abstracting it would be ceremony without a backend to swap.
 - Graceful degradation by construction: if no PNG backend is configured, `Exporter::png()` returns `Err(Unsupported)` and the GUI offers SVG-only export — no code change (R3 resolved as an option, not a fork).
 
@@ -53,10 +55,11 @@ Rules:
 
 - **Positive:** backends swappable per target (store) and per build configuration (PNG); GUI logic testable with in-memory fakes (T7); headless/CLI export reuses the same `Services`; the open PNG decision (R3) stops blocking architecture.
 - **Negative / costs:** one seam crate + one services crate; risk of a poorly-shaped API surface — mitigated by keeping exactly four traits derived from actual GUI needs and reviewing them at scaffolding time; `dyn` dispatch (negligible here).
-- **Follow-ups:** pin exact trait signatures when the workspace is scaffolded; decide where platform store impls live (`core-services` vs a `platform-io` crate); revisit if egui's testing story matures.
+- **Follow-ups:** pin exact trait signatures when the workspace is scaffolded; decide where platform store impls live (`core-services` vs a `platform-io` crate); ASCII-import matching heuristics (segmentation + tolerance scoring) are an open spec point for v1+ — pin with golden tests when implemented; revisit if egui's testing story matures.
 
 ## Version history
 
 > When a decision changes: bump `version` in the header, update Context/Decision to the *current* state, and add an entry here (newest first) recording what changed, why, and when. Never create a superseding ADR.
 
+- **v2 (2026-10-18):** added `DiagramImporter` as the fifth service (v1+, F9/FR12) — ASCII import of foreign diagrams goes through the same seam instead of being special-cased in `gui-app` or buried in `shape-registry`; the pure matching logic gets its own `ascii-import` core crate.
 - **v1 (2026-10-18):** initial decision — UI API seam with four services (`DiagramStore`, `Renderer`, `Exporter`, `ShapeCatalog`), `core-services` composition root, direct model mutation kept unabstracted.
