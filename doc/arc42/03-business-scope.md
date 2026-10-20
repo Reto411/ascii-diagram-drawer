@@ -36,7 +36,7 @@ ascii-diagram-drawer is an **open-source visual editor for text-based diagrams**
 | F6 | Collections | Store objects in named collections for organization, reuse across diagrams, and sharing | v1 |
 | F7 | Grid alignment & scaling | Shapes snap to a grid; one control scales the whole diagram up for more readable output | v1 |
 | F8 | Cross-platform | One app on Windows, macOS, Linux, and in the browser | v1 |
-| F9 | Import existing ASCII | Bring an existing ASCII diagram back into the tool: regions matching known shapes load as fully editable objects; unknown regions load with a warning in reduced form (no resizing/grouping) and can optionally be registered as new custom shapes | v1+ |
+| F9 | Import existing ASCII | Bring an existing ASCII diagram back into the tool: regions matching known shapes load as fully editable objects; unknown regions load with a warning in reduced form (fixed-size, no grouping) until optionally registered as new custom shapes — registration defines their anchor points and resize behavior, making them fully editable | v1+ |
 
 ## 3.3 User Characteristics
 

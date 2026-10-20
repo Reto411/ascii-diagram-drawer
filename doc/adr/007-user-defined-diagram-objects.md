@@ -4,7 +4,7 @@ description: users define their own diagram objects as named shape templates (pl
 scope: domain model / file format
 status: proposed
 updated: 2026-10-18
-version: 2
+version: 3
 ---
 
 # ADR 007: User-defined diagram objects and collections
@@ -25,7 +25,7 @@ A **shape template** is the unit of user-defined content; a **collection** group
    - **Anchors are per type** (v2): the anchor set is part of the template definition and shared by all instances of that shape. It can be defined in two equivalent modes from v1: **textually** in the plain-text template file, or **graphically** in a template editor — same underlying data, the file remains the source of truth (FR11).
 2. **Collections.** Templates live in **collections**: named, open plain-text files (ADR 004 format family) that group related templates. Diagrams reference templates as `collection/name`. Collections make custom objects shareable between users and projects as ordinary files.
 3. **Rendering — opaque stamp with live anchors.** At render time the template grid is stamped onto the cell grid at the object's position: non-anchor cells are copied verbatim (like text — they do *not* participate in glyph resolution), while anchor cells resolve against connecting edges like built-in shape borders, so connectors join cleanly and stay bound when the object moves (FR9).
-4. **Fixed size in v1.** Custom objects are not resizable; only predefined shapes (FR1) resize. Resizing a stamp would require re-rasterizing user art — out of scope for v1.
+4. **Resizability via declared rules.** A custom object is resizable only if its definition declares **resize behavior** (what to adjust when resized); without declared rules it is fixed-size — including unknown imported objects before registration (FR12). Resizing matters (product decision 2026-10-18), but re-rasterizing user art is costly, so rule support lands in **v1+**; in v1 all custom objects are fixed-size.
 5. **Determinism.** Stamping + anchor resolution are pure functions of (template, position, connectors) — NFR3 holds; golden-file tests cover stamping and anchor joins headlessly (NFR5).
 
 ## Alternatives considered
@@ -40,9 +40,10 @@ A **shape template** is the unit of user-defined content; a **collection** group
 
 - **Positive:** trivially authorable (plain text, no DSL), shareable (plain files), deterministic; connectors still bind cleanly via anchors; no new rendering machinery beyond stamping + anchor resolution.
 - **Negative / costs:** custom objects are fixed-size in v1 (visible limitation vs built-in shapes); templates with dense art cannot merge borders with neighbours (by design — opaque stamps); collection naming and collision rules need a spec.
-- **Follow-ups:** spec template + collection file syntax and the anchor marker character(s) (must not collide with svgbob drawing characters or the double-quote escape) in ADR 004's format chapter; on acceptance: concept docs for "shape template" and "collection" (§12), graphical anchor-definition mode in the template editor (in v1 scope since v2, FR11), `collection/name` resolution rules. ⚠️ Open conflict: FR12's registration flow (v1+) lets users specify resize behavior for registered shapes, which contradicts point 4 (custom objects fixed-size in v1) — resolve when scoping FR12.
+- **Follow-ups:** spec template + collection file syntax and the anchor marker character(s) (must not collide with svgbob drawing characters or the double-quote escape) in ADR 004's format chapter; on acceptance: concept docs for "shape template" and "collection" (§12), graphical anchor-definition mode in the template editor (in v1 scope since v2, FR11), `collection/name` resolution rules. Spec the resize-rule declaration (format + re-rasterization algorithm) when scoping FR12 (v1+).
 
 ## Version history
 
+- **v3 (2026-10-18):** point 4 reworked — resizing is important: a custom object is resizable once its definition declares resize behavior; unknown imported shapes stay fixed-size until defined/registered (resolves the v2 conflict with FR12). Rule support scoped to v1+.
 - **v2 (2026-10-18):** anchor sets are per type and definable both textually and graphically from v1 (product interview, recorded as FR11); flagged the resize-rule conflict with FR12's registration flow (open, v1+).
 - **v1 (2026-10-18):** initial decision — shape templates as stamped ASCII art with declared anchors, grouped in collections.
