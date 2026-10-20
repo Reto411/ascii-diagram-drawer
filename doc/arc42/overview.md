@@ -22,7 +22,7 @@ updated: 2026-10-18
 | § | Chapter | File | Status |
 |---|---------|------|--------|
 | 1 | Introduction and Context | [01](01-introduction-and-context.md) | 🟨 (1.1+1.2 draft, design refs) |
-| 2 | Architecture Vision | [02](02-architecture-vision.md) | ⬜ |
+| 2 | Architecture Vision | [02](02-architecture-vision.md) | 🟨 (drafted from existing ADRs/concepts, pending review) |
 | 3 | Business Scope | [03](03-business-scope.md) | 🟨 (drafted from product interview) |
 | 4 | Stakeholders and Users | [04](04-stakeholders-and-users.md) | ⬜ |
 | 5 | Constraints | [05](05-constraints.md) | ⬜ |
