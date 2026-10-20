@@ -3,7 +3,7 @@ title: agent-instructions
 description: canonical instructions for AI agents in this repo — behavior rules, project summary, conventions; read before any task
 scope: whole repository
 status: stable
-updated: 2026-10-17
+updated: 2026-10-18
 ---
 
 # AGENTS.md — ascii-diagram-drawer
@@ -40,8 +40,8 @@ A tool to **draw ASCII diagrams visually**: users place, move, and resize predef
 > [TBD — fill in once decided]
 
 - Language: Rust (workspace layout: [TBD])
-- GUI framework: [TBD — must compile to native desktop and web]
-- Web frontend: [TBD — .gitignore suggests SvelteKit/Vite, confirm]
+- GUI framework: [under evaluation — doc/adr/008-gui-framework-choice.md (joint decision matrix); hard requirement: native desktop + web/WASM from one codebase]
+- Web frontend: [follows the ADR 008 outcome; .gitignore already hints SvelteKit/Vite]
 - Rendering/export: [TBD — text rasterizer for monospace grid, SVG/PNG exporters]
 
 ## Conventions
