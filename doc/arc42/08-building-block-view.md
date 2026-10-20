@@ -31,7 +31,7 @@ note bottom of app : fully offline — no external services (§5.2)
 
 ## 8.2 Level 1: Major Components
 
-Six building blocks — five platform-independent core crates (headless, GUI-free per NFR5/Q5) and one GUI application crate that compiles to native **and** wasm ([ADR 008](../adr/008-gui-framework-choice.md)):
+Eight building blocks — five platform-independent core crates (headless, GUI-free per NFR5/Q5), a two-crate **service seam** for loose coupling ([ADR 009](../adr/009-ui-api-service-layer.md)), and one GUI application crate that compiles to native **and** wasm ([ADR 008](../adr/008-gui-framework-choice.md)):
 
 | Building block | Purpose | Interfaces (in → out) | Depends on |
 |----------------|---------|------------------------|------------|
@@ -40,13 +40,19 @@ Six building blocks — five platform-independent core crates (headless, GUI-fre
 | `shape-registry` | Predefined shapes + user templates/collections; per-type anchor sets; resize rules ([ADR 007](../adr/007-user-defined-diagram-objects.md)) | template/collection files → `ShapeRegistry`; lookup by `type_id` | diagram-model (types) |
 | `render-pipeline` | Pure renderer: place → resolve → **resolved character grid** ([concept C2](12-concepts/render-pipeline.md), [ADR 001](../adr/001-glyph-resolution-alphabet.md)) | `&Diagram, &ShapeRegistry` → `ResolvedGrid` | diagram-model, shape-registry |
 | `exporters` | Text / SVG / PNG emission from the one grid ([ADR 005](../adr/005-use-svgbob-as-vector-renderer.md), FR5) | `&ResolvedGrid` → `String` (text/SVG), bytes (PNG) | render-pipeline (grid type), svgbob |
-| `gui-app` | egui/eframe editor: template sidebar + WYSIWYG canvas, gestures → model mutations, file/export IO ([ADR 008](../adr/008-gui-framework-choice.md)) | user gestures → view + model mutations + exports | **all core crates**, egui/eframe |
+| `ui-api` | **Service seam:** four object-safe traits (`DiagramStore`, `Renderer`, `Exporter`, `ShapeCatalog`) + shared service types ([ADR 009](../adr/009-ui-api-service-layer.md)) | trait definitions → consumed by GUI and backends | diagram-model, render-pipeline (grid type) |
+| `core-services` | Concrete backends + composition root: `Services::native()` / `web()`, PNG backend optional ([ADR 009](../adr/009-ui-api-service-layer.md)) | `Services` aggregate wired into the GUI at startup | ui-api, all core crates |
+| `gui-app` | egui/eframe editor: template sidebar + WYSIWYG canvas, gestures → model mutations, file/export UX ([ADR 008](../adr/008-gui-framework-choice.md)) | user gestures → view + model mutations + exports | **ui-api, core-services (construction), diagram-model types**, egui/eframe — never the concrete core crates |
 
 ```plantuml
 @startuml
 left to right direction
 package "GUI — one codebase, native + wasm (ADR 008)" {
   [gui-app] as gui
+}
+package "Service seam — loose coupling (ADR 009)" {
+  [ui-api\n(trait definitions)] as api
+  [core-services\n(backends + composition)] as svc
 }
 package "Core — pure Rust, headless, no windowing deps" {
   [diagram-model] as model
@@ -55,20 +61,30 @@ package "Core — pure Rust, headless, no windowing deps" {
   [render-pipeline] as pipe
   [exporters] as exp
 }
-gui --> model : mutate (place/move/resize/connect)
-gui --> pipe : render(model) → grid (per frame)
-gui --> exp : export(grid) → text/SVG/PNG
-gui --> fmt : load / save .ad
-gui --> reg : template sidebar, anchors
+gui --> api : uses traits only (Arc<dyn …>)
+gui --> svc : construct Services\n(startup only)
+gui --> model : value types only
+svc ..> api : implements
+svc --> fmt
+svc --> reg
+svc --> pipe
+svc --> exp
+api --> model
+api --> pipe : ResolvedGrid type
 fmt --> model
 pipe --> model
 pipe --> reg : glyph patterns, anchor sets
 exp ..> pipe : ResolvedGrid type only
-note bottom of exp : text = grid as-is · SVG via svgbob (ADR 005) ·\nPNG = rasterized SVG (rasterizer TBD)
+note bottom of svc : DiagramStore · Renderer · Exporter · ShapeCatalog\nPNG backend optional → Err(Unsupported) degrades to SVG-only
 @enduml
 ```
 
-**Dependency rules** (enforced by the Q5.2/T5 architecture test): strictly one-directional — GUI → core, never the reverse; within core: `ad-format → model`, `render-pipeline → {model, registry}`, `exporters → pipeline` (grid type only). No cycles, no windowing/event-loop/WASM-API dependency anywhere in core.
+**Dependency rules** (enforced by the Q5.2/T5 architecture test): strictly one-directional — GUI → seam → core, never the reverse.
+
+- `gui-app` may depend **only** on `ui-api`, `core-services` (construction), and `diagram-model` value types — never directly on `ad-format` / `shape-registry` / `render-pipeline` / `exporters` ([ADR 009](../adr/009-ui-api-service-layer.md)).
+- Within the seam: `core-services → ui-api + core`; `ui-api → {model, pipeline grid type}`.
+- Within core: `ad-format → model`, `render-pipeline → {model, registry}`, `exporters → pipeline` (grid type only).
+- No cycles. No windowing/event-loop dependency anywhere; platform IO is confined to the store backends in `core-services` and to `gui-app`.
 
 **Proposed workspace layout:**
 
@@ -80,7 +96,9 @@ ascii-diagram-drawer/
 │   ├── ad-format/             # .ad parse/serialize (ADR 004)
 │   ├── shape-registry/        # shapes, templates, anchors (ADR 007)
 │   ├── render-pipeline/       # place → resolve → grid (ADR 001)
-│   └── exporters/             # text / svg / png (ADR 005)
+│   ├── exporters/             # text / svg / png (ADR 005)
+│   ├── ui-api/                # service traits — the seam (ADR 009)
+│   └── core-services/         # backends + composition root (ADR 009)
 └── gui-app/                   # eframe app — native + wasm32 target
 ```
 
@@ -123,11 +141,24 @@ ascii-diagram-drawer/
   - *SVG*: pass the resolved grid **unchanged** to `svgbob::to_svg` — no adapter layer ([ADR 005](../adr/005-use-svgbob-as-vector-renderer.md)); fixed attribute set, no timestamps → byte-identical re-export (QS1/QS2).
   - *PNG*: rasterize the produced SVG. **Rasterizer TBD** — must work on native *and* wasm32 (risk R3; v1 may degrade to SVG-only if needed).
 
-#### 8.3.6 `gui-app`
+#### 8.3.6 `ui-api`
 
-- **Sub-modules:** `canvas` (view), `interaction` (gestures), `sidebar` (templates, FR6), `commands` (model-mutation boundary), `io` (file open/save, clipboard, export — per-target native APIs, [ADR 008](../adr/008-gui-framework-choice.md) consequences).
+- **Sub-modules:** one module per trait — `store`, `render`, `export`, `catalog` — plus shared error types.
+- **Key data structures:** the four object-safe traits of [ADR 009](../adr/009-ui-api-service-layer.md): `DiagramStore { load, save }`; `Renderer { render(&Diagram, &ShapeCatalog) -> ResolvedGrid }`; `Exporter { to_text, to_svg, to_png }` where `to_png` may return `Err(Unsupported)`; `ShapeCatalog { list, get, anchors, register (v1+) }`; plus `StoreError` & co.
+- **Rules:** signatures use only model/grid types + std — no IO internals leak through the seam; traits stay object-safe (`dyn`-friendly) so GUI code holds `Arc<dyn …>` without generics.
+
+#### 8.3.7 `core-services`
+
+- **Sub-modules:** `store` (native fs / browser backends), `render` (thin wrapper over render-pipeline's pure functions), `export` (text/svg via svgbob + optional PNG rasterizer), `catalog` (builtin + file-backed collections), `composition`.
+- **Key data structures:** `Services { store, renderer, exporter, catalog: Arc<dyn …> }` with per-target constructors `Services::native()` / `Services::web()`.
+- **Key algorithms:** backend selection at construction time (target + build configuration); missing PNG backend → `Err(Unsupported)` path — graceful degradation to SVG-only without any GUI change (R3 as an option, not a fork).
+
+#### 8.3.8 `gui-app`
+
+- **Sub-modules:** `canvas` (view), `interaction` (gestures), `sidebar` (templates, FR6), `commands` (model-mutation boundary), `io` (file dialogs / clipboard UX on top of `DiagramStore` — per-target native APIs, [ADR 008](../adr/008-gui-framework-choice.md) consequences).
 - **Key design decision — WYSIWYG canvas:** the canvas draws the **resolved character grid in a monospace font** — i.e. the exact bytes of the text output — with selection/anchor handles as an overlay on top. What the user sees *is* what gets exported; no separate vector preview that could diverge from the text. (Proposed here; promote to an ADR if contested.)
 - **Key algorithms:** per-frame immediate-mode re-render of grid + overlays (bounded by P2, ≤16 ms/frame); gesture → grid-snapped mutation (display zoom is view-only; the scale control changes rendered spacing at model level, FR8); connectors drawn anchor-to-anchor with live re-binding on move/resize (FR9).
+- **Backends injected, not imported ([ADR 009](../adr/009-ui-api-service-layer.md)):** the app struct holds `Services`; view code calls only `ui-api` traits — which is what makes in-memory fakes possible for GUI tests (T7). Diagram *mutation* deliberately bypasses the seam and manipulates the pure `Diagram` value type directly.
 - **Targets:** one codebase → native (winit + wgpu/glow) and browser wasm (WebGL) per [ADR 008](../adr/008-gui-framework-choice.md).
 
 ## 8.4 Level 3: Module Internals (as needed)
@@ -139,4 +170,4 @@ Only one module's complexity demands a third level of zoom: the **resolve stage*
 - **Algorithm sketch:** classify the junction — cross > T-junction > corner > straight (deterministic priority table; ties broken by fixed order, never by iteration order); text cells pass through unchanged.
 - **Open spec point:** the full rule table (connection set × content → glyph) is finalized during implementation and pinned immediately by golden tests + the alphabet-purity property test (T1/T3).
 
-**Other open items carried from earlier chapters:** PNG rasterizer choice (§8.3.5, risk R3); template/collection file naming & extension ([ADR 007](../adr/007-user-defined-diagram-objects.md) follow-up); exact default anchor set per predefined shape (FR11).
+**Other open items carried from earlier chapters:** PNG rasterizer choice — now a backend selection inside `core-services`, not an architectural fork (§8.3.5/§8.3.7, risk R3); exact `ui-api` trait signatures pinned at workspace scaffolding ([ADR 009](../adr/009-ui-api-service-layer.md) follow-up); template/collection file naming & extension ([ADR 007](../adr/007-user-defined-diagram-objects.md) follow-up); exact default anchor set per predefined shape (FR11).

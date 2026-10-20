@@ -31,6 +31,7 @@ nav:
       - "005 Use svgbob as the vector renderer": adr/005-use-svgbob-as-vector-renderer.md
       - "007 User-defined diagram objects and collections": adr/007-user-defined-diagram-objects.md
       - "008 GUI framework choice": adr/008-gui-framework-choice.md
+      - "009 UI API service layer": adr/009-ui-api-service-layer.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md

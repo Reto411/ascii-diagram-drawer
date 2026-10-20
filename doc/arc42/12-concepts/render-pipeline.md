@@ -40,4 +40,4 @@ The character grid is a **derived intermediate representation** — it is never 
 
 ## Implementation
 
-Not yet implemented. Expected home: platform-independent rendering crate (per AGENTS.md conventions), shared by all GUI targets and the CLI/export paths.
+Not yet implemented. Expected home: platform-independent rendering crate (per AGENTS.md conventions), shared by all GUI targets and the CLI/export paths. The GUI reaches it only through the `Renderer` service trait of the seam ([ADR 009](../../adr/009-ui-api-service-layer.md)) — the pipeline itself stays a pure function; the seam wraps it.

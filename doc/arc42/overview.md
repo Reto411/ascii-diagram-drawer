@@ -45,7 +45,7 @@ updated: 2026-10-18
 | 5 | Constraints | [05](05-constraints.md) | 🟨 drafted (2026-10-18) — legal/boundary/framework conditions from existing decisions; performance budgets *proposed, pending confirmation*; GUI framework decided → [ADR 008](../adr/008-gui-framework-choice.md) (egui/eframe, `proposed`; Slint fallback) |
 | 6 | Quality Model | [06](06-quality-model.md) | 🟨 drafted (2026-10-18) — quality tree, 13 measurable scenarios (usage + change, official short form), test goals T1–T7 with coverage gate ≥80% and golden-file determinism as CI invariant; perf scenarios await §5.3 budget confirmation |
 | 7 | Solution Strategy | [07](07-solution-strategy.md) | ⬜ |
-| 8 | Building Block View | [08](08-building-block-view.md) | 🟨 drafted (2026-10-18, design-level) — 5 headless core crates + egui gui-app; dependency rules + proposed workspace layout; WYSIWYG canvas decision (grid rendered in monospace); L3 zoom on glyph-resolve stage; open items: PNG rasterizer, template file naming, default anchor sets |
+| 8 | Building Block View | [08](08-building-block-view.md) | 🟨 drafted (2026-10-18, design-level) — 5 headless core crates + `ui-api`/`core-services` service seam ([ADR 009](../adr/009-ui-api-service-layer.md)) + egui gui-app; strict dependency rules + workspace layout; WYSIWYG canvas decision (grid rendered in monospace); L3 zoom on glyph-resolve stage; open items: PNG rasterizer backend, trait signatures at scaffolding, template file naming, default anchor sets |
 | 9 | Runtime View | [09](09-runtime-view.md) | ⬜ |
 | 10 | Deployment View | [10](10-deployment-view.md) | ⬜ |
 | 11 | Cross-cutting Concerns | [11](11-cross-cutting-concerns.md) | ⬜ |

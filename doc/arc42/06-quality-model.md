@@ -76,7 +76,7 @@ The test strategy exists to make Q1–Q5 *continuously verified*, not spot-check
 | T4 | **Coverage gate** — ≥80% line coverage on all core crates (model, format, render pipeline, exporters) before merge; GUI/app crate: thin by design (Q5.3), best-effort until the first milestone proves a stable baseline | `cargo tarpaulin --fail-under 80` per core crate in CI (QS11) |
 | T5 | **Headless core, provably** — no windowing/event-loop dependency enters core; the full pipeline runs in plain unit tests | Dependency audit (core Cargo.toml allow-list) + Q5.2 architecture test (QS4) |
 | T6 | **Performance budgets are regression-tested** — first-render and per-frame costs tracked, not vibes | `criterion` benchmarks with thresholds tied to §5.3 budgets (QS12); bundle-size gate for web (QS13) |
-| T7 | **GUI stays verifiable despite limited egui test tooling** — the GUI layer is thin enough that behavior tests target the core it calls; per-target manual smoke checklist (open, place, drag, connect, export × 4 targets) ships with each release | Thin-layer review gate + release smoke checklist (Q5.3, QS9) |
+| T7 | **GUI stays verifiable despite limited egui test tooling** — the GUI layer is thin enough that behavior tests target the core it calls, and GUI logic runs against in-memory fakes of the `ui-api` traits ([ADR 009](../adr/009-ui-api-service-layer.md)); per-target manual smoke checklist (open, place, drag, connect, export × 4 targets) ships with each release | Thin-layer review gate + fake-backend GUI tests + release smoke checklist (Q5.3, QS9) |
 
 **Definition of done for any change touching core:** `cargo fmt` + `cargo clippy` clean · full test suite green on the local target · coverage ≥ 80% · no unexplained golden diff · docs updated per AGENTS.md.
 
