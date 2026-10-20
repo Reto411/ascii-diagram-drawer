@@ -12,7 +12,7 @@ updated: 2026-10-18
 |---|---|
 | **Document status** | Draft — being populated iteratively |
 | **Version** | 0.2 (split into per-chapter files, see [ADR 002](../adr/002-mkdocs-documentation-site.md)) |
-| **Date** | 2026-10-17 |
+| **Date** | 2026-10-18 |
 | **Target audience** | Developers, reviewers |
 
 > **How to use this documentation:** Each chapter is its own file in this folder and contains italic guidance text (what belongs here) and `[TBD]` placeholders. Fill chapters incrementally; keep the progress table below updated. Remove guidance notes as chapters are finalized.
@@ -23,7 +23,7 @@ updated: 2026-10-18
 |---|---------|------|--------|
 | 1 | Introduction and Context | [01](01-introduction-and-context.md) | 🟨 (1.1+1.2 draft, design refs) |
 | 2 | Architecture Vision | [02](02-architecture-vision.md) | ⬜ |
-| 3 | Business Scope | [03](03-business-scope.md) | ⬜ |
+| 3 | Business Scope | [03](03-business-scope.md) | 🟨 (drafted from product interview) |
 | 4 | Stakeholders and Users | [04](04-stakeholders-and-users.md) | ⬜ |
 | 5 | Constraints | [05](05-constraints.md) | ⬜ |
 | 6 | Quality Model | [06](06-quality-model.md) | ⬜ |
