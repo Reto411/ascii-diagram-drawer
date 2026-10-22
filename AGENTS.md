@@ -48,6 +48,7 @@ A tool to **draw ASCII diagrams visually**: users place, move, and resize predef
 
 - Follow `cargo fmt` and `cargo clippy`: **all Clippy lints are active at deny** — any lint violation fails the build ([ADR 010](doc/adr/010-deny-all-clippy-lints.md)).
 - **Code coverage target: 80%.** Measure with `cargo tarpaulin` (or agreed tool) and don't land changes that drop coverage below the target.
+- **Isolated dev environment:** builds/tests may run in the podman devcontainer (`.devcontainer/`) where only this repo is mounted at `/workspace`; don't assume host paths or tools outside the image.
 - **Delivery is story-driven:** implementation work happens as user stories on `doc/stories/BOARD.md`, worked by the story-implementation skill (`.agents/skills/story-implementation/SKILL.md`). The board + story files are the persistent state; any session resumes from disk.
 - **The rendering logic must be unit-testable without a GUI.** Keep it in platform-independent Rust crates (shared by all GUI targets), driven by plain data in → text/SVG/PNG out, with no windowing or event-loop dependencies. GUI code stays thin.
 
