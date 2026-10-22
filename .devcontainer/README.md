@@ -22,17 +22,18 @@ podman build -t pi-ascii -f .devcontainer/Dockerfile .
 One-time setup:
 
 ```sh
-podman volume create pi-agent-home   # persists pi sessions/settings/trust between runs
+podman volume create pi-agent-home          # persists pi sessions/settings/trust between runs
+cp .devcontainer/.env.example .devcontainer/.env && $EDITOR .devcontainer/.env
 ```
 
 ## Run pi interactively (from the repo root)
 
-Pass your provider credential(s) via environment — **do not mount the host's
-`~/.pi/agent`**:
+Credentials come from `.devcontainer/.env` (gitignored; create it once from
+`.env.example`) via `--env-file` — **do not mount the host's `~/.pi/agent`**:
 
 ```sh
 podman run --rm -it \
-  -e ANTHROPIC_API_KEY \
+  --env-file .devcontainer/.env \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
   pi-ascii
@@ -45,7 +46,7 @@ the decision persists in the volume's `trust.json`).
 
 ```sh
 podman run --rm \
-  -e ANTHROPIC_API_KEY \
+  --env-file .devcontainer/.env \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
   pi-ascii -p "Use the story-implementation skill and work the story board until you run low on context."
@@ -55,10 +56,12 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
 
 ## Notes & troubleshooting
 
-- **Credentials:** the named volume starts empty; pi authenticates from the
-  env vars you pass. If you want to reuse your host `auth.json`, copy it into
-  the volume once (e.g. via a temporary container) instead of bind-mounting
-  `~/.pi/agent`.
+- **Credentials:** podman reads `.env` on the host (`--env-file`) and injects
+  the values as env vars — the file itself never enters the container, and
+  `podman run` fails fast if it is missing. `-e KEY=value` still works for
+  one-off runs and overrides the file. If you want to reuse your host
+  `auth.json`, copy it into the volume once (e.g. via a temporary container)
+  instead of bind-mounting `~/.pi/agent`.
 - **SELinux systems:** add `:Z` to the repo mount (`-v "$PWD:/workspace:Z"`) or
   run with `--security opt label:disable` if mounts are denied.
 - **Updating pi:** rebuild the image (`podman build ...`).
