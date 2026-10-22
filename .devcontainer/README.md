@@ -23,20 +23,27 @@ One-time setup:
 
 ```sh
 podman volume create pi-agent-home          # persists pi sessions/settings/trust between runs
-cp .devcontainer/.env.example .devcontainer/.env && $EDITOR .devcontainer/.env
+cp .devcontainer/.env.example .devcontainer/.env && $EDITOR .devcontainer/.env   # fill in UNSLOTH_API_KEY
 ```
+
+`UNSLOTH_API_KEY` is the key of the local llama.cpp server — on this host it
+is `providers.unsloth.apiKey` in `~/.pi/agent/models.json`. The container gets
+the provider definition from `.devcontainer/models.json` (same file, but with
+`apiKey: "$UNSLOTH_API_KEY"`), so only the key itself lives in `.env`.
 
 ## Run pi interactively (from the repo root)
 
 Credentials come from `.devcontainer/.env` (gitignored; create it once from
-`.env.example`) via `--env-file` — **do not mount the host's `~/.pi/agent`**:
+`.env.example`) via `--env-file`, and the provider definition from
+`.devcontainer/models.json` — **do not mount the host's `~/.pi/agent`**:
 
 ```sh
 podman run --rm -it \
   --env-file .devcontainer/.env \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
-  pi-ascii
+  -v .devcontainer/models.json:/root/.pi/agent/models.json:ro \
+  pi-ascii --model "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL" --thinking medium
 ```
 
 First run: approve project trust (or add `--approve` for non-interactive runs;
@@ -49,7 +56,9 @@ podman run --rm \
   --env-file .devcontainer/.env \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
-  pi-ascii -p "Use the story-implementation skill and work the story board until you run low on context."
+  -v .devcontainer/models.json:/root/.pi/agent/models.json:ro \
+  pi-ascii --model "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL" --thinking medium \
+    -p "Use the story-implementation skill and work the story board until you run low on context."
 ```
 
 Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
@@ -59,9 +68,19 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
 - **Credentials:** podman reads `.env` on the host (`--env-file`) and injects
   the values as env vars — the file itself never enters the container, and
   `podman run` fails fast if it is missing. `-e KEY=value` still works for
-  one-off runs and overrides the file. If you want to reuse your host
-  `auth.json`, copy it into the volume once (e.g. via a temporary container)
-  instead of bind-mounting `~/.pi/agent`.
+  one-off runs and overrides the file.
+- **Provider config:** `.devcontainer/models.json` is bind-mounted read-only
+  over the volume's path (the later mount wins) and references
+  `$UNSLOTH_API_KEY`, which pi interpolates from the environment. Update both
+  files together when the model or endpoint changes; if the key rotates, only
+  `.env` needs updating.
+- **Network:** the container must reach the llama.cpp server address in
+  `models.json` (`192.168.178.22:8888`) — podman's default bridge NAT handles
+  LAN addresses; check with `podman run --rm -it pi-ascii --list-models`
+  if models do not appear.
+- **Host auth.json:** if you ever want to reuse your host `auth.json` instead,
+  copy it into the volume once (e.g. via a temporary container) rather than
+  bind-mounting `~/.pi/agent`.
 - **SELinux systems:** add `:Z` to the repo mount (`-v "$PWD:/workspace:Z"`) or
   run with `--security opt label:disable` if mounts are denied.
 - **Updating pi:** rebuild the image (`podman build ...`).
