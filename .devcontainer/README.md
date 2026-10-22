@@ -27,7 +27,7 @@ cp .devcontainer/.env.example .devcontainer/.env && $EDITOR .devcontainer/.env  
 ```
 
 `UNSLOTH_API_KEY` is the key of the local Unsloth Studio server
-(`192.168.178.22:8888`) — on this host it
+(`127.0.0.1:8888`) — on this host it
 is `providers.unsloth.apiKey` in `~/.pi/agent/models.json`. The container gets
 the provider definition from `.devcontainer/models.json` (same file, but with
 `apiKey: "$UNSLOTH_API_KEY"`), so only the key itself lives in `.env`.
@@ -77,11 +77,14 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
   `$UNSLOTH_API_KEY`, which pi interpolates from the environment. Update both
   files together when the model or endpoint changes; if the key rotates, only
   `.env` needs updating.
-- **Network:** the commands use `--network host` because on this host the
-  rootless podman bridge cannot reach the Unsloth Studio server
-  (`192.168.178.22:8888`) while the host network namespace can (verified).
-  Trade-off: the container shares the host's network stack. The server accepts
-  concurrent clients, so a container run does not block your host pi session.
+- **Network:** Unsloth Studio runs on this machine and listens on both
+  `127.0.0.1:8888` and the LAN IP; `models.json` uses loopback so it keeps
+  working if the LAN IP changes. Loopback only resolves to the host under
+  `--network host` (with bridge networking it would be the container's own)
+  — which is also required here because the rootless podman bridge cannot
+  reach the server at all (verified). Trade-off of `--network host`: the
+  container shares the host's network stack. The server accepts concurrent
+  clients, so a container run does not block your host pi session.
   If models ever fail to appear, check with
   `podman run --rm --network host pi-ascii --list-models`.
 - **Host auth.json:** if you ever want to reuse your host `auth.json` instead,
