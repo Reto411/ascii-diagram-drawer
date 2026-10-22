@@ -1,6 +1,6 @@
 ---
 name: story-implementation
-description: Run the self-reliant build loop for ascii-diagram-drawer — break the architecture docs into user stories with acceptance criteria, implement them in dependency order, test each story against its criteria, keep arc42/ADR/concept docs current, and continue until every story is done. Use when asked to work the story board, implement the next story, do the initial breakdown, or "continue building until everything is done."
+description: Run the self-reliant build loop for ascii-diagram-drawer — break the architecture docs into user stories with acceptance criteria, implement them in dependency order, test each story against its criteria, review it with fresh eyes before marking it done, keep arc42/ADR/concept docs current, and continue until every story is done. Use when asked to work the story board, implement the next story, do the initial breakdown, or "continue building until everything is done."
 metadata:
   scope: whole repository
   status: stable
@@ -17,6 +17,7 @@ Mission: take ascii-diagram-drawer from architecture docs to a finished, tested 
 2. **The architecture docs are the contract**: `doc/arc42/` (esp. §1.1 objectives), `doc/adr/`, `doc/arc42/12-concepts/`. If your planned implementation contradicts a recorded decision or concept: **do not implement it**. Mark the story `blocked`, record the conflict precisely, and continue with other stories. A new decision that resolves a block gets its own ADR (`status: proposed`) for later human review.
 3. **Docs are part of the change**: arc42 chapters, concepts, ADRs, and the board are updated in the *same commit* as the code they describe.
 4. **Small, reviewable commits** — one story per commit, message `S-NNN: <title>`.
+5. **Acceptance criteria are fixed at breakdown.** If implementation reveals an AC is wrong or unbuildable, do not silently rewrite it — record old → new + reason in the story's Verification section and flag it in the progress log for human review. An agent that edits its own exam to make it pass has not verified the story.
 
 ## State files
 
@@ -63,9 +64,17 @@ Context budget: read only the story file + the arc42 chapters / ADRs / concepts 
    cargo test --workspace
    cargo tarpaulin --workspace              # ≥80% line coverage; never land a change that drops below target
    ```
+   If a gate cannot run in this environment (missing tool, no display, …), the story is **not done**: leave it *In progress* with the reason on the board.
 6. **Verify every AC**: run its check, record evidence in the story's Verification section (test names / command + result). All ✅ required.
-7. **Docs in the same commit**: flip implemented ADRs `proposed` → `accepted`; changed decisions get a version bump + history entry; update affected arc42 chapters + the `overview.md` tracker; create/update concept docs from the template (never duplicate an existing concept); any new decision → new ADR (`status: proposed`).
-8. **Commit**: `git add` everything, message `S-NNN: <title>` with a 1–3 line body. Update the board in that same commit: story → *Done* (date + commit), clear *In progress*, append a progress-log entry (what landed, gate results, follow-ups).
+7. **Review cycle — fresh eyes, from disk.** Re-read from disk (not from memory): the story file, the full `git diff` of what will be committed, and `BOARD.md`. Fix anything that fails, then re-run the affected gates:
+   - **Scope:** the diff does only what the story's scope says — no drive-by refactors, no unrelated files.
+   - **AC integrity:** the acceptance criteria still read as written at breakdown (ground rule 5); any changed AC is flagged in Verification + progress log.
+   - **Evidence is real:** every ✅ cites a command that was actually run with observed output (trimmed paste / exit code). "Tests passed" is not evidence.
+   - **Docs & board:** all doc updates are part of this commit; after it, the story sits in *Done* exactly once and *In progress* is empty.
+   - **Security (AGENTS.md):** no secrets or credentials in the diff; no new external service calls beyond the normal build/test workflow; no weakened auth/validation/sandboxing. A leak found here stops the commit — record it in `ATTENTION.md` first.
+   - *Sensitive stories* (anything touching credentials, network, export, or security behavior): run one short **separate** headless session (fresh context, via the devcontainer command in `.devcontainer/README.md`) whose only task is to review this diff against the ACs and write findings into the story's Verification section. Address them before committing.
+8. **Docs in the same commit**: flip implemented ADRs `proposed` → `accepted`; changed decisions get a version bump + history entry; update affected arc42 chapters + the `overview.md` tracker; create/update concept docs from the template (never duplicate an existing concept); any new decision → new ADR (`status: proposed`).
+9. **Commit**: `git add` everything, message `S-NNN: <title>` with a 1–3 line body. Update the board in that same commit: story → *Done* (date + commit), clear *In progress*, append a progress-log entry (what landed, gate results, follow-ups).
 
 ## Blocked stories
 
@@ -89,4 +98,5 @@ If the board shows a story *In progress* at session start:
 ## Launch
 
 - Fresh session per batch of stories (context budget); the board makes every run resumable.
+- **Run inside the isolated devcontainer** (`.devcontainer/README.md`), not directly on the host — that is the security boundary for autonomous runs. Never add host credentials (SSH keys, tokens) to the container or its volume: the agent must not be able to push; a human reviews commits and pushes.
 - Kickoff prompt: "Use the story-implementation skill and work the story board until you run low on context."
