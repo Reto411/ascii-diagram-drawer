@@ -136,12 +136,19 @@ note bottom of svc : DiagramStore · Renderer · Exporter · ShapeCatalog\n+ Dia
 @enduml
 ```
 
-**Dependency rules** (enforced by the Q5.2/T5 architecture test): strictly one-directional — presentation → application layer → contexts, never the reverse.
+**Coupling strategy.** Loose coupling here is *static and structural* — enforced at compile time by Rust's visibility system + Cargo's dependency graph, not by runtime messaging (no event bus between components, §8.6). Five mechanisms:
 
-- `gui-app` may depend **only** on `ui-api`, `core-services` (construction), and `diagram-model` value types — never directly on `ad-format` / `shape-registry` / `render-pipeline` / `exporters` ([ADR 009](../adr/009-ui-api-service-layer.md)).
-- Within the application layer: `core-services → ui-api + contexts`; `ui-api → {model, pipeline grid type}`.
-- Between context crates: `ad-format → model`, `render-pipeline → {model, registry}`, `exporters → pipeline` (grid type only), `ascii-import → {model, registry, pipeline grid type}` (v1+).
-- No cycles. No windowing/event-loop dependency anywhere; platform IO is confined to the store backends in `core-services` and to `gui-app`.
+1. **Crate = context boundary ([ADR 011](../adr/011-domain-driven-design.md)).** Each bounded context is its own crate; Rust visibility makes the public API *the* contract — internals are private by default, and reaching into another context requires a declared Cargo dependency.
+2. **One-way DAG, no cycles** (enforced by the Q5.2/T5 architecture test): strictly presentation → application layer → contexts, never the reverse.
+   - `gui-app` may depend **only** on `ui-api`, `core-services` (construction), and `diagram-model` value types — never directly on `ad-format` / `shape-registry` / `render-pipeline` / `exporters` ([ADR 009](../adr/009-ui-api-service-layer.md)).
+   - Within the application layer: `core-services → ui-api + contexts`; `ui-api → {model, pipeline grid type}`.
+   - Between context crates: `ad-format → model`, `render-pipeline → {model, registry}`, `exporters → pipeline` (grid type only), `ascii-import → {model, registry, pipeline grid type}` (v1+).
+   - No windowing/event-loop dependency anywhere; platform IO is confined to the store backends in `core-services` and to `gui-app`.
+3. **Context mapping = the only sanctioned cross-context communication (§8.2.3).** Each edge has a named pattern and a narrow currency: opaque `type_id`s (Catalog → Diagram); immutable value objects — no handles or interior mutability crossing boundaries (Diagram → Rendering); aggregate in/out (Repository); quarantined foreign text (ACL). *If you need to communicate across contexts and no mapping covers it, that is a design signal → ADR* — not an ad-hoc import.
+4. **Trait seam with dependency inversion — only where implementations are swappable ([ADR 009](../adr/009-ui-api-service-layer.md)).** The GUI depends on `ui-api` abstractions; concrete backends are injected at the composition root (`core-services`). That is the *only* classic DIP boundary in the system, because it is the only one with per-target/optional implementations (file IO, PNG). Everywhere else, loose coupling means narrow public APIs + value types — not indirection for its own sake.
+5. **No shared utility crate, no re-exports.** A common `utils` crate is a classic coupling leak (everything depends on it → de-facto shared kernel). Shared code belongs in the owning context (e.g. grid types live in `render-pipeline`) or is duplicated if small; re-exporting another context's types is forbidden (pass-through coupling).
+
+**Machine-checked, not review-dependent:** T5's dependency audit asserts this DAG — planned as a workspace test that parses each crate's `Cargo.toml` and checks the declared edges against the allow-list above (§8.5 open items).
 
 **Proposed workspace layout:**
 
@@ -234,7 +241,7 @@ Two modules' complexity demand a third level of zoom: the **resolve stage** of `
 - **Open spec point:** the full rule table (connection set × content → glyph) is finalized during implementation and pinned immediately by golden tests + the alphabet-purity property test (T1/T3).
 - **ASCII import matching (v1+, open spec point):** segmentation of the input grid into candidate regions, scoring against each `glyph_pattern` (exact match first, then bounded tolerance), deterministic tie-breaking; unmatched regions → fixed-size reduced objects + warnings (FR12). Pinned by golden tests when implemented.
 
-**Other open items carried from earlier chapters:** PNG rasterizer choice — now a backend selection inside `core-services`, not an architectural fork (§8.4.3/§8.4.6, risk R3); exact `ui-api` trait signatures pinned at workspace scaffolding ([ADR 009](../adr/009-ui-api-service-layer.md) follow-up); template/collection file naming & extension ([ADR 007](../adr/007-user-defined-diagram-objects.md) follow-up); exact default anchor set per predefined shape (FR11).
+**Other open items carried from earlier chapters:** T5 dependency-audit mechanism — extend the headless-only audit to assert the full allowed DAG of §8.3 (workspace test parsing each crate's `Cargo.toml` edges; pinned at scaffolding); PNG rasterizer choice — now a backend selection inside `core-services`, not an architectural fork (§8.4.3/§8.4.6, risk R3); exact `ui-api` trait signatures pinned at workspace scaffolding ([ADR 009](../adr/009-ui-api-service-layer.md) follow-up); template/collection file naming & extension ([ADR 007](../adr/007-user-defined-diagram-objects.md) follow-up); exact default anchor set per predefined shape (FR11).
 
 ## 8.6 Deliberately Not Adopted
 
