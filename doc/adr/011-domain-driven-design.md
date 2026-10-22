@@ -2,7 +2,7 @@
 title: "011 - domain-driven-design"
 description: the building block decomposition is organized with Domain-Driven Design — subdomains, bounded contexts (as crate boundaries in one binary), context mapping, and a deliberately limited set of tactical patterns; no CQRS/eventing
 scope: architecture
-status: proposed
+status: accepted
 version: 1
 updated: 2026-10-22
 ---

@@ -1,0 +1,13 @@
+[package]
+name = "shape-registry"
+description = "Shape Catalog bounded context: shape types, glyph patterns, anchor sets, collections (ADR 007)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Leaf crate per the §8.3 DAG: no edges into other contexts.
+# Anchor geometry is owned here as registry-local value types (no diagram-model dep).
+[dependencies]
+
+[lints]
+workspace = true

@@ -10,7 +10,10 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 .idea
+.asgrep/
 target
 *.lock
+# Rust: Cargo.lock IS committed — binary workspace, reproducible builds (S-001)
+!Cargo.lock
 # security incident log — local only, never push
 ATTENTION.md

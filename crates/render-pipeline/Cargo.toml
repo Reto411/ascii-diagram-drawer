@@ -1,0 +1,13 @@
+[package]
+name = "render-pipeline"
+description = "Rendering & Export bounded context (1/2): place → resolve → ResolvedGrid, glyph resolution (ADR 001)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+diagram-model = { path = "../diagram-model" }
+shape-registry = { path = "../shape-registry" }
+
+[lints]
+workspace = true

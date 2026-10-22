@@ -2,7 +2,7 @@
 title: bounded-contexts
 description: the strategic DDD decomposition — five bounded contexts + application/presentation layer, realized as crate boundaries in one binary; context mapping defines how they talk
 scope: architecture
-status: draft
+status: stable
 updated: 2026-10-22
 ---
 
@@ -46,4 +46,6 @@ Rules: strictly one-directional dependencies (presentation → application layer
 
 ## Implementation
 
-Not yet implemented. The crate layout in [§8.3](../../arc42/08-building-block-view.md) realizes one crate per context (Rendering & Export and Application/Presentation span two/three crates). Keep the 1:1 context↔crate alignment when scaffolding ([ADR 011](../../adr/011-domain-driven-design.md)).
+Scaffolded in S-001: all nine workspace crates exist per [§8.3](../../arc42/08-building-block-view.md) (one crate per context; Rendering & Export and Application/Presentation span two/three crates), each with `[lints] workspace = true`.
+
+The context boundaries are **machine-checked** by the T5 dependency-audit test (`crates/core-services/tests/dependency_audit.rs`): it parses every member `Cargo.toml` and fails the build if any workspace-internal dependency edge is not on the §8.3 allow-list (which is acyclic, so the whole graph is acyclic). Adding a new cross-context edge requires extending the allow-list deliberately — that is the enforcement of the context-mapping rules above.

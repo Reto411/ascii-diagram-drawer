@@ -1,0 +1,7 @@
+# ADR 010: the toolchain is pinned because `clippy::nursery` lints change
+# between Rust releases — an unpinned bump could break the build with zero code changes.
+# Bumping this file is a deliberate, reviewed change.
+[toolchain]
+channel = "1.99.1"
+components = ["cargo", "clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

@@ -1,0 +1,13 @@
+[package]
+name = "gui-app"
+description = "Presentation layer: eframe/egui app, native desktop + browser wasm (ADR 008)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Allowed edges per §8.3: { ui-api, core-services, diagram-model } only — never the
+# other context crates directly (ADR 009). eframe/egui land in S-012.
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "diagram-model"
+description = "Diagram bounded context (core domain): the Diagram aggregate, cell geometry, anchors, invariants"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -3,7 +3,7 @@ title: arc42-overview
 description: arc42 document header, usage notes, and progress tracker for all 16 chapters
 scope: architecture
 status: draft
-updated: 2026-10-18
+updated: 2026-10-22
 ---
 
 # arc42 — ascii-diagram-drawer (Overview)
@@ -11,8 +11,8 @@ updated: 2026-10-18
 | | |
 |---|---|
 | **Document status** | Draft — being populated iteratively |
-| **Version** | 0.2 (split into per-chapter files, see [ADR 002](../adr/002-mkdocs-documentation-site.md)) |
-| **Date** | 2026-10-18 |
+| **Version** | 0.3 (S-001: workspace scaffold landed, ADR 010/011 accepted) |
+| **Date** | 2026-10-22 |
 | **Target audience** | Developers, reviewers |
 
 > **How to use this documentation:** Each chapter is its own file in this folder and contains italic guidance text (what belongs here) and `[TBD]` placeholders. Fill chapters incrementally; keep the progress table below updated. Remove guidance notes as chapters are finalized.
@@ -42,10 +42,10 @@ updated: 2026-10-18
 | 2 | Architecture Vision | [02](02-architecture-vision.md) | 🟨 (drafted from existing ADRs/concepts, pending review) |
 | 3 | Business Scope | [03](03-business-scope.md) | 🟨 (drafted from product interview) |
 | 4 | Stakeholders and Users | [04](04-stakeholders-and-users.md) | ⬜ |
-| 5 | Constraints | [05](05-constraints.md) | 🟨 drafted (2026-10-18) — legal/boundary/framework conditions from existing decisions; performance budgets *proposed, pending confirmation*; GUI framework decided → [ADR 008](../adr/008-gui-framework-choice.md) (egui/eframe, `proposed`; Slint fallback); all Clippy lints deny → [ADR 010](../adr/010-deny-all-clippy-lints.md) (`proposed`) |
+| 5 | Constraints | [05](05-constraints.md) | 🟨 drafted (2026-10-18) — legal/boundary/framework conditions from existing decisions; performance budgets *proposed, pending confirmation*; GUI framework decided → [ADR 008](../adr/008-gui-framework-choice.md) (egui/eframe, `proposed`; Slint fallback); all Clippy lints deny → [ADR 010](../adr/010-deny-all-clippy-lints.md) (**accepted** v2 — implemented in S-001: all groups deny at priority -1, three documented exceptions) |
 | 6 | Quality Model | [06](06-quality-model.md) | 🟨 drafted (2026-10-18) — quality tree, 13 measurable scenarios (usage + change, official short form), test goals T1–T7 with coverage gate ≥80% and golden-file determinism as CI invariant; perf scenarios await §5.3 budget confirmation |
 | 7 | Solution Strategy | [07](07-solution-strategy.md) | ⬜ |
-| 8 | Building Block View | [08](08-building-block-view.md) | 🟨 reworked (2026-10-22) with **DDD** per [ADR 011](../adr/011-domain-driven-design.md) (`proposed`) — subdomain analysis; 5 bounded contexts as crate boundaries (Diagram core, Shape Catalog, Rendering & Export, Persistence, Import v1+) + application/presentation layer; context mapping (Customer/Supplier, OHS/shared kernel, Repository, ACL); tactical patterns (aggregates, value objects, domain service, factory); CQRS/eventing explicitly out (§8.6); ADR 009 seam = application-layer boundary; WYSIWYG canvas decision; L3 zoom on glyph-resolve stage; open items: PNG rasterizer backend, trait signatures at scaffolding, template file naming, default anchor sets |
+| 8 | Building Block View | [08](08-building-block-view.md) | 🟨 reworked (2026-10-22) with **DDD** per [ADR 011](../adr/011-domain-driven-design.md) (**accepted**) — subdomain analysis; 5 bounded contexts as crate boundaries (Diagram core, Shape Catalog, Rendering & Export, Persistence, Import v1+) + application/presentation layer; context mapping (Customer/Supplier, OHS/shared kernel, Repository, ACL); tactical patterns (aggregates, value objects, domain service, factory); CQRS/eventing explicitly out (§8.6); ADR 009 seam = application-layer boundary; WYSIWYG canvas decision; L3 zoom on glyph-resolve stage; **§8.3 layout scaffolded in S-001** (9 crates, dependency DAG machine-checked by the T5 audit test in `core-services`); open items: PNG rasterizer backend, trait signatures at scaffolding, template file naming, default anchor sets |
 | 9 | Runtime View | [09](09-runtime-view.md) | 🟨 drafted (2026-10-22) — responsive-UI threading per [ADR 012](../adr/012-responsive-ui-threading.md) v2 (`proposed`): dedicated UI thread never blocked by app work — frame-critical inline, PNG rasterization on worker thread (native) / inline (wasm); no separate process (impossible on web target), no async runtime; communication = direct calls on the §8.3 DAG + one job/result channel in core-services; scenarios RS1–RS6 as sequence diagrams (start, open, drag hot path P2, export incl. PNG worker path, save, ASCII import v1+); state: one aggregate + transient view state, grid derived never stored; error flows = synchronous Results (worker via channel) → non-blocking notices |
 | 10 | Deployment View | [10](10-deployment-view.md) | ⬜ |
 | 11 | Cross-cutting Concerns | [11](11-cross-cutting-concerns.md) | ⬜ |
@@ -54,3 +54,5 @@ updated: 2026-10-18
 | 14 | Identification of Important Requirements | [14](14-important-requirements.md) | 🟨 (FR/NFR refined, Q-linked) |
 | 15 | Risks and Technical Risks | [15](15-risks.md) | ⬜ |
 | 16 | Glossary | [16](16-glossary.md) | ⬜ |
+
+> **Implementation progress:** story-driven — see the board at [`doc/stories/BOARD.md`](../stories/BOARD.md). As of 2026-10-22: S-001 (workspace scaffold + quality tooling) done; headless-core stories S-002…S-009 next in dependency order.

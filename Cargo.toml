@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/diagram-model",
+    "crates/ad-format",
+    "crates/shape-registry",
+    "crates/render-pipeline",
+    "crates/exporters",
+    "crates/ascii-import",
+    "crates/ui-api",
+    "crates/core-services",
+    "gui-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+# ADR 010: every Clippy lint group active at deny in every crate.
+# Toolchain pinned via rust-toolchain.toml (nursery-lint volatility mitigation).
+# Groups get priority -1 so the individual allows below (priority 0) can override them.
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+restriction = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# Justified exceptions (ADR 010 v2) — no other workspace-level allows permitted:
+# - this workspace is not published to crates.io, so crate.io-specific metadata
+#   lints do not apply.
+cargo_common_metadata = "allow"
+# - clippy's meta-lint discourages enabling `restriction` as a blanket group;
+#   the project decision (ADR 010) is explicitly to enable all of them.
+blanket_clippy_restriction_lints = "allow"
+# - conflicts with style::needless_return (both cannot be active at once);
+#   needless_return stays deny, implicit trailing expressions are idiomatic Rust.
+implicit_return = "allow"
+
+# Coverage gate (80% target, AGENTS.md): run `cargo tarpaulin --engine Llvm --workspace`.
+# The default ptrace engine hard-fails in this devcontainer: seccomp blocks the
+# `personality` syscall, so tarpaulin cannot disable ASLR (ENOSYS); 0.37.5 has no
+# config escape hatch for it.
