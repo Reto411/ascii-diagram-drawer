@@ -25,6 +25,7 @@ nav:
       - "14. Important Requirements": arc42/14-important-requirements.md
       - "15. Risks and Technical Risks": arc42/15-risks.md
       - "16. Glossary": arc42/16-glossary.md
+  - Stories: stories/BOARD.md
   - ADRs:
       - "001 Glyph resolution & canonical alphabet": adr/001-glyph-resolution-alphabet.md
       - "002 MkDocs documentation site": adr/002-mkdocs-documentation-site.md
@@ -40,3 +41,4 @@ nav:
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md
+      - Story template: templates/story.md
