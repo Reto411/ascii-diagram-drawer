@@ -1,44 +1,64 @@
 ---
 title: story-board
-description: implementation board for ascii-diagram-drawer — story statuses + progress log; single source of truth for what is done, in flight, and next; any agent session resumes from here
-scope: project delivery
-status: active
+description: persistent story board — backlog / in-progress / blocked / done; the single source of truth for what to work on next
+scope: delivery
+status: stable
 updated: 2026-10-22
 ---
 
 # Story Board
 
-> **How to work this board:** follow the story-implementation skill (`.agents/skills/story-implementation/SKILL.md`). The board + story files are the only persistent state — any session can resume from disk alone.
-
-**Overall status:** ⬜ breakdown pending → 🟨 in progress → ✅ complete
-
 ## Backlog
 
-| ID | Title | Scope | Deps | Priority |
-|----|-------|-------|------|----------|
-
-*(empty — run the Breakdown phase of the story-implementation skill to populate)*
+| ID | Title | Priority | Dependencies | Acceptance criteria | Story file |
+|----|-------|----------|--------------|---------------------|------------|
+| S-001 | Workspace scaffold + quality tooling | High | — | 6 | [S-001](S-001-workspace-scaffold.md) |
+| S-002 | diagram-model — Diagram aggregate + cell geometry | High | S-001 | 6 | [S-002](S-002-diagram-model-aggregate.md) |
+| S-003 | .ad format family specification (docs) | High | S-002 | 5 | [S-003](S-003-ad-format-spec.md) |
+| S-004 | ad-format — parser + canonical serializer | High | S-002, S-003 | 6 | [S-004](S-004-ad-format-parser.md) |
+| S-005 | shape-registry — built-in catalog + template/collection loading | High | S-002, S-003 | 6 | [S-005](S-005-shape-registry-catalog.md) |
+| S-006 | render-pipeline — place → resolve → ResolvedGrid (shapes + text) | High | S-002, S-005 | 7 | [S-006](S-006-render-pipeline-grid.md) |
+| S-007 | render-pipeline — anchor-bound connectors (+ ADR 013 routing) | High | S-006, S-005 | 5 | [S-007](S-007-render-pipeline-connectors.md) |
+| S-008 | exporters — text + SVG via svgbob | High | S-006, S-007 | 6 | [S-008](S-008-exporters-text-svg.md) |
+| S-009 | exporters — PNG rasterization (+ ADR 014 rasterizer) | Medium | S-008 | 6 | [S-009](S-009-exporters-png.md) |
+| S-010 | ui-api + core-services — service seam (ADR 009 pinned) | High | S-004, S-005, S-006, S-007, S-008, S-009 | 5 | [S-010](S-010-ui-api-core-services.md) |
+| S-011 | core-services — responsive PNG worker (ADR 012) | Medium | S-010, S-009 | 6 | [S-011](S-011-png-worker-thread.md) |
+| S-012 | gui-app — eframe scaffold + WYSIWYG canvas spike (ADR 008 milestone) | High | S-010, S-006 | 6 | [S-012](S-012-gui-canvas-spike.md) |
+| S-013 | gui-app — editing gestures (move / resize / connect / select) | High | S-012, S-007 | 5 | [S-013](S-013-gui-editing-gestures.md) |
+| S-014 | gui-app — file open/save + text output UX (FR2/FR4, RS2/RS5) | High | S-012, S-010 | 5 | [S-014](S-014-gui-file-io-text-output.md) |
+| S-015 | gui-app — SVG/PNG export + scale control (FR5/FR8, RS4) | Medium | S-012, S-011 | 4 | [S-015](S-015-gui-export-scale.md) |
+| S-016 | gui-app — collections sidebar + custom shape placement (FR3) | High | S-012, S-005 | 4 | [S-016](S-016-gui-collections-sidebar.md) |
+| S-017 | gui-app — template editor: text art + graphical anchors (ADR 007 last piece) | High | S-016, S-005 | 5 | [S-017](S-017-gui-template-editor.md) |
+| S-018 | gui-app — free text elements (FR10) | Medium | S-013, S-006 | 4 | [S-018](S-018-gui-free-text.md) |
+| S-019 | web/wasm milestone — bundle build + core tests on wasm32 (QS4) | High | S-012…S-018, S-011 | 5 | [S-019](S-019-wasm-web-milestone.md) |
+| S-020 | performance benchmarks + determinism invariants (QS1/QS12) | Low | S-008, S-011 | 4 | [S-020](S-020-performance-benchmarks.md) |
+| S-021 | documentation completion (§4/§7/§10/§11/§13/§15/§16 + tracker) | Medium | S-019, S-020 | 4 | [S-021](S-021-docs-completion.md) |
 
 ## In progress
 
-| ID | Title | Started | Note |
-|----|-------|---------|------|
+| ID | Title | Started | Notes |
+|----|-------|---------|-------|
+| — | — | — | — |
 
 ## Blocked
 
-| ID | Title | Reason | Unblocks when |
-|----|-------|--------|---------------|
+| ID | Title | Blocked on | Note |
+|----|-------|------------|------|
+| — | — | — | — |
 
 ## Done
 
-| ID | Title | Completed | Commit |
-|----|-------|-----------|--------|
+| ID | Title | Completed | Verification summary |
+|----|-------|-----------|----------------------|
+| — | — | — | — |
+
+## Deferred (not v1)
+
+- **FR12 / `ascii-import` context** — ASCII import is explicitly out of v1 scope (§14). The crate is scaffolded in S-001 as a documented stub so the T5 DAG audit can pin its edges; no functional story until v1+.
+- **Custom shape resize rules** — ADR 007 v3: all user templates are fixed-size in v1; `resize_rules` exists on the type for later.
+- **P1/P2/P3 budget confirmation** — budgets stay "proposed, awaiting confirmation" (§6); S-020 measures against them without gating.
+- **CI provider selection** — open item from §8.5; gates run locally per the quality section until a provider is chosen (would be a new ADR).
 
 ## Progress log
 
-> Newest first. One entry per story completion, block, recovery, or significant state change. Facts only: what landed, gate results, follow-ups.
-
-### 2026-10-22 — Board created
-
-- Story board + story template added; story-implementation agent (skill) in place.
-- Breakdown phase pending — first run of the skill populates S-001… from the arc42 docs, ADRs, and concepts.
+- 2026-10-22: board created. Breakdown of arc42 + ADRs into 21 stories (S-001…S-021) in dependency order: scaffold → headless core bottom-up (diagram-model → ad-format spec+parser, shape-registry → render-pipeline → exporters) → service seam + PNG worker → GUI native (canvas spike → gestures → file IO → export/scale → collections → template editor → free text) → wasm milestone → benchmarks → docs completion. Proposed ADRs map to stories: 010→S-001, 011→S-001, 004→S-004, 001→S-006, 005→S-008, 009→S-010, 012→S-011, 008→S-012, 007→S-017. New ADRs to be created during work: 013 (connector routing, S-007), 014 (PNG rasterizer, S-009).
