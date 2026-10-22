@@ -36,7 +36,7 @@ nav:
       - "009 UI API service layer": adr/009-ui-api-service-layer.md
       - "010 Deny all Clippy lints": adr/010-deny-all-clippy-lints.md
       - "011 Domain-Driven Design for building blocks": adr/011-domain-driven-design.md
-      - "012 Single-threaded runtime model": adr/012-single-threaded-runtime.md
+      - "012 Responsive UI threading (dedicated UI thread + worker)": adr/012-responsive-ui-threading.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md

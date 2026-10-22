@@ -1,6 +1,6 @@
 ---
 title: "arc42-9-runtime-view"
-description: runtime behavior — single-thread topology (ADR 012), communication model (= direct calls, no IPC), key scenarios RS1–RS6 as sequence diagrams, state management, error flows
+description: runtime behavior — responsive-UI threading (ADR 012 v2: dedicated UI thread, worker for non-frame work), communication model, key scenarios RS1–RS6 as sequence diagrams, state management, error flows
 scope: architecture
 status: draft
 updated: 2026-10-22
@@ -10,18 +10,18 @@ updated: 2026-10-22
 
 > *How the system behaves at runtime for the key scenarios.*
 >
-> *Status note: design-level, no code yet. The concurrency model is decided by [ADR 012](../adr/012-single-threaded-runtime.md) (`proposed`): **single process, single thread** — which makes the runtime communication model a direct consequence of the static coupling strategy ([§8.3](08-building-block-view.md)) rather than a separate design problem. Diagrams in PlantUML per [ADR 003](../adr/003-plantuml-for-doc-diagrams.md).*
+> *Status note: design-level, no code yet. The concurrency model is decided by [ADR 012](../adr/012-responsive-ui-threading.md) (`proposed`, v2): **a dedicated UI thread that is never blocked by application work** — frame-critical work runs inline on it, non-frame work (PNG rasterization) runs on a worker thread (native) with inline fallback on wasm. This keeps the runtime communication model a small, fixed extension of the static coupling strategy ([§8.3](08-building-block-view.md)) rather than a separate design problem. Diagrams in PlantUML per [ADR 003](../adr/003-plantuml-for-doc-diagrams.md).*
 
-## 9.1 Topology: One Process, One Thread
+## 9.1 Topology: One Process, Dedicated UI Thread + One Worker (Native)
 
 ```plantuml
 @startuml
 left to right direction
 rectangle "Process (native binary or wasm module)" {
-  rectangle "Main thread — eframe event loop" as main {
+  rectangle "UI thread — eframe event loop\n(never blocked by application work)" as main {
     component "gui-app\ninput → update → repaint" as gui
-    component "core-services\n(backends, composition root)" as svc
-    package "context crates (called inline)" as ctxs #LightBlue {
+    component "core-services\n(backends, composition root,\njob submission)" as svc
+    package "context crates (called inline for frame-critical work)" as ctxs #LightBlue {
       [diagram-model]
       [ad-format]
       [shape-registry]
@@ -30,29 +30,38 @@ rectangle "Process (native binary or wasm module)" {
       [ascii-import (v1+)]
     }
   }
+  rectangle "Worker thread — native only\n(PNG rasterization)" as worker {
+    component "core-services\nrasterize job" as wjob
+  }
 }
 cloud "OS / browser" as host
 host --> main : input events, vsync
-note bottom of main : no worker threads, no async runtime,\nno channels, no locks (ADR 012)\nfully offline — no network (§5.2)
+main <--> worker : one-shot job + result\n(bounded mpsc channel, ownership transfer)
+note bottom of worker : wasm32: no threads on target — compiles to inline execution (ADR 012)\nno separate process anywhere — browsers provide none (§5.2 offline)
 @enduml
 ```
 
-- **Native:** one process; the OS delivers input events + vsync to the eframe loop; all application logic runs inline in that thread.
-- **Web (wasm32):** same topology with *zero* threads available on the target — the single-thread model is not just simpler, it is the only portable baseline (ADR 012).
-- No daemons, no background services, no inter-process communication (§5.2 fully offline).
+- **Native:** one process; the UI thread runs the eframe event loop and *only* frame-critical work; a single worker thread handles non-frame work (v1: PNG rasterization).
+- **Web (wasm32):** same topology minus the worker — `wasm32-unknown-unknown` has no threads and browsers provide no subprocesses, so non-frame work runs inline. The single-thread web build is a fallback, not the design baseline.
+- **Splitting rule (ADR 012):** *must land within this frame → inline on the UI thread; user waits but it need not complete this frame → worker.*
+- No daemons, no background services, no IPC (§5.2 fully offline).
 
 ## 9.2 Communication Model
 
-Because v1 is single-threaded and in-process ([ADR 012](../adr/012-single-threaded-runtime.md)), **all communication between components is direct synchronous function calls passing value types** — there is no IPC, no message passing, no shared mutable state, no locking. Concretely:
+Two — and only two — kinds of communication exist at runtime:
 
-- The runtime graph **is** the static dependency DAG of [§8.3](08-building-block-view.md): GUI → `ui-api` traits (held as `Arc<dyn …>`) → `core-services` backends → context crates; plus GUI → `diagram-model` value types directly (§8.4.7).
-- The *currency* across each boundary is the same as in the static view: opaque `type_id`s, immutable value objects (`CellPos`, `CellSize`, `AnchorRef`), the `Diagram` aggregate, and `ResolvedGrid`.
-- **Consequence:** there is no separate "runtime coupling" to design, review, or test — deciding single-threaded *removes* a whole class of communication concerns (ordering, races, backpressure) instead of adding them.
-- **The one pre-defined exception** (ADR 012 escape hatch): if PNG rasterization ever exceeds the frame budget, a single optional worker inside `core-services` may be added — one-shot job + result return, no shared state, inline fallback on wasm. Until that happens, the answer to "how do components communicate?" is always: *a function call*.
+1. **Direct synchronous function calls passing value types** — for all frame-critical work and fast operations. The runtime graph for these calls *is* the static dependency DAG of [§8.3](08-building-block-view.md): GUI → `ui-api` traits (held as `Arc<dyn …>`) → `core-services` backends → context crates; plus GUI → `diagram-model` value types directly (§8.4.7). The currency across each boundary is unchanged: opaque `type_id`s, immutable value objects (`CellPos`, `CellSize`, `AnchorRef`), the `Diagram` aggregate, and `ResolvedGrid`.
+2. **One-shot job + result via a bounded channel** — for non-frame work (v1: PNG rasterization only). Confined to `core-services`: the GUI submits a job, shows an "exporting" state, and receives the result on a later frame poll. The channel transfers ownership; there is no shared mutable state and no locking beyond the channel itself.
+
+Consequences:
+
+- The UI thread is never blocked by application work ([ADR 012](../adr/012-responsive-ui-threading.md)) — input handling and repaint run between job polls regardless of what the worker is doing.
+- There is no general message passing, IPC, or event system — exactly one fixed async boundary inside the application layer; everything else is a function call.
+- If a second non-frame operation ever appears, it reuses the same job/result mechanism (ADR 012 follow-up) — no new communication patterns.
 
 ## 9.3 Key Scenarios
 
-Service names in bold are `ui-api` traits ([ADR 009](../adr/009-ui-api-service-layer.md)); context crates are shown where the work actually happens. All steps run on the main thread.
+Service names in bold are `ui-api` traits ([ADR 009](../adr/009-ui-api-service-layer.md)); context crates are shown where the work actually happens. Frame-critical steps run on the UI thread; only RS4's PNG path touches the worker.
 
 ### RS1: Start & new diagram (trigger: launch)
 
@@ -97,7 +106,7 @@ end
 @enduml
 ```
 
-### RS3: Edit — drag a shape (trigger: pointer gesture; **hot path, P2 ≤ 16 ms/frame**)
+### RS3: Edit — drag a shape (trigger: pointer gesture; **hot path, P2 ≤ 16 ms/frame, fully inline**)
 
 ```plantuml
 @startuml
@@ -117,7 +126,7 @@ gui -> gui : pointer up → drag state cleared;\naggregate already holds final p
 @enduml
 ```
 
-*Resize and connect follow the same shape: intent-revealing aggregate op → re-render → repaint.*
+*Resize and connect follow the same shape: intent-revealing aggregate op → re-render → repaint. This path is deliberately inline (ADR 012): per-frame work must land within the frame — threading it would only add latency.*
 
 ### RS4: Export (trigger: menu / shortcut)
 
@@ -128,6 +137,7 @@ participant "**Exporter**\n(core-services)" as exp
 box "context crates" #LightBlue
 participant "exporters" as ex
 end box
+participant "worker thread\n(native only)" as worker
 gui -> gui : current frame's ResolvedGrid\n(no re-render needed unless model changed)
 alt text (FR2)
   gui -> exp : to_text(&grid) → String
@@ -137,10 +147,13 @@ else SVG (FR5)
   gui -> gui : save dialog / download (wasm)
 else PNG (optional backend)
   gui -> exp : to_png(&grid)
-  alt supported
-    ex --> gui : bytes → save
-  else Err(Unsupported)
-    ex --> gui : graceful fallback: offer SVG (ADR 009)
+  alt supported — native
+    exp -> worker : rasterize job (one-shot, mpsc)
+    note over gui : "exporting" state —\ninput & repaint continue
+    worker --> exp : result on next frame poll
+    exp --> gui : bytes → save
+  else wasm (no threads) / backend missing
+    ex --> gui : wasm: rasterize inline (ADR 012 fallback);\nmissing backend: offer SVG (ADR 009)
   end
 end
 @enduml
@@ -187,18 +200,19 @@ gui -> gui : load resulting Diagram into canvas;\nshow warning list (unknown reg
 ## 9.4 State Management
 
 - **Single source of truth:** the `Diagram` aggregate, held by the GUI app struct ([C4](12-concepts/diagram-aggregate.md)). One document per session in v1 (multi-document = ADR 009 version-bump territory, §8.4.7).
-- **Transient view state** (selection, drag-in-progress, zoom/pan, hover) lives in the same app struct — never in a backend component (§8.4.7). It is discarded on close; it is never serialized.
+- **Transient view state** (selection, drag-in-progress, zoom/pan, hover, export job in flight) lives in the same app struct — never in a backend component (§8.4.7). It is discarded on close; it is never serialized.
 - **Derived, never stored:** `ResolvedGrid` is recomputed per frame during interaction and cached for the current frame otherwise; `.ad` files contain the model, not grids ([ADR 004](../adr/004-diagram-file-format.md)).
 - **Re-render trigger:** any aggregate mutation (gesture frame) or catalog change → re-render. No invalidation bookkeeping beyond "did the model change this frame".
 
 ## 9.5 Error Flows
 
-All errors are `Result` values returned synchronously up to the GUI (no panics across crate boundaries, no exceptions — Rust default); the GUI presents them as **non-blocking notices** and keeps the in-memory document authoritative:
+All errors are `Result` values returned synchronously up to the GUI (no panics across crate boundaries, no exceptions — Rust default); worker results arrive via the same job/result channel as a `Result`. The GUI presents everything as **non-blocking notices** and keeps the in-memory document authoritative:
 
 | Failure | Where it surfaces | User-visible behavior |
 |---------|-------------------|----------------------|
 | `.ad` parse error | `DiagramStore::load` → `Err(ParseError { line, column })` | Error notice with position; previous/empty document kept (RS2) |
 | Save IO error | `DiagramStore::save` → `Err(StoreError)` | Warning; in-memory copy untouched, retry/save-as offered (RS5) |
 | PNG backend missing | `Exporter::to_png` → `Err(Unsupported)` | Fallback offer of SVG — no hard failure (ADR 009, RS4) |
+| PNG rasterization error | worker result → `Err` via channel | "exporting" state cleared; SVG fallback offered (RS4) |
 | Import: unknown regions | `DiagramImporter::import` → `ImportResult.warnings` | Diagram loaded with reduced objects + warning list (RS6, FR12) |
 | Template/collection file invalid | catalog load at startup | Skipped with warning; builtin catalog always available |
