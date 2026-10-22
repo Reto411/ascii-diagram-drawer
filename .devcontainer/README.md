@@ -26,7 +26,8 @@ podman volume create pi-agent-home          # persists pi sessions/settings/trus
 cp .devcontainer/.env.example .devcontainer/.env && $EDITOR .devcontainer/.env   # fill in UNSLOTH_API_KEY
 ```
 
-`UNSLOTH_API_KEY` is the key of the local llama.cpp server — on this host it
+`UNSLOTH_API_KEY` is the key of the local Unsloth Studio server
+(`192.168.178.22:8888`) — on this host it
 is `providers.unsloth.apiKey` in `~/.pi/agent/models.json`. The container gets
 the provider definition from `.devcontainer/models.json` (same file, but with
 `apiKey: "$UNSLOTH_API_KEY"`), so only the key itself lives in `.env`.
@@ -39,6 +40,7 @@ Credentials come from `.devcontainer/.env` (gitignored; create it once from
 
 ```sh
 podman run --rm -it \
+  --network host \
   --env-file .devcontainer/.env \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
@@ -53,6 +55,7 @@ the decision persists in the volume's `trust.json`).
 
 ```sh
 podman run --rm \
+  --network host \
   --env-file .devcontainer/.env \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
@@ -74,10 +77,13 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
   `$UNSLOTH_API_KEY`, which pi interpolates from the environment. Update both
   files together when the model or endpoint changes; if the key rotates, only
   `.env` needs updating.
-- **Network:** the container must reach the llama.cpp server address in
-  `models.json` (`192.168.178.22:8888`) — podman's default bridge NAT handles
-  LAN addresses; check with `podman run --rm -it pi-ascii --list-models`
-  if models do not appear.
+- **Network:** the commands use `--network host` because on this host the
+  rootless podman bridge cannot reach the Unsloth Studio server
+  (`192.168.178.22:8888`) while the host network namespace can (verified).
+  Trade-off: the container shares the host's network stack. The server accepts
+  concurrent clients, so a container run does not block your host pi session.
+  If models ever fail to appear, check with
+  `podman run --rm --network host pi-ascii --list-models`.
 - **Host auth.json:** if you ever want to reuse your host `auth.json` instead,
   copy it into the volume once (e.g. via a temporary container) rather than
   bind-mounting `~/.pi/agent`.

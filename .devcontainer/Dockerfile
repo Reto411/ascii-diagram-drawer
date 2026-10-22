@@ -34,4 +34,6 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
-CMD ["pi"]
+# ENTRYPOINT (not CMD) so args after the image name are passed to pi,
+# e.g. `podman run ... pi-ascii --model ... -p "..."` (see README).
+ENTRYPOINT ["pi"]
