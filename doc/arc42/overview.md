@@ -45,11 +45,11 @@ updated: 2026-10-18
 | 5 | Constraints | [05](05-constraints.md) | 🟨 drafted (2026-10-18) — legal/boundary/framework conditions from existing decisions; performance budgets *proposed, pending confirmation*; GUI framework decided → [ADR 008](../adr/008-gui-framework-choice.md) (egui/eframe, `proposed`; Slint fallback); all Clippy lints deny → [ADR 010](../adr/010-deny-all-clippy-lints.md) (`proposed`) |
 | 6 | Quality Model | [06](06-quality-model.md) | 🟨 drafted (2026-10-18) — quality tree, 13 measurable scenarios (usage + change, official short form), test goals T1–T7 with coverage gate ≥80% and golden-file determinism as CI invariant; perf scenarios await §5.3 budget confirmation |
 | 7 | Solution Strategy | [07](07-solution-strategy.md) | ⬜ |
-| 8 | Building Block View | [08](08-building-block-view.md) | 🟨 drafted (2026-10-18, design-level) — 6 headless core crates (incl. v1+ `ascii-import` for F9) + `ui-api`/`core-services` service seam with 5 services ([ADR 009](../adr/009-ui-api-service-layer.md) v2) + egui gui-app; strict dependency rules + workspace layout; WYSIWYG canvas decision (grid rendered in monospace); L3 zoom on glyph-resolve stage; open items: PNG rasterizer backend, trait signatures at scaffolding, template file naming, default anchor sets |
+| 8 | Building Block View | [08](08-building-block-view.md) | 🟨 reworked (2026-10-22) with **DDD** per [ADR 011](../adr/011-domain-driven-design.md) (`proposed`) — subdomain analysis; 5 bounded contexts as crate boundaries (Diagram core, Shape Catalog, Rendering & Export, Persistence, Import v1+) + application/presentation layer; context mapping (Customer/Supplier, OHS/shared kernel, Repository, ACL); tactical patterns (aggregates, value objects, domain service, factory); CQRS/eventing explicitly out (§8.6); ADR 009 seam = application-layer boundary; WYSIWYG canvas decision; L3 zoom on glyph-resolve stage; open items: PNG rasterizer backend, trait signatures at scaffolding, template file naming, default anchor sets |
 | 9 | Runtime View | [09](09-runtime-view.md) | ⬜ |
 | 10 | Deployment View | [10](10-deployment-view.md) | ⬜ |
 | 11 | Cross-cutting Concerns | [11](11-cross-cutting-concerns.md) | ⬜ |
-| 12 | Concepts | [12](12-concepts/index.md) | 🟨 (C1+C2) |
+| 12 | Concepts | [12](12-concepts/index.md) | 🟨 (C1–C4; C3/C4 added with the DDD rework, ADR 011) |
 | 13 | Building Blocks (detail) | [13](13-building-blocks-detail.md) | ⬜ |
 | 14 | Identification of Important Requirements | [14](14-important-requirements.md) | 🟨 (FR/NFR refined, Q-linked) |
 | 15 | Risks and Technical Risks | [15](15-risks.md) | ⬜ |

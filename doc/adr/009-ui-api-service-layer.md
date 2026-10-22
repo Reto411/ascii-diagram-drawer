@@ -54,6 +54,7 @@ Rules:
 ## Consequences
 
 - **Positive:** backends swappable per target (store) and per build configuration (PNG); GUI logic testable with in-memory fakes (T7); headless/CLI export reuses the same `Services`; the open PNG decision (R3) stops blocking architecture.
+- **Relation to [ADR 011](011-domain-driven-design.md):** the seam is reinterpreted as the *application-layer* boundary of the DDD structure — this decision is unchanged.
 - **Negative / costs:** one seam crate + one services crate; risk of a poorly-shaped API surface — mitigated by keeping exactly four traits derived from actual GUI needs and reviewing them at scaffolding time; `dyn` dispatch (negligible here).
 - **Follow-ups:** pin exact trait signatures when the workspace is scaffolded; decide where platform store impls live (`core-services` vs a `platform-io` crate); ASCII-import matching heuristics (segmentation + tolerance scoring) are an open spec point for v1+ — pin with golden tests when implemented; revisit if egui's testing story matures.
 

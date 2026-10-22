@@ -19,6 +19,8 @@ nav:
           - Overview: arc42/12-concepts/index.md
           - Glyph resolution: arc42/12-concepts/glyph-resolution.md
           - Render pipeline: arc42/12-concepts/render-pipeline.md
+          - Bounded contexts: arc42/12-concepts/bounded-contexts.md
+          - Diagram aggregate: arc42/12-concepts/diagram-aggregate.md
       - "13. Building Blocks (Detail)": arc42/13-building-blocks-detail.md
       - "14. Important Requirements": arc42/14-important-requirements.md
       - "15. Risks and Technical Risks": arc42/15-risks.md
@@ -33,6 +35,7 @@ nav:
       - "008 GUI framework choice": adr/008-gui-framework-choice.md
       - "009 UI API service layer": adr/009-ui-api-service-layer.md
       - "010 Deny all Clippy lints": adr/010-deny-all-clippy-lints.md
+      - "011 Domain-Driven Design for building blocks": adr/011-domain-driven-design.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md

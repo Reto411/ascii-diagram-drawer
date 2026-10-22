@@ -28,4 +28,18 @@ updated: 2026-10-18
 - **Interfaces (provided/required):** [TBD]
 - **Dependencies:** C1 (glyph resolution is stage 2 of the pipeline)
 
-*(Repeat per concept.)*
+## Concept C3: Bounded Contexts
+
+- **ID:** C3
+- **Purpose:** the strategic DDD decomposition — five bounded contexts (+ application/presentation layer), each owning one model/language, realized as crate boundaries in one binary; context mapping defines how they talk
+- **Details:** [`doc/arc42/12-concepts/bounded-contexts.md`](bounded-contexts.md) · decided in [ADR 011](../../adr/011-domain-driven-design.md)
+- **Interfaces (provided/required):** value types + published interfaces across context boundaries; application services (`ui-api` traits, [ADR 009](../../adr/009-ui-api-service-layer.md))
+- **Dependencies:** C4 (the Diagram aggregate is the core context's model), C2 (Rendering & Export context hosts the pipeline)
+
+## Concept C4: Diagram Aggregate
+
+- **ID:** C4
+- **Purpose:** the core domain aggregate — `Diagram` root with identity-bearing objects, value-object geometry, invariants enforced at the boundary; single source of truth for everything rendered/exported
+- **Details:** [`doc/arc42/12-concepts/diagram-aggregate.md`](diagram-aggregate.md) · decided in [ADR 011](../../adr/011-domain-driven-design.md)
+- **Interfaces (provided/required):** construction/mutation API → `Diagram` value type; consumed by rendering (C2), persistence, and import
+- **Dependencies:** C3 (its bounded context), C2 (rendered by the pipeline)

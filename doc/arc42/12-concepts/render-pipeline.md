@@ -36,7 +36,7 @@ The character grid is a **derived intermediate representation** — it is never 
 - **Glyph resolution (C1)** — stage 2 of this pipeline; the per-cell lookup that makes both text and vector output deterministic
 - **Diagram file format** (ADR 004) — defines the *stored* model; this pipeline consumes it, producing the grid only at render time
 - **Connector binding** (FR9) — bound connectors re-resolve their cells when a shape moves/resizes, keeping text and vector output in sync
-- **WYSIWYG canvas** ([§8.3.6](../08-building-block-view.md)) — the GUI canvas renders this *same* resolved grid in a monospace font (the exact bytes of the text output) with selection/anchor overlays on top, so the view can never diverge from the export
+- **WYSIWYG canvas** ([§8.4.7](../08-building-block-view.md)) — the GUI canvas renders this *same* resolved grid in a monospace font (the exact bytes of the text output) with selection/anchor overlays on top, so the view can never diverge from the export
 
 ## Implementation
 

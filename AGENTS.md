@@ -37,7 +37,7 @@ A tool to **draw ASCII diagrams visually**: users place, move, and resize predef
 
 ## Tech stack
 
-- Language: Rust — workspace: 5 headless core crates (`diagram-model`, `ad-format`, `shape-registry`, `render-pipeline`, `exporters`) + service seam (`ui-api` traits, `core-services` backends/composition) + `gui-app` — [ADR 009](doc/adr/009-ui-api-service-layer.md), [§8](doc/arc42/08-building-block-view.md)
+- Language: Rust — workspace: 5 headless core crates (`diagram-model`, `ad-format`, `shape-registry`, `render-pipeline`, `exporters`) + service seam (`ui-api` traits, `core-services` backends/composition) + `gui-app`, organized as **bounded contexts per DDD** ([ADR 011](doc/adr/011-domain-driven-design.md); the ADR 009 seam = application layer) — [ADR 009](doc/adr/009-ui-api-service-layer.md), [§8](doc/arc42/08-building-block-view.md)
 - GUI framework: **egui / eframe** (immediate-mode Rust, compiles to native desktop + browser wasm) — [ADR 008](doc/adr/008-gui-framework-choice.md), status `proposed` (Slint = recorded fallback)
 - Web frontend: none separate — eframe builds the same app to wasm; the SvelteKit/Vite hints in `.gitignore` are obsolete
 - Rendering/export: text = resolved grid as-is; SVG via `svgbob` ([ADR 005](doc/adr/005-use-svgbob-as-vector-renderer.md)); PNG = optional backend, rasterizer TBD ([ADR 009](doc/adr/009-ui-api-service-layer.md))
