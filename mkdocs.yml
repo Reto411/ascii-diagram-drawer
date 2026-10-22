@@ -32,6 +32,7 @@ nav:
       - "007 User-defined diagram objects and collections": adr/007-user-defined-diagram-objects.md
       - "008 GUI framework choice": adr/008-gui-framework-choice.md
       - "009 UI API service layer": adr/009-ui-api-service-layer.md
+      - "010 Deny all Clippy lints": adr/010-deny-all-clippy-lints.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md

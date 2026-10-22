@@ -46,7 +46,7 @@ A tool to **draw ASCII diagrams visually**: users place, move, and resize predef
 
 > [TBD — add as the codebase grows; keep this section short]
 
-- Follow `cargo fmt` and `cargo clippy` (deny warnings in CI once CI exists).
+- Follow `cargo fmt` and `cargo clippy`: **all Clippy lints are active at deny** — any lint violation fails the build ([ADR 010](doc/adr/010-deny-all-clippy-lints.md)).
 - **Code coverage target: 80%.** Measure with `cargo tarpaulin` (or agreed tool) and don't land changes that drop coverage below the target.
 - **The rendering logic must be unit-testable without a GUI.** Keep it in platform-independent Rust crates (shared by all GUI targets), driven by plain data in → text/SVG/PNG out, with no windowing or event-loop dependencies. GUI code stays thin.
 

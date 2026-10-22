@@ -3,7 +3,7 @@ title: "arc42-6-quality-model"
 description: complete quality attribute set — quality tree, measurable quality scenarios (usage + change), and the test strategy/coverage gates that verify them
 scope: architecture / quality assurance
 status: draft
-updated: 2026-10-18
+updated: 2026-10-22
 ---
 
 # 6. Quality Model
@@ -78,6 +78,6 @@ The test strategy exists to make Q1–Q5 *continuously verified*, not spot-check
 | T6 | **Performance budgets are regression-tested** — first-render and per-frame costs tracked, not vibes | `criterion` benchmarks with thresholds tied to §5.3 budgets (QS12); bundle-size gate for web (QS13) |
 | T7 | **GUI stays verifiable despite limited egui test tooling** — the GUI layer is thin enough that behavior tests target the core it calls, and GUI logic runs against in-memory fakes of the `ui-api` traits ([ADR 009](../adr/009-ui-api-service-layer.md)); per-target manual smoke checklist (open, place, drag, connect, export × 4 targets) ships with each release | Thin-layer review gate + fake-backend GUI tests + release smoke checklist (Q5.3, QS9) |
 
-**Definition of done for any change touching core:** `cargo fmt` + `cargo clippy` clean · full test suite green on the local target · coverage ≥ 80% · no unexplained golden diff · docs updated per AGENTS.md.
+**Definition of done for any change touching core:** `cargo fmt` + `cargo clippy` clean (**all lints deny** — [ADR 010](../adr/010-deny-all-clippy-lints.md)) · full test suite green on the local target · coverage ≥ 80% · no unexplained golden diff · docs updated per AGENTS.md.
 
 > *Open items: (1) confirm §5.3 performance budgets to activate QS12/QS13 gates; (2) pick the CI provider/matrix once the workspace exists; (3) baseline GUI-crate coverage after the first eframe milestone — then decide whether to gate it.*
