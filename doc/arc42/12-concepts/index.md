@@ -51,3 +51,27 @@ updated: 2026-10-23
 - **Details:** [`doc/arc42/12-concepts/cell-grid.md`](cell-grid.md)
 - **Interfaces (provided/required):** `CellPos`/`CellSize` value types + scale on the aggregate → consumed by every object kind and by rendering/export
 - **Dependencies:** C4 (the aggregate owns the scale; objects carry cell geometry), C2 (rendering resolves onto this grid)
+
+## Concept C6: Diagram File Format (`.ad`)
+
+- **ID:** C6
+- **Purpose:** the canonical lossless serialization of a `Diagram` — versioned, line-based, one statement per line with explicit cell coordinates; deterministic, byte-stable on re-save (QS7)
+- **Details:** [`doc/arc42/12-concepts/diagram-file-format.md`](diagram-file-format.md) · decided in [ADR 004](../../adr/004-diagram-file-format.md); grammar settled by S-003
+- **Interfaces (provided/required):** `ad-format` crate (S-004): parser + canonical serializer over the C4 aggregate
+- **Dependencies:** C4 (serializes the aggregate 1:1), C5 (cell coordinates + scale), C7/C8 (`collection/name` type-ids resolve into collections)
+
+## Concept C7: Shape Template
+
+- **ID:** C7
+- **Purpose:** a user-defined diagram object — named fixed-size grid of svgbob-alphabet characters with declared anchor cells; the unit of user content (FR3), stamped opaquely except at anchors
+- **Details:** [`doc/arc42/12-concepts/shape-template.md`](shape-template.md) · decided in [ADR 007](../../adr/007-user-defined-diagram-objects.md); syntax settled by S-003
+- **Interfaces (provided/required):** template definition (grid + anchors) → consumed by the Shape Catalog (C3) and rendering (C2)
+- **Dependencies:** C8 (lives in collections), C6 (`collection/name` reference form), C1 (cells use the svgbob alphabet), C5 (instances occupy a cell rectangle)
+
+## Concept C8: Collection
+
+- **ID:** C8
+- **Purpose:** a named plain-text file (`.adc`) grouping shape templates — the shareable unit of user content; identity = filename stem, `collection/name` resolution rule lives here
+- **Details:** [`doc/arc42/12-concepts/collection.md`](collection.md) · decided in [ADR 007](../../adr/007-user-defined-diagram-objects.md); syntax settled by S-003
+- **Interfaces (provided/required):** collection file → `shape-registry` (S-005) loads it; type-id resolution for `.ad` files (C6)
+- **Dependencies:** C7 (content unit), C6 (shared versioning scheme + reference form), C3 (Shape Catalog context)

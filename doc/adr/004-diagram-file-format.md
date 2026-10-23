@@ -3,8 +3,8 @@ title: 004 - diagram-file-format
 description: diagram files use a custom, versioned, line-based plain-text format with explicit grid coordinates — not JSON/YAML and not rendered art
 scope: format
 status: proposed
-updated: 2026-10-18
-version: 1
+updated: 2026-10-23
+version: 2
 ---
 
 # ADR 004: Open plain-text diagram file format
@@ -29,7 +29,7 @@ Key properties:
 3. **Plain text, UTF-8, LF line endings; `#` comments.** No binary layers, no escaping of the structure itself.
 4. **Canonical serialization (Q1/NFR3).** The writer emits a fixed statement order (diagram properties first, then elements in stored order) with stable spacing: `serialize(parse(s)) == s` and the same model always yields byte-identical files.
 
-Illustrative v1 sketch *(illustrative only — exact syntax is specified in the format spec, see follow-ups)*:
+Illustrative v1 sketch *(superseded by the normative grammar — see [diagram-file-format](../arc42/12-concepts/diagram-file-format.md), settled in S-003; kept for history)*:
 
 ```
 # my-diagram.ad (format version 1)
@@ -53,4 +53,9 @@ circle "Cache"    at 20,1  w 6 h 6
 
 - **Positive:** `cat`-readable (shapes, labels, and positions are visible); trivially diffable in git; dependency-free Rust parser fits the WASM target and headless unit testing (NFR1/NFR5); byte-stable canonical output is easy to guarantee and test (Q1); version header leaves room for collections (Obj. 3) and connectors without breaking old files.
 - **Negative / costs:** we own the grammar — it must be specified precisely and parser/serializer kept in lockstep; label escaping rules are needed (quotes, `#`, newlines inside text); no off-the-shelf tooling or editor integrations at first.
-- **Follow-ups:** on acceptance → create concept doc `diagram-file-format` in [arc42 §12](../arc42/12-concepts/index.md) with the full grammar spec (+ glossary entry). Open points for that spec: exact statement syntax and shape IDs (needed by connectors/collections), label escaping rules, connector statements, extension mechanism for shape templates (§1.1 Obj. 3).
+- **Follow-ups:** ~~create concept doc `diagram-file-format`~~ done in S-003 — the full grammar is normative in [diagram-file-format](../arc42/12-concepts/diagram-file-format.md) (C6), with template/collection syntax in [shape-template](../arc42/12-concepts/shape-template.md) (C7) and [collection](../arc42/12-concepts/collection.md) (C8). All former open points (statement syntax + shape IDs, label escaping, connector statements, template extension mechanism) are settled there. Remaining: implement `ad-format` (S-004), collections loading (S-005); glossary entry in S-021.
+
+## Version history
+
+- **v2 (2026-10-23):** grammar settled by S-003 — concept docs C6/C7/C8 created and linked; the illustrative sketch is marked superseded. Decision unchanged; status stays `proposed` until S-004/S-005 implement it.
+- **v1 (2026-10-18):** initial decision.

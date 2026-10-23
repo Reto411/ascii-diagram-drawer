@@ -22,6 +22,9 @@ nav:
           - Bounded contexts: arc42/12-concepts/bounded-contexts.md
           - Diagram aggregate: arc42/12-concepts/diagram-aggregate.md
           - Cell grid: arc42/12-concepts/cell-grid.md
+          - Diagram file format (.ad): arc42/12-concepts/diagram-file-format.md
+          - Shape template: arc42/12-concepts/shape-template.md
+          - Collection: arc42/12-concepts/collection.md
       - "13. Building Blocks (Detail)": arc42/13-building-blocks-detail.md
       - "14. Important Requirements": arc42/14-important-requirements.md
       - "15. Risks and Technical Risks": arc42/15-risks.md

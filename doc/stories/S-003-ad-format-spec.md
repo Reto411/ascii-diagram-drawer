@@ -2,8 +2,8 @@
 title: S-003 - ad-format-spec
 description: full grammar spec for the .ad format family — diagram files, template + collection files, anchor markers, resolution rules (docs only)
 scope: docs/format
-status: backlog
-updated: 2026-10-22
+status: done
+updated: 2026-10-23
 ---
 
 # S-003: .ad format family specification
@@ -26,12 +26,15 @@ updated: 2026-10-22
 
 ## Implementation notes
 
-- 
+- Grammar settled as three concept docs from the template: `diagram-file-format.md` (C6, normative `.ad` grammar), `shape-template.md` (C7, template block syntax + anchor declarations), `collection.md` (C8, `.adc` file + resolution rule). All cross-linked; C6/C7/C8 added to §12 index and mkdocs nav.
+- Key decisions recorded in the spec: statements are single physical lines (newlines inside labels/text are `\n` escapes); only `\"`, `\\`, `\\n` are valid escapes; canonical form = header, always-emitted `scale`, objects in stored order, single spaces, LF, no leading zeros; versioning = major reject / minor skip-and-preserve-verbatim (QS7 across minor upgrades); ids/anchors split at the LAST dot.
+- ADR 007's open "anchor marker character" point settled by **coordinate-based** `anchor <name> at <x> <y>` declarations — no marker character exists, so nothing can collide with the svgbob alphabet. Recorded in ADR 007 v4 history; decision unchanged, status stays `proposed`.
+- Collection identity = filename stem (no in-file name statement → no drift); the `.adc` file itself is the manifest; bare type-ids = built-ins only, `collection/name` = user collections, disjoint namespaces, no shadowing.
 
 ## Verification
 
-- [ ] AC1 — 
-- [ ] AC2 — 
-- [ ] AC3 — 
-- [ ] AC4 — 
-- [ ] AC5 — 
+- [x] AC1 — `diagram-file-format.md` exists (from template): extension, `ad <major>.<minor>` header + tolerance rule, `scale`, `shape ... as <id>`, `text`, `connect ... from <id>.<anchor> to <id>.<anchor> [dashed]`, escaping rules, `#` comments. Field-mapping table covers every `diagram-model` field exactly once (checked against the S-002 API: `ShapeInstance{id,label,pos,size,type_id}`, `TextInstance{id,pos,text}`, `ConnectorInstance{from,id,style,to}`, `Diagram.scale`, object order).
+- [x] AC2 — sibling docs define `.adc` extension, template declaration (`template <name> <w>x<h>` + exactly h grid rows), anchor placement rules (bounds, unique names, shareable cells), collection manifest (= the file: header + ordered blocks), and the `collection/name` → type_id resolution rule. EBNF-level precision; no open decisions remain.
+- [x] AC3 — "Edge cases (settled rules)" section: escapes (only 3 valid; raw newline impossible), empty labels (shape ok / text rejected by model), overlap = file order is z-order, connectors always name explicit anchors (no default anchor in v1), plus referential integrity at load, integer canonical form, comment/blank-line semantics.
+- [x] AC4 — C6/C7/C8 in `index.md` + mkdocs nav; ADR 004 → v2 and ADR 007 → v4 with follow-up pointers linking the spec (both stay `proposed`). `mkdocs build --strict` exits 0, zero warnings.
+- [x] AC5 — `shape-template.md` + `collection.md` created from the template; both Implementation sections marked "Not yet implemented" with the landing stories (S-005 parse, S-017 graphical editor). 
