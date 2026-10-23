@@ -1,5 +1,6 @@
-# ADR 010: the toolchain is pinned because `clippy::nursery` lints change
-# between Rust releases — an unpinned bump could break the build with zero code changes.
+# The toolchain is pinned for reproducible builds — compiler, clippy, rustfmt behavior
+# and the wasm32 target are all fixed. ADR 010 v4 no longer *requires* the pin (only
+# `clippy::all` is enforced, no unstable nursery lints); it remains good practice.
 # Bumping this file is a deliberate, reviewed change.
 [toolchain]
 channel = "1.99.1"

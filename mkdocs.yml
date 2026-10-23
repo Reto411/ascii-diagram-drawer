@@ -39,7 +39,7 @@ nav:
       - "007 User-defined diagram objects and collections": adr/007-user-defined-diagram-objects.md
       - "008 GUI framework choice": adr/008-gui-framework-choice.md
       - "009 UI API service layer": adr/009-ui-api-service-layer.md
-      - "010 Deny all Clippy lints": adr/010-deny-all-clippy-lints.md
+      - '010 Clippy lint policy (clippy::all deny)': adr/010-deny-all-clippy-lints.md
       - "011 Domain-Driven Design for building blocks": adr/011-domain-driven-design.md
       - "012 Responsive UI threading (dedicated UI thread + worker)": adr/012-responsive-ui-threading.md
   - Templates:

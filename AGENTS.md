@@ -3,7 +3,7 @@ title: agent-instructions
 description: canonical instructions for AI agents in this repo — behavior rules, project summary, conventions; read before any task
 scope: whole repository
 status: stable
-updated: 2026-10-22
+updated: 2026-10-23
 ---
 
 # AGENTS.md — ascii-diagram-drawer
@@ -46,7 +46,7 @@ A tool to **draw ASCII diagrams visually**: users place, move, and resize predef
 
 > [TBD — add as the codebase grows; keep this section short]
 
-- Follow `cargo fmt` and `cargo clippy`: **all Clippy lints are active at deny** — any lint violation fails the build ([ADR 010](doc/adr/010-deny-all-clippy-lints.md)).
+- Follow `cargo fmt` and `cargo clippy`: **Clippy's default group (`clippy::all`) is active at deny** — violations of those lints fail the build; other lint groups (`pedantic`/`restriction`/`nursery`/`cargo`) are not enforced ([ADR 010](doc/adr/010-deny-all-clippy-lints.md)).
 - **Code coverage target: 80%.** Measure with `cargo tarpaulin --engine Llvm --workspace` and don't land changes that drop coverage below the target. (In this devcontainer the default ptrace engine fails — seccomp blocks the `personality` syscall, so tarpaulin cannot disable ASLR; the LLVM engine is the working path.)
 - **Isolated dev environment:** builds/tests may run in the podman devcontainer (`.devcontainer/`) where only this repo is mounted at `/workspace`; don't assume host paths or tools outside the image.
 - **Delivery is story-driven:** implementation work happens as user stories on `doc/stories/BOARD.md`, worked by the story-implementation skill (`.agents/skills/story-implementation/SKILL.md`). The board + story files are the persistent state; any session resumes from disk.

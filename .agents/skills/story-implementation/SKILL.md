@@ -4,7 +4,7 @@ description: Run the self-reliant build loop for ascii-diagram-drawer — break 
 metadata:
   scope: whole repository
   status: stable
-  updated: 2026-10-22
+  updated: 2026-10-23
 ---
 
 # Story Implementation Agent
@@ -60,7 +60,7 @@ Context budget: read only the story file + the arc42 chapters / ADRs / concepts 
 5. **Quality gates — all must pass before done** (from the moment a Cargo workspace exists; doc-only stories gate on `mkdocs build`):
    ```sh
    cargo fmt --all
-   cargo clippy --workspace --all-targets   # all lints deny (ADR 010)
+   cargo clippy --workspace --all-targets   # clippy::all deny (ADR 010 v4)
    cargo test --workspace
    cargo tarpaulin --workspace              # ≥80% line coverage; never land a change that drops below target
    ```
