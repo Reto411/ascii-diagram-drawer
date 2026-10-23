@@ -31,12 +31,17 @@ cp .devcontainer/.env.example .devcontainer/.env && $EDITOR .devcontainer/.env  
 is `providers.unsloth.apiKey` in `~/.pi/agent/models.json`. The container gets
 the provider definition from `.devcontainer/models.json` (same file, but with
 `apiKey: "$UNSLOTH_API_KEY"`), so only the key itself lives in `.env`.
+The pi settings come from `.devcontainer/settings.json` — a repo-local mirror
+of the host's `~/.pi/agent/settings.json` (packages, defaults, compaction).
+Keep it in sync when your host config changes; never put secrets in it
+(keys belong in `.env`).
 
 ## Run pi interactively (from the repo root)
 
 Credentials come from `.devcontainer/.env` (gitignored; create it once from
-`.env.example`) via `--env-file`, and the provider definition from
-`.devcontainer/models.json` — **do not mount the host's `~/.pi/agent`**:
+`.env.example`) via `--env-file`, the provider definition from
+`.devcontainer/models.json`, and the pi settings from
+`.devcontainer/settings.json` — **do not mount the host's `~/.pi/agent`**:
 
 ```sh
 podman run --rm -it \
@@ -45,6 +50,7 @@ podman run --rm -it \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
   -v .devcontainer/models.json:/root/.pi/agent/models.json:ro \
+  -v .devcontainer/settings.json:/root/.pi/agent/settings.json:ro \
   pi-ascii --model "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL" --thinking medium
 ```
 
@@ -60,6 +66,7 @@ podman run --rm \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
   -v .devcontainer/models.json:/root/.pi/agent/models.json:ro \
+  -v .devcontainer/settings.json:/root/.pi/agent/settings.json:ro \
   pi-ascii --model "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL" --thinking medium \
     -p "Use the story-implementation skill and work the story board until you run low on context."
 ```
@@ -77,6 +84,13 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
   `$UNSLOTH_API_KEY`, which pi interpolates from the environment. Update both
   files together when the model or endpoint changes; if the key rotates, only
   `.env` needs updating.
+- **Pi settings:** `.devcontainer/settings.json` is bind-mounted read-only
+  over the volume's path and mirrors the host's `~/.pi/agent/settings.json`.
+  Re-copy it from the host when your config changes (keep `defaultProvider`/
+  `defaultModel` consistent with `models.json`). The listed `packages` are
+  installed by pi into the volume on first container start — needs network
+  access to git/npm, which `--network host` provides; later runs reuse the
+  cached installs in the volume.
 - **Network:** Unsloth Studio runs on this machine and listens on both
   `127.0.0.1:8888` and the LAN IP; `models.json` uses loopback so it keeps
   working if the LAN IP changes. Loopback only resolves to the host under
