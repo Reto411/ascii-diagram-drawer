@@ -2,8 +2,8 @@
 title: diagram-aggregate
 description: the core domain aggregate — Diagram root with identity-bearing objects, value-object geometry, invariants enforced at the boundary; single source of truth for everything rendered/exported
 scope: model
-status: draft
-updated: 2026-10-22
+status: stable
+updated: 2026-10-23
 ---
 
 # Concept: Diagram Aggregate
@@ -19,10 +19,10 @@ The `Diagram` is the **aggregate root** of the core domain: an ordered collectio
 ## How it works / behaves
 
 - **Entities** (stable identity): `Object::Shape(ShapeInstance) | Text(TextInstance) | Connector(ConnectorInstance)`.
-  - `ShapeInstance { id, type_id, pos: CellPos, size: CellSize }` — coordinates in **cell units** (grid alignment, FR7); `type_id` is the only reference into the Shape Catalog context.
+  - `ShapeInstance { id, label, type_id, pos: CellPos, size: CellSize }` — coordinates in **cell units** (grid alignment, FR7); `type_id` is the only reference into the Shape Catalog context; `label` renders inside the shape.
   - `ConnectorInstance { id, from: AnchorRef, to: AnchorRef, style }` — bound to anchors, not raw coordinates (FR9).
 - **Value objects:** `CellPos`, `CellSize`, `AnchorRef` — immutable geometry, equality by value.
-- **Invariants** (enforced at construction *and* on every mutation): integer cell coordinates; anchor cells inside their shape's bounds; connectors reference existing anchor refs.
+- **Invariants** (enforced at construction *and* on every mutation — see `ModelError` for the failure surface): unique object ids; single-token ids/type-ids/anchor names (no whitespace); non-zero sizes (`CellSize ≥ 1×1`); scale ≥ 1; connector endpoints reference existing objects that are shapes. Invariants needing the shape catalog (an anchor name resolving to a cell inside its shape's bounds) are checked at render time in `render-pipeline`, which alone sees both sides.
 - **Mutations:** intent-revealing operations on the root (`place`, `move_object`, `resize`, `connect`, …). The GUI manipulates the aggregate directly — deliberately no "model service" trait ([ADR 009](../../adr/009-ui-api-service-layer.md) non-abstraction); there is no anemic-model field poking (§8.6).
 - **Lifecycle:** created by user gestures, by `.ad` parsing (Repository), or by ASCII import (factory); mutated in place per gesture; serialized losslessly back to `.ad`.
 
@@ -34,4 +34,10 @@ The `Diagram` is the **aggregate root** of the core domain: an ordered collectio
 
 ## Implementation
 
-Not yet implemented. Will live in the `diagram-model` crate (`objects`, `anchors`, `invariants` sub-modules per [§8.4.1](../../arc42/08-building-block-view.md)).
+The `diagram-model` crate (leaf: zero dependencies), per [§8.4.1](../../arc42/08-building-block-view.md):
+
+- `crates/diagram-model/src/lib.rs` — the `Diagram` aggregate root: `objects` in document order (= z-order) + `scale`; intent-revealing mutations (`place_shape`, `place_text`, `connect`, `remove`, `move_object`, `resize`, `set_scale`) that re-check the boundary invariants.
+- `crates/diagram-model/src/objects.rs` — `ObjectId`, `Object` enum, `ShapeInstance`, `TextInstance`, `ConnectorInstance`, `ConnectorStyle`.
+- `crates/diagram-model/src/anchors.rs` — `AnchorRef { object, anchor }` (validated single-token anchor name).
+- `crates/diagram-model/src/invariants.rs` — `ModelError` (the whole failure surface) + shared token validation.
+- Geometry value objects live in the [cell grid](cell-grid.md) concept (`geometry.rs`).

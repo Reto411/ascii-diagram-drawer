@@ -3,7 +3,7 @@ title: "arc42-12-concepts"
 description: index of architecture concepts (C1+) — each concept has a full doc in doc/arc42/12-concepts/
 scope: architecture
 status: draft
-updated: 2026-10-18
+updated: 2026-10-23
 ---
 
 # 12. Concepts
@@ -42,4 +42,12 @@ updated: 2026-10-18
 - **Purpose:** the core domain aggregate — `Diagram` root with identity-bearing objects, value-object geometry, invariants enforced at the boundary; single source of truth for everything rendered/exported
 - **Details:** [`doc/arc42/12-concepts/diagram-aggregate.md`](diagram-aggregate.md) · decided in [ADR 011](../../adr/011-domain-driven-design.md)
 - **Interfaces (provided/required):** construction/mutation API → `Diagram` value type; consumed by rendering (C2), persistence, and import
-- **Dependencies:** C3 (its bounded context), C2 (rendered by the pipeline)
+- **Dependencies:** C3 (its bounded context), C5 (object geometry is cell-based), C2 (rendered by the pipeline)
+
+## Concept C5: Cell Grid
+
+- **ID:** C5
+- **Purpose:** the unbounded 2D integer grid all diagram geometry lives on — `CellPos`/`CellSize` value objects, top-left origin, whole-diagram scale; one cell = one character at scale 1
+- **Details:** [`doc/arc42/12-concepts/cell-grid.md`](cell-grid.md)
+- **Interfaces (provided/required):** `CellPos`/`CellSize` value types + scale on the aggregate → consumed by every object kind and by rendering/export
+- **Dependencies:** C4 (the aggregate owns the scale; objects carry cell geometry), C2 (rendering resolves onto this grid)

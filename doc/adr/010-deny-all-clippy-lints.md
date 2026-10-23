@@ -3,8 +3,8 @@ title: "010 - deny-all-clippy-lints"
 description: every Clippy lint is enabled at deny level in the whole workspace — any lint violation fails the build
 scope: tooling
 status: accepted
-version: 2
-updated: 2026-10-22
+version: 3
+updated: 2026-10-23
 ---
 
 # ADR 010: All Clippy Lints Active, Failing the Build
@@ -32,6 +32,12 @@ Specifics:
   | `cargo_common_metadata = "allow"` | The workspace is an internal, unpublished tool; crates.io packaging metadata (repository/keywords/categories/readme) is not applicable. |
   | `blanket_clippy_restriction_lints = "allow"` | Clippy's own meta-lint discourages enabling the *entire* `restriction` group; this project decision explicitly does so, per ADR 010's goal of "all lints active". The meta-lint is suppressed only to keep that decision buildable — individual restriction lints remain deny. |
   | `implicit_return = "allow"` | Direct conflict with `style::needless_return` (both fire on the same code; Clippy cannot have both active). We keep `needless_return` (catches genuinely redundant returns) and accept implicit trailing expressions, which are idiomatic Rust. |
+  | `missing_inline_in_public_items = "allow"` | `#[inline]` is a profile-driven optimization decision, not a style rule; forcing it on every public API function bloats code size and misleads the linker/LTO. |
+  | `question_mark_used = "allow"` | `?` is the idiomatic error-propagation mechanism in Rust; forbidding it turns every fallible function into match/if-let boilerplate without improving safety. |
+  | `missing_trait_methods = "allow"` | `std::error::Error`'s default `source`/`cause`/`description` implementations are correct as-is; explicit implementations are noise and `description()` is deprecated. |
+  | `pub_with_shorthand = "allow"` | Conflicts with `pub_without_shorthand` (both fire, on opposite syntaxes); the project standardizes on the ecosystem-conventional `pub(crate)` shorthand. |
+  | `exhaustive_structs = "allow"` / `exhaustive_enums = "allow"` | These lints protect the public API of *published* crates; nothing in this workspace is published to crates.io, and exhaustive construction/matching keeps the model ergonomic for sibling crates (e.g. `match object { Object::Shape(s) => .. }`). |
+  | `pattern_type_mismatch = "allow"` | Conflicts with `needless_borrowed_reference` + `ref_patterns`: for non-`Copy` data behind a reference, no match form satisfies all three (explicit `&` patterns need `ref` bindings to avoid moves). Match ergonomics is the idiomatic form; allowed here. |
 
 ## Alternatives considered
 
@@ -55,5 +61,6 @@ Specifics:
 
 > When a decision changes: bump `version` in the header, update Context/Decision to the *current* state, and add an entry here (newest first) recording what changed, why, and when. Never create a superseding ADR.
 
+- **v3 (2026-10-23, S-002):** seven more workspace-level exceptions documented with reasons, all found while writing the first real code (`diagram-model`): `missing_inline_in_public_items`, `question_mark_used`, `missing_trait_methods`, `pub_with_shorthand`, `exhaustive_structs`, `exhaustive_enums`, `pattern_type_mismatch`. The lint policy itself is unchanged (all groups deny); these are the minimal set of allows that real code needs. Verified: clean gate on `diagram-model` with 100% line coverage.
 - **v2 (2026-10-22, S-001):** implemented and accepted. Mechanism refined to `{ level = "deny", priority = -1 }` per group (Clippy ≥ 1.93 makes same-priority group/individual lint mixes a hard error), and three workspace-level exceptions documented with reasons: `cargo_common_metadata`, `blanket_clippy_restriction_lints`, `implicit_return`. Verified: clean gate on the scaffold, negative probe confirms a lint violation fails the build.
 - **v1 (2026-10-22):** initial decision — all Clippy lint groups at deny in every workspace crate; build fails on any violation; toolchain pinning as the nursery-volatility mitigation.

@@ -3,7 +3,7 @@ title: "arc42-8-building-block-view"
 description: static decomposition organized with Domain-Driven Design (ADR 011) — subdomains, bounded contexts, context mapping, tactical patterns; levels 0–3 (design-level; no code yet)
 scope: architecture
 status: draft
-updated: 2026-10-22
+updated: 2026-10-23
 ---
 
 # 8. Building Block View
@@ -173,12 +173,13 @@ ascii-diagram-drawer/
 
 - **Aggregate root:** `Diagram { objects: Vec<Object> }` — stable document order = z-order. All invariants are enforced at the aggregate boundary; invalid states are unrepresentable ([C4](12-concepts/diagram-aggregate.md)).
 - **Entities** (identity matters — stable ids): `Object::Shape(ShapeInstance) | Text(TextInstance) | Connector(ConnectorInstance)`
-  - `ShapeInstance { id, type_id, pos: CellPos, size: CellSize }` — all coordinates in **cell units** (grid alignment, FR7); `type_id` is the *only* reference into the Catalog context (§8.2.3)
-  - `AnchorSet` — named anchor cells *relative to the shape origin*, defined **per type** and shared by all instances (FR11, [ADR 007](../adr/007-user-defined-diagram-objects.md))
-  - `ConnectorInstance { id, from: AnchorRef, to: AnchorRef, style }` — bound to anchors, not raw coordinates (FR9)
+  - `ShapeInstance { id, label, type_id, pos: CellPos, size: CellSize }` — all coordinates in **cell units** (grid alignment, FR7); `type_id` is the *only* reference into the Catalog context (§8.2.3); `label` renders inside the shape
+  - `ConnectorInstance { id, from: AnchorRef, to: AnchorRef, style }` — bound to anchors, not raw coordinates (FR9). Anchor *sets* (named cells relative to the shape origin, FR11, [ADR 007](../adr/007-user-defined-diagram-objects.md)) are catalog data owned by `shape-registry` (§8.4.2); the Diagram context only carries the references.
 - **Value objects:** `CellPos`, `CellSize`, `AnchorRef` — immutable geometry, equality by value.
-- **Invariants** (enforced at construction and on every mutation): integer cell coordinates; anchor cells inside their shape's bounds; connectors reference existing anchor refs.
-- **Mutations:** intent-revealing operations on the root (`place`, `move_object`, `resize`, `connect`, …) — never field pokes from outside (no anemic model, §8.6). The GUI manipulates this aggregate directly, deliberately bypassing the seam ([ADR 009](../adr/009-ui-api-service-layer.md)).
+- **Invariants:**
+  - *Boundary-enforced* (at construction and on every mutation — `diagram-model` is a leaf crate and sees no catalog): unique object ids; single-token ids/type-ids/anchor names; non-zero sizes (`CellSize ≥ 1×1`); scale ≥ 1; connector endpoints reference existing objects that are shapes.
+  - *Render-time* (need the shape catalog — `render-pipeline` alone sees both sides, per §8.2.3): an anchor name resolves to a cell inside its shape's bounds.
+- **Mutations:** intent-revealing operations on the root (`place_shape`, `place_text`, `move_object`, `resize`, `connect`, `remove`, `set_scale`) — never field pokes from outside (no anemic model, §8.6). The GUI manipulates this aggregate directly, deliberately bypassing the seam ([ADR 009](../adr/009-ui-api-service-layer.md)).
 - **Sub-modules:** `objects`, `anchors`, `invariants`.
 
 ### 8.4.2 Shape Catalog context — `shape-registry`

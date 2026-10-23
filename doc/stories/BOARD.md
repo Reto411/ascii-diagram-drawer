@@ -3,7 +3,7 @@ title: story-board
 description: persistent story board — backlog / in-progress / blocked / done; the single source of truth for what to work on next
 scope: delivery
 status: stable
-updated: 2026-10-22
+updated: 2026-10-23
 ---
 
 # Story Board
@@ -12,7 +12,6 @@ updated: 2026-10-22
 
 | ID | Title | Priority | Dependencies | Acceptance criteria | Story file |
 |----|-------|----------|--------------|---------------------|------------|
-| S-002 | diagram-model — Diagram aggregate + cell geometry | High | S-001 | 6 | [S-002](S-002-diagram-model-aggregate.md) |
 | S-003 | .ad format family specification (docs) | High | S-002 | 5 | [S-003](S-003-ad-format-spec.md) |
 | S-004 | ad-format — parser + canonical serializer | High | S-002, S-003 | 6 | [S-004](S-004-ad-format-parser.md) |
 | S-005 | shape-registry — built-in catalog + template/collection loading | High | S-002, S-003 | 6 | [S-005](S-005-shape-registry-catalog.md) |
@@ -50,6 +49,7 @@ updated: 2026-10-22
 | ID | Title | Completed | Verification summary |
 |----|-------|-----------|----------------------|
 | S-001 | Workspace scaffold + quality tooling | 2026-10-22 | all 6 ACs verified incl. negative probes (lint violation fails build; forbidden edge fails T5 audit); ADR 010 → accepted v2, ADR 011 → accepted; coverage baseline 0/1, 80% floor enforced from S-002 |
+| S-002 | diagram-model — Diagram aggregate + cell geometry | 2026-10-23 | all 6 ACs verified: leaf crate (empty `[dependencies]`), 30/30 tests, clippy/fmt clean, tarpaulin (Llvm) 175/175 = 100%; concept C5 `cell-grid.md` created + C4 Implementation updated; §8.4.1 invariant split fixed (anchor-geometry check is render-time — needs the catalog); ADR 010 → v3 (7 new documented exceptions) |
 
 ## Deferred (not v1)
 
@@ -62,3 +62,4 @@ updated: 2026-10-22
 
 - 2026-10-22: board created. Breakdown of arc42 + ADRs into 21 stories (S-001…S-021) in dependency order: scaffold → headless core bottom-up (diagram-model → ad-format spec+parser, shape-registry → render-pipeline → exporters) → service seam + PNG worker → GUI native (canvas spike → gestures → file IO → export/scale → collections → template editor → free text) → wasm milestone → benchmarks → docs completion. Proposed ADRs map to stories: 010→S-001, 011→S-001, 004→S-004, 001→S-006, 005→S-008, 009→S-010, 012→S-011, 008→S-012, 007→S-017. New ADRs to be created during work: 013 (connector routing, S-007), 014 (PNG rasterizer, S-009).
 - 2026-10-22: **S-001 done.** Workspace (9 crates per §8.3) + all-groups-deny Clippy config (ADR 010 v2: group priority -1; exceptions `cargo_common_metadata`, `blanket_clippy_restriction_lints`, `implicit_return`) + toolchain pin 1.99.1 + T5 dependency-audit test in core-services. Gotcha recorded: tarpaulin needs `--engine Llvm` in this container (seccomp blocks the `personality` syscall); coverage baseline 0/1 — 80% floor enforced from S-002. Next: S-002.
+- 2026-10-23: **S-002 done.** `diagram-model` implemented per §8.4.1: `Diagram` aggregate (ordered objects = z-order + scale), `CellPos`/`CellSize`/`AnchorRef` value objects, `Object::Shape|Text|Connector`, intent-revealing mutations with boundary invariants (`ModelError` as the whole failure surface). 30 tests, 100% line coverage. Two doc fixes landed with it: §8.4.1 invariant split (anchor-geometry check moved to render time — impossible in a leaf crate; consistent with §8.2.3) and `ShapeInstance.label` added to the documented model (ADR 004 requires it). ADR 010 → v3: first real code exposed 7 more minimal Clippy exceptions, all documented. Next: S-003 (.ad format spec — unblocks S-004/S-005).

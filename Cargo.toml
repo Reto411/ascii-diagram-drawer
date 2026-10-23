@@ -27,7 +27,7 @@ restriction = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
 
-# Justified exceptions (ADR 010 v2) — no other workspace-level allows permitted:
+# Justified exceptions (ADR 010 v3) — no other workspace-level allows permitted:
 # - this workspace is not published to crates.io, so crate.io-specific metadata
 #   lints do not apply.
 cargo_common_metadata = "allow"
@@ -37,6 +37,27 @@ blanket_clippy_restriction_lints = "allow"
 # - conflicts with style::needless_return (both cannot be active at once);
 #   needless_return stays deny, implicit trailing expressions are idiomatic Rust.
 implicit_return = "allow"
+# - `#[inline]` is a profile-driven optimization decision, not a style rule; forcing it on
+#   every public API function bloats code size and misleads the linker/LTO.
+missing_inline_in_public_items = "allow"
+# - `?` is the idiomatic error-propagation mechanism in Rust; forbidding it turns every
+#   fallible function into match/if-let boilerplate without improving safety.
+question_mark_used = "allow"
+# - std::error::Error's default source/cause/description implementations are correct as-is;
+#   explicit implementations are noise and `description()` is deprecated.
+missing_trait_methods = "allow"
+# - conflicts with pub_without_shorthand (both fire, on opposite syntaxes);
+#   the project standardizes on the ecosystem-conventional `pub(crate)` shorthand.
+pub_with_shorthand = "allow"
+# - exhaustive-struct/enum lints protect the public API of *published* crates; nothing in
+#   this workspace is published to crates.io, and exhaustive construction/matching keeps the
+#   model ergonomic for sibling crates (e.g. `match object { Object::Shape(s) => .. }`).
+exhaustive_structs = "allow"
+exhaustive_enums = "allow"
+# - pattern_type_mismatch conflicts with needless_borrowed_reference + ref_patterns: for
+#   non-Copy data behind a reference, no match form satisfies all three (explicit `&` patterns
+#   need `ref` bindings to avoid moves). Match ergonomics is the idiomatic form; allowed here.
+pattern_type_mismatch = "allow"
 
 # Coverage gate (80% target, AGENTS.md): run `cargo tarpaulin --engine Llvm --workspace`.
 # The default ptrace engine hard-fails in this devcontainer: seccomp blocks the
