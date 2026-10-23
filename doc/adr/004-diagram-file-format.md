@@ -2,9 +2,9 @@
 title: 004 - diagram-file-format
 description: diagram files use a custom, versioned, line-based plain-text format with explicit grid coordinates — not JSON/YAML and not rendered art
 scope: format
-status: proposed
+status: accepted
 updated: 2026-10-23
-version: 2
+version: 3
 ---
 
 # ADR 004: Open plain-text diagram file format
@@ -53,9 +53,10 @@ circle "Cache"    at 20,1  w 6 h 6
 
 - **Positive:** `cat`-readable (shapes, labels, and positions are visible); trivially diffable in git; dependency-free Rust parser fits the WASM target and headless unit testing (NFR1/NFR5); byte-stable canonical output is easy to guarantee and test (Q1); version header leaves room for collections (Obj. 3) and connectors without breaking old files.
 - **Negative / costs:** we own the grammar — it must be specified precisely and parser/serializer kept in lockstep; label escaping rules are needed (quotes, `#`, newlines inside text); no off-the-shelf tooling or editor integrations at first.
-- **Follow-ups:** ~~create concept doc `diagram-file-format`~~ done in S-003 — the full grammar is normative in [diagram-file-format](../arc42/12-concepts/diagram-file-format.md) (C6), with template/collection syntax in [shape-template](../arc42/12-concepts/shape-template.md) (C7) and [collection](../arc42/12-concepts/collection.md) (C8). All former open points (statement syntax + shape IDs, label escaping, connector statements, template extension mechanism) are settled there. Remaining: implement `ad-format` (S-004), collections loading (S-005); glossary entry in S-021.
+- **Follow-ups:** ~~create concept doc `diagram-file-format`~~ done in S-003 — the full grammar is normative in [diagram-file-format](../arc42/12-concepts/diagram-file-format.md) (C6), with template/collection syntax in [shape-template](../arc42/12-concepts/shape-template.md) (C7) and [collection](../arc42/12-concepts/collection.md) (C8). All former open points (statement syntax + shape IDs, label escaping, connector statements, template extension mechanism) are settled there. ~~Implement `ad-format`~~ done in S-004 (`crates/ad-format`: parser + canonical serializer, lossless round-trip proven by proptest). Remaining: collections loading (S-005); glossary entry in S-021.
 
 ## Version history
 
+- **v3 (2026-10-23):** decision implemented — `ad-format` parser + canonical serializer landed in S-004 (`crates/ad-format`, 86% line coverage, golden + property round-trip tests); status flipped to `accepted`. Collections loading (S-005) remains a follow-up.
 - **v2 (2026-10-23):** grammar settled by S-003 — concept docs C6/C7/C8 created and linked; the illustrative sketch is marked superseded. Decision unchanged; status stays `proposed` until S-004/S-005 implement it.
 - **v1 (2026-10-18):** initial decision.

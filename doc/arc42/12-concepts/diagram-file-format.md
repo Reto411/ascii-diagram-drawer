@@ -68,6 +68,7 @@ The writer is deterministic; "canonical form" means:
 - Whitespace between tokens: any run of spaces/tabs; leading indentation and trailing whitespace on statement lines are stripped.
 - A line whose first token is **not** a known keyword (`scale`/`shape`/`text`/`connect`) is an `unknown-stmt` — see versioning below.
 - A line whose first token **is** a known keyword but fails to parse is a hard error in every version (corruption, not forward-compatibility).
+- Header version tokenization: the canonical header is `ad <major>.<minor>`; whitespace around the dot (`ad 1 . 0`) is accepted as input leniency — the serializer never emits it.
 - Input CRLF is tolerated: a trailing `\r` before the line break is stripped. Output is LF only.
 - Comments: `#` outside a string starts a comment running to end of line. Whole-line and inline comments are both valid.
 
@@ -117,4 +118,10 @@ No model field is omitted or duplicated; nothing in the file maps to no model fi
 
 ## Implementation
 
-Not yet implemented — this spec is the contract for `crates/ad-format` (S-004: parser + canonical serializer; S-005 loads `.adc` collections and resolves type-ids against the built-in catalog). Until then the grammar above is normative.
+Implemented in `crates/ad-format` (S-004, ADR 004 accepted):
+
+- **Parser** — `src/parser.rs`: `parse_document(&str) -> Result<Document, ParseError>`; line-based tokenizer with 1-based line/column on every error; assembles through the `Diagram` aggregate API so all model invariants apply; versioning + unknown-statement preservation per the rules above. `ParseError` (`src/error.rs`) carries line, column and message.
+- **Canonical serializer** — `src/serializer.rs`: `serialize(&Document) -> String`; emits the canonical form (header, `scale`, objects in stored order, one space between tokens, LF endings); re-saves byte-stable; preserved unknown statements are re-emitted verbatim at their original position.
+- **Tests** — unit tests (error positions, versioning, edge cases) in the crate, golden files in `tests/golden/*.ad`, and a proptest lossless round-trip (`tests/round_trip.rs`, QS7).
+
+Still to come: `.adc` collection loading + type-id resolution against the catalog is S-005 (`shape-registry`); this spec's `.ad` part is complete.

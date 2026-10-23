@@ -10,3 +10,7 @@ diagram-model = { path = "../diagram-model" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+diagram-model = { path = "../diagram-model" }
+proptest = "1.12.0"

@@ -11,7 +11,7 @@ updated: 2026-10-23
 | | |
 |---|---|
 | **Document status** | Draft — being populated iteratively |
-| **Version** | 0.5 (S-001 scaffold + S-002 `diagram-model` + S-003 `.ad` format family spec C6/C7/C8) |
+| **Version** | 0.6 (S-001 scaffold + S-002 `diagram-model` + S-003 `.ad` format family spec C6/C7/C8 + S-004 `ad-format` parser/serializer) |
 | **Date** | 2026-10-23 |
 | **Target audience** | Developers, reviewers |
 
@@ -55,4 +55,4 @@ updated: 2026-10-23
 | 15 | Risks and Technical Risks | [15](15-risks.md) | ⬜ |
 | 16 | Glossary | [16](16-glossary.md) | ⬜ |
 
-> **Implementation progress:** story-driven — see the board at [`doc/stories/BOARD.md`](../stories/BOARD.md). As of 2026-10-23: S-001 (workspace scaffold + quality tooling), S-002 (`diagram-model` aggregate, 100% line coverage) and S-003 (`.ad` format family spec — concept docs C6/C7/C8; grammar, escaping, versioning, resolution rules all settled) done; next in dependency order: S-004 (`ad-format` parser + canonical serializer) or S-005 (shape registry).
+> **Implementation progress:** story-driven — see the board at [`doc/stories/BOARD.md`](../stories/BOARD.md). As of 2026-10-23: S-001 (workspace scaffold + quality tooling), S-002 (`diagram-model` aggregate, 100% line coverage), S-003 (`.ad` format family spec — concept docs C6/C7/C8; grammar, escaping, versioning, resolution rules all settled) and S-004 (`ad-format` parser + canonical serializer — line/column errors, golden files, proptest lossless round-trip, 86% coverage; ADR 004 accepted) done; next in dependency order: S-005 (shape registry).

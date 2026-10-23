@@ -2,8 +2,8 @@
 title: S-004 - ad-format-parser
 description: .ad parser + canonical serializer — Diagram ↔ text, line/column errors, property round-trip (QS7), golden files
 scope: ad-format
-status: backlog
-updated: 2026-10-22
+status: done
+updated: 2026-10-23
 ---
 
 # S-004: ad-format — parser + canonical serializer
@@ -32,9 +32,9 @@ FR4 (save/load `.ad`) and QS7 (lossless round-trip) are implemented by the Persi
 
 ## Verification
 
-- [ ] AC1 — 
-- [ ] AC2 — 
-- [ ] AC3 — 
-- [ ] AC4 — 
-- [ ] AC5 — 
-- [ ] AC6 — 
+- [x] AC1 — `parse_document` builds the aggregate via the `Diagram` API (invariants hold); 20+ unit tests incl. many distinct error cases with asserted line/column (header, version range, int rules, escapes, anchor refs, truncation, unknown statements).
+- [x] AC2 — `serialize` emits canonical form; golden tests `tests/golden/sample.ad` (scale + shapes + text + connectors) and `tests/golden/escapes.ad` (quoted strings, backslash/newline escapes) pass byte-for-byte.
+- [x] AC3 — proptest `round_trip.rs`: generated well-formed diagrams round-trip byte-stable (`serialize(parse(serialize(d))) == serialize(d)`) with model equality; passes.
+- [x] AC4 — higher-minor files parse with unknown statements skipped + preserved verbatim at original position (re-save re-emits the source version so preserved statements stay legal on same-version re-parse); unsupported major → explicit error; unit tests per case.
+- [x] AC5 — `cargo fmt --check` clean, `cargo clippy --workspace --all-targets` clean (ADR 010 v4), all workspace tests pass, `cargo tarpaulin --engine Llvm -p ad-format` = 86.36% (≥ 80%).
+- [x] AC6 — ADR 004 → accepted (v3); concept doc C6 Implementation section updated; overview tracker + board updated. 
