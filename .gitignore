@@ -11,7 +11,8 @@ vite.config.ts.timestamp-*
 
 .idea
 .asgrep/
-site/  # mkdocs build output (ADR 002)
+# mkdocs build output (ADR 002)
+site/
 target
 *.lock
 # Rust: Cargo.lock IS committed — binary workspace, reproducible builds (S-001)
