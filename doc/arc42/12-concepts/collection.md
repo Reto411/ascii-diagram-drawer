@@ -3,7 +3,7 @@ title: collection
 description: a named plain-text file (.adc) grouping shape templates; the manifest + resolution rule for collection/name type-ids; read before implementing collection loading (S-005)
 scope: format / domain model
 status: stable
-updated: 2026-10-23
+updated: 2026-10-25
 ---
 
 # Concept: Collection
@@ -56,4 +56,4 @@ The **search path** (where `.adc` files are looked up — e.g. project directory
 
 ## Implementation
 
-Not yet implemented — loading + validation lands in `crates/shape-registry` with S-005 (built-in catalog + template/collection loading); the GUI collections sidebar is S-016, the graphical editor S-017.
+`crates/shape-registry` (landed with S-005): `templates.rs::parse_collection(name, text)` parses a `.adc` file — identity passed in from the filename stem per this spec — into a `Collection` plus ordered statement slots and the source header version, so unknown statements from higher minor versions are preserved verbatim and re-emitted legally on save; `registry.rs::ShapeRegistry` implements the resolution rule above (disjoint bare/qualified namespaces, typed errors). The GUI collections sidebar is S-016, the graphical editor S-017.

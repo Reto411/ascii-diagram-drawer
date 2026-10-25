@@ -3,7 +3,7 @@ title: arc42-overview
 description: arc42 document header, usage notes, and progress tracker for all 16 chapters
 scope: architecture
 status: draft
-updated: 2026-10-23
+updated: 2026-10-25
 ---
 
 # arc42 — ascii-diagram-drawer (Overview)
@@ -11,8 +11,8 @@ updated: 2026-10-23
 | | |
 |---|---|
 | **Document status** | Draft — being populated iteratively |
-| **Version** | 0.6 (S-001 scaffold + S-002 `diagram-model` + S-003 `.ad` format family spec C6/C7/C8 + S-004 `ad-format` parser/serializer) |
-| **Date** | 2026-10-23 |
+| **Version** | 0.7 (S-001 scaffold + S-002 `diagram-model` + S-003 `.ad` format family spec C6/C7/C8 + S-004 `ad-format` parser/serializer + S-005 `shape-registry` catalog) |
+| **Date** | 2026-10-25 |
 | **Target audience** | Developers, reviewers |
 
 > **How to use this documentation:** Each chapter is its own file in this folder and contains italic guidance text (what belongs here) and `[TBD]` placeholders. Fill chapters incrementally; keep the progress table below updated. Remove guidance notes as chapters are finalized.
@@ -55,4 +55,4 @@ updated: 2026-10-23
 | 15 | Risks and Technical Risks | [15](15-risks.md) | ⬜ |
 | 16 | Glossary | [16](16-glossary.md) | ⬜ |
 
-> **Implementation progress:** story-driven — see the board at [`doc/stories/BOARD.md`](../stories/BOARD.md). As of 2026-10-23: S-001 (workspace scaffold + quality tooling), S-002 (`diagram-model` aggregate, 100% line coverage), S-003 (`.ad` format family spec — concept docs C6/C7/C8; grammar, escaping, versioning, resolution rules all settled) and S-004 (`ad-format` parser + canonical serializer — line/column errors, golden files, proptest lossless round-trip, 86% coverage; ADR 004 accepted) done; next in dependency order: S-005 (shape registry).
+> **Implementation progress:** story-driven — see the board at [`doc/stories/BOARD.md`](../stories/BOARD.md). As of 2026-10-25: S-001 (workspace scaffold + quality tooling), S-002 (`diagram-model` aggregate, 100% line coverage), S-003 (`.ad` format family spec — concept docs C6/C7/C8; grammar, escaping, versioning, resolution rules all settled), S-004 (`ad-format` parser + canonical serializer — line/column errors, golden files, proptest lossless round-trip, 86% coverage; ADR 004 accepted) and S-005 (`shape-registry` — built-in catalog as data, `.adc` collection loading per C7/C8, disjoint `collection/name` resolution; workspace coverage 97.6%) done; next in dependency order: S-006 (render-pipeline grid).

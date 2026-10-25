@@ -2,8 +2,8 @@
 title: S-005 - shape-registry-catalog
 description: Shape Catalog context — built-in shapes with standard anchor sets, template/collection file loading, collection/name resolution
 scope: shape-registry
-status: backlog
-updated: 2026-10-22
+status: done
+updated: 2026-10-25
 ---
 
 # S-005: shape-registry — built-in catalog + template/collection loading
@@ -28,13 +28,15 @@ The Shape Catalog context ([§8.4.2](../arc42/08-building-block-view.md)) owns `
 
 ## Implementation notes
 
-- 
+- Leaf crate per the §8.3 dependency audit: zero workspace dependencies; registry-local value types (`CellPos`, `CellSize` in `geometry.rs`) instead of importing `diagram-model`.
+- Modules: `types` (`TemplateGrid`, `AnchorSet`, `ShapeType`, `Collection`), `builtin` (catalog as data), `templates` (`.adc` parser — mirrors `ad-format` conventions: 1-based line/column errors, canonical + lenient header forms, unknown-statement preservation only for higher minor versions, statement order kept in `Slot`s for canonical re-save), `registry` (`ShapeRegistry`, disjoint namespaces), `error` (typed errors incl. `ParseError { line, column, message }`).
+- Built-ins: `box` 9×5 rectangle and `ellipse` 9×5 svgbob-style oval (radius-4 art from the svgbob spec), both with the standard four edge-midpoint anchors n/s/w/e — recorded in the `shape-template.md` concept doc.
 
 ## Verification
 
-- [ ] AC1 — 
-- [ ] AC2 — 
-- [ ] AC3 — 
-- [ ] AC4 — 
-- [ ] AC5 — 
-- [ ] AC6 — 
+- [x] AC1 — `ShapeType { type_id, name, glyph_pattern, anchor_set, resize_rules }` + `Collection { name, types }`; box + ellipse defined as data in `builtin.rs`; tests assert each built-in's exact anchor set and size (`box_anchor_set_is_the_mid_side_points`, `ellipse_anchor_set_is_the_mid_side_points`).
+- [x] AC2 — `parse_collection` implements the S-003 grammar (grid rows right-padded, printable-ASCII-only cells, coordinate-based anchors); 14 invalid-file cases in `invalid_files_produce_location_errors` (≥4 required), all with line numbers, no panics.
+- [x] AC3 — `ShapeRegistry::lookup`: bare id → built-ins only, `collection/name` → user collections only, disjoint namespaces (no fallback/shadowing); typed `LookupError::{UnknownBuiltin, UnknownCollection, UnknownTemplate}`; one test per resolution path.
+- [x] AC4 — v1 template shapes carry `resize_rules: None` (asserted in `every_builtin_has_standard_anchors_and_no_resize_rules` and the `.adc` parse tests); the field stays on the type.
+- [x] AC5 — fmt/clippy clean under ADR 010 (`clippy::all` deny); 32 crate tests green; workspace tarpaulin (Llvm) 97.58% ≥ 80%; shape-registry files 391/408 ≈ 96%.
+- [x] AC6 — `shape-template.md` + `collection.md` Implementation sections point at the real modules with the standard default anchor set recorded; overview tracker updated.

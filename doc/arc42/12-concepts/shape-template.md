@@ -3,7 +3,7 @@ title: shape-template
 description: a user-defined diagram object — named fixed-size grid of svgbob-alphabet characters with declared anchor cells; read before implementing template parsing or the template editor
 scope: format / domain model
 status: stable
-updated: 2026-10-23
+updated: 2026-10-25
 ---
 
 # Concept: Shape Template
@@ -51,4 +51,12 @@ anchor-stmt    = "anchor", name, "at", int, int
 
 ## Implementation
 
-Not yet implemented — parsing lands with S-005 (shape-registry: built-in catalog + template/collection loading) against this spec; rendering of stamps + anchor joins is S-006/S-007 territory. The graphical template editor (FR11, same underlying data) is S-017.
+`crates/shape-registry` (leaf crate — Shape Catalog context, [§8.4.2](../08-building-block-view.md); landed with S-005):
+
+- `types.rs` — `TemplateGrid` (fixed `width × height`, printable-ASCII cells), `AnchorSet` (named cell positions, duplicate names rejected), `ShapeType { type_id, name, glyph_pattern, anchor_set, resize_rules }`, `Collection { name, types }`.
+- `builtin.rs` — the built-in catalog as data: `box` (9×5 rectangle) and `ellipse` (9×5 svgbob-style oval). All v1 shapes carry `resize_rules = None`.
+- **Standard default anchor set (FR11):** every built-in declares the four edge midpoints — `n`, `s`, `w`, `e`. For both built-ins (both 9×5): `n` at (4,0), `s` at (4,4), `w` at (0,2), `e` at (8,2). Anchor cells sit on the shape border.
+- `templates.rs` — `.adc` parser per the file syntax above (`parse_collection`): 1-based line/column errors, versioning + unknown-statement tolerance identical to [`.ad`](diagram-file-format.md), short grid rows right-padded, statement order kept for canonical re-save.
+- `registry.rs` — `ShapeRegistry::lookup`: bare type-id → built-ins only, `collection/name` → user collections only (disjoint namespaces, typed `LookupError`).
+
+Rendering of stamps + anchor joins is S-006/S-007 territory; the graphical template editor (FR11, same underlying data) is S-017.
