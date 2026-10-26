@@ -162,6 +162,18 @@ impl AnchorSet {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResizeRules;
 
+/// How the render pipeline draws a shape type's geometry
+/// ([render pipeline](../../../doc/arc42/12-concepts/render-pipeline.md), S-006).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeometryKind {
+    /// Axis-aligned rectangle: borders are edge connections resolved at the
+    /// instance's own `pos`/`size`, so instances of any size join cleanly.
+    Rect,
+    /// Fixed glyph pattern stamped opaquely at its natural size (curves cannot be
+    /// expressed with N/E/S/W edges; resizing is a v1+ concern, ADR 007).
+    Pattern,
+}
+
 /// A shape type: a glyph pattern plus its named anchors and (future) resize rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShapeType {
@@ -173,6 +185,8 @@ pub struct ShapeType {
     pub glyph_pattern: TemplateGrid,
     /// Named anchor points where connectors may bind (C7).
     pub anchor_set: AnchorSet,
+    /// How the render pipeline draws this type's geometry (S-006).
+    pub geometry: GeometryKind,
     /// Resize rules; `None` in v1 (all custom objects are fixed-size).
     pub resize_rules: Option<ResizeRules>,
 }
@@ -205,7 +219,7 @@ impl Collection {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnchorSet, Collection, ShapeType, TemplateGrid};
+    use super::{AnchorSet, Collection, GeometryKind, ShapeType, TemplateGrid};
     use crate::error::{AnchorSetError, GridError};
     use crate::geometry::{CellPos, CellSize};
 
@@ -302,6 +316,7 @@ mod tests {
             name: "box".to_owned(),
             glyph_pattern: grid(),
             anchor_set: AnchorSet::new(),
+            geometry: GeometryKind::Rect,
             resize_rules: None,
         };
         assert_eq!(shape.size(), CellSize::new(4, 2));
@@ -317,6 +332,7 @@ mod tests {
                 name: "gear".to_owned(),
                 glyph_pattern: grid(),
                 anchor_set: AnchorSet::new(),
+                geometry: GeometryKind::Pattern,
                 resize_rules: None,
             }],
         };

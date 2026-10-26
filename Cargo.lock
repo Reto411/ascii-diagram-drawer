@@ -319,6 +319,7 @@ name = "render-pipeline"
 version = "0.1.0"
 dependencies = [
  "diagram-model",
+ "proptest",
  "shape-registry",
 ]
 

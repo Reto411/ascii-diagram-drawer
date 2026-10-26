@@ -9,7 +9,7 @@
 
 use crate::error::{AnchorSetError, ParseError};
 use crate::geometry::CellPos;
-use crate::types::{AnchorSet, Collection, ShapeType, TemplateGrid};
+use crate::types::{AnchorSet, Collection, GeometryKind, ShapeType, TemplateGrid};
 
 /// The major format version this reader implements.
 const MAJOR: u32 = 1;
@@ -211,6 +211,8 @@ fn finalize(
     types.push(ShapeType {
         type_id: format!("{collection_name}/{}", builder.name),
         name: builder.name,
+        // Custom templates are always stamped opaquely at natural size (ADR 007).
+        geometry: GeometryKind::Pattern,
         glyph_pattern,
         anchor_set: builder.anchors,
         resize_rules: None, // v1: all custom objects are fixed-size (ADR 007 v3)

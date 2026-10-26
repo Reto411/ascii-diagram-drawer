@@ -7,7 +7,7 @@
 //! the midpoints of the four sides — `n`, `s`, `w`, `e` (center point for circles).
 
 use crate::geometry::CellPos;
-use crate::types::{AnchorSet, ShapeType, TemplateGrid};
+use crate::types::{AnchorSet, GeometryKind, ShapeType, TemplateGrid};
 
 /// The built-in catalog: box and ellipse/circle, in deterministic order.
 pub const BUILTIN_NAMES: [&str; 2] = ["box", "ellipse"];
@@ -15,6 +15,7 @@ pub const BUILTIN_NAMES: [&str; 2] = ["box", "ellipse"];
 /// Builds a built-in shape type from its glyph rows and standard default anchors.
 fn builtin(
     name: &str,
+    geometry: GeometryKind,
     rows: &[&str],
     n: (u32, u32),
     s: (u32, u32),
@@ -36,16 +37,22 @@ fn builtin(
     ShapeType {
         type_id: name.to_owned(),
         name: name.to_owned(),
+        geometry,
         glyph_pattern,
         anchor_set,
         resize_rules: None, // v1: no resize rules (S-005 AC4)
     }
 }
 
-/// The built-in box: a 9×5 rectangle with mid-side anchors.
+/// The built-in box: a rectangle with mid-side anchors.
+///
+/// `Rect` geometry: borders are resolved from the instance's own pos/size (any
+/// size), so instances of different sizes join cleanly. The 9×5 art below
+/// documents the natural appearance; it is not stamped for Rect shapes.
 fn box_shape() -> ShapeType {
     builtin(
         "box",
+        GeometryKind::Rect,
         &[
             "+-------+",
             "|       |",
@@ -61,9 +68,12 @@ fn box_shape() -> ShapeType {
 }
 
 /// The built-in ellipse/circle: a 9×5 svgbob-style oval with mid-side anchors.
+///
+/// `Pattern` geometry: the fixed art is stamped at natural size.
 fn ellipse_shape() -> ShapeType {
     builtin(
         "ellipse",
+        GeometryKind::Pattern,
         &[
             "   ___   ",
             " ,'   '. ",
@@ -88,6 +98,7 @@ pub fn builtin_catalog() -> Vec<ShapeType> {
 mod tests {
     use super::builtin_catalog;
     use crate::geometry::CellPos;
+    use crate::types::GeometryKind;
 
     /// AC1: the catalog contains at least box and circle/ellipse, defined as data.
     #[test]
@@ -96,6 +107,23 @@ mod tests {
         let names: Vec<&str> = catalog.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"box"));
         assert!(names.contains(&"ellipse"));
+    }
+
+    /// S-006: geometry kinds — box is Rect (borders from instance pos/size),
+    /// ellipse is Pattern (fixed art stamped at natural size).
+    #[test]
+    fn builtins_carry_their_geometry_kind() {
+        let catalog = builtin_catalog();
+        let box_shape = catalog
+            .iter()
+            .find(|s| s.name == "box")
+            .expect("box is built in");
+        assert_eq!(box_shape.geometry, GeometryKind::Rect);
+        let ellipse = catalog
+            .iter()
+            .find(|s| s.name == "ellipse")
+            .expect("ellipse is built in");
+        assert_eq!(ellipse.geometry, GeometryKind::Pattern);
     }
 
     /// AC1/AC4: every built-in carries exactly the four standard default anchors and no resize rules.

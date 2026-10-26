@@ -2,9 +2,9 @@
 title: 001 - glyph-resolution-alphabet
 description: the renderer resolves each occupied grid cell to one character from a fixed alphabet; since v2 that alphabet is svgbob's ASCII input set
 scope: rendering
-status: proposed
-version: 2
-updated: 2026-10-18
+status: accepted
+version: 3
+updated: 2026-10-26
 ---
 
 # ADR 001: Glyph resolution onto a fixed character alphabet
@@ -56,5 +56,6 @@ The *mechanism* of glyph resolution is unchanged from v1: one character per cell
 
 ## Version history
 
+- **v3 (2026-10-26):** decision implemented — S-006 landed the resolve stage of `crates/render-pipeline`: per-cell rule table over all 16 connection sets emitting svgbob-alphabet glyphs, double-quote label escaping in the grid itself, and proptest-enforced alphabet purity (T3). Per-pattern mapping defined and recorded in concept C1 (`glyph-resolution.md`, incl. fallback rules F1–F5); status flipped to `accepted`. ADR 005 stays `proposed` until its own implementation (SVG emission via `svgbob::to_svg`) lands in S-008.
 - **v2 (2026-10-18):** canonical alphabet switched from Unicode box-drawing to svgbob's ASCII input alphabet; transliteration adapter dropped. Originally recorded as ADR 006; merged into this record on 2026-10-18 because ADRs are now versioned in place instead of superseded (see AGENTS.md).
 - **v1 (2026-10-17):** initial decision — output uses Unicode box-drawing characters; the renderer resolves each occupied cell to the matching glyph from all edges/content passing through it. Recorded and accepted 2026-10-17.

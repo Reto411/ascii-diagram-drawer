@@ -2,8 +2,8 @@
 title: render-pipeline
 description: how the diagram model becomes outputs — resolved character grid first, then text/SVG/PNG from that single grid (svgbob-style interpretation); read before working on rendering or export
 scope: rendering
-status: draft
-updated: 2026-10-18
+status: stable
+updated: 2026-10-26
 ---
 
 # Concept: Render pipeline
@@ -40,4 +40,11 @@ The character grid is a **derived intermediate representation** — it is never 
 
 ## Implementation
 
-Not yet implemented. Expected home: platform-independent rendering crate (per AGENTS.md conventions), shared by all GUI targets and the CLI/export paths. The GUI reaches it only through the `Renderer` service trait of the seam ([ADR 009](../../adr/009-ui-api-service-layer.md)) — the pipeline itself stays a pure function; the seam wraps it.
+Implemented in `crates/render-pipeline` (headless, no windowing or I/O), shared by all GUI targets and the CLI/export paths. The GUI will reach it only through the `Renderer` service trait of the seam ([ADR 009](../../adr/009-ui-api-service-layer.md)) — the pipeline itself stays a pure function; the seam wraps it.
+
+- `render(&Diagram, &ShapeRegistry) -> Result<ResolvedGrid, RenderError>` — the public entry point: place → resolve → scale-expand (FR8).
+- `place.rs` — stage 1: stamps objects in document order at their stored coordinates (no layout pass). `Rect` geometry (box) derives borders from the instance pos/size; `Pattern` geometry (ellipse, custom templates) stamps verbatim art with passive anchor base edges (ADR 007); free text stamps verbatim with quote escaping.
+- `resolve.rs` — stage 2: [glyph resolution](glyph-resolution.md) (C1), one svgbob-alphabet glyph per cell; trims to the occupied extent.
+- `grid.rs` — `ResolvedGrid` (the derived intermediate, never stored as source data) and `expand(&ResolvedGrid, scale)` — line glyphs fill their whole scale block so edges stay continuous; content glyphs land in a defined sub-cell.
+- Connectors are not yet placed (S-007); text/SVG/PNG emission lives in `exporters` (S-008).
+- Tests: per-rule-table unit tests, golden files under `tests/golden/*.grid`, and proptest properties for determinism (AC1) and alphabet purity (AC4).

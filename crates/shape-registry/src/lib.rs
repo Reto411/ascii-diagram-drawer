@@ -26,4 +26,4 @@ pub use error::{AnchorSetError, GridError, LookupError, ParseError};
 pub use geometry::{CellPos, CellSize};
 pub use registry::ShapeRegistry;
 pub use templates::{CollectionFile, parse_collection};
-pub use types::{AnchorSet, Collection, ResizeRules, ShapeType, TemplateGrid};
+pub use types::{AnchorSet, Collection, GeometryKind, ResizeRules, ShapeType, TemplateGrid};

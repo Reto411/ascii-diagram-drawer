@@ -9,5 +9,8 @@ license.workspace = true
 diagram-model = { path = "../diagram-model" }
 shape-registry = { path = "../shape-registry" }
 
+[dev-dependencies]
+proptest = "1.12.0"
+
 [lints]
 workspace = true
