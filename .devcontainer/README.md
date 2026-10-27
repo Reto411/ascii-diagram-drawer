@@ -115,11 +115,15 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
     `compare -metric AE shot.png golden.png null` (exit 0 = pixel-identical).
     Generate the golden once inside the same image version — pixel-exact
     matches are only stable within one image build.
-  - *perceptual check (needs a vision model):* when the session model supports
-    images (`"images": true` in `models.json`), `read` the captured PNG — pi
-    attaches it to the context and the model judges semantic properties
-    ("box drawn at clicked position", "label legible"). Save the screenshot as
-    an artifact cited from the story's Verification section. Status 2026-10-27:
+  - *perceptual check (needs a vision model — CPU-bound, use sparingly):*
+    only when launch-alive and pixel diff cannot answer the AC. When the
+    session model supports images (`"images": true` in `models.json`),
+    downscale first — `magick shot.png -resize 320x shot-low.png` — then
+    `read` the low-res PNG: pi attaches it to the context and the model judges
+    semantic properties ("box drawn at clicked position", "label legible").
+    Keep images small and batch assertions into one screenshot; every vision
+    call is slow on CPU. Save the screenshot as an artifact cited from the
+    story's Verification section. Status 2026-10-27:
     the Unsloth endpoint accepts `image_url` content parts, but the loaded
     GGUF is not vision-capable (HTTP 400 "does not support vision") — load a
     Qwen VL variant in Unsloth Studio and flip `images: true` to activate.
