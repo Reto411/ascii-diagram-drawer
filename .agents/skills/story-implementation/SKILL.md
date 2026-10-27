@@ -4,7 +4,7 @@ description: Run the self-reliant build loop for ascii-diagram-drawer — break 
 metadata:
   scope: whole repository
   status: stable
-  updated: 2026-10-23
+  updated: 2026-10-27
 ---
 
 # Story Implementation Agent
@@ -46,7 +46,7 @@ Run until the context budget is nearly exhausted, then stop cleanly (disk state 
    - each concept whose Implementation section says "not yet implemented";
    - §14 requirements: every FR maps to ≥1 story; NFRs become acceptance criteria / quality gates on the relevant stories (determinism → golden-file tests, coverage → gate).
 3. Order them: scaffold (workspace + crates + tooling) → headless core bottom-up (`diagram-model` → `ad-format` → `shape-registry` → `render-pipeline` → `exporters`) → service seam (`ui-api`, `core-services`) → GUI (`gui-app`, native first, then wasm per Q2) → cross-cutting polish.
-4. Write one story file per story from the template: title, scope (crate/context), dependencies, and **acceptance criteria where every AC is verifiable** — a command to run, a file/behavior to inspect, or a concrete user action with an observable result. No "works correctly."
+4. Write one story file per story from the template: title, scope (crate/context), dependencies, and **acceptance criteria where every AC is verifiable** — a command to run, a file/behavior to inspect, or a concrete user action with an observable result. No "works correctly." GUI stories must decompose interaction logic into headless unit tests (gesture handlers against fakes, pure mapping/hit-test helpers) so that nearly all ACs are machine-verifiable inside the display-less devcontainer; only true visual checks stay human.
 5. Populate the board tables, set overall status to 🟨, log it, commit: `chore(stories): initial breakdown (S-001..S-NNN)`.
 
 ## Story phase (one story at a time)
@@ -62,10 +62,12 @@ Context budget: read only the story file + the arc42 chapters / ADRs / concepts 
    cargo fmt --all
    cargo clippy --workspace --all-targets   # clippy::all deny (ADR 010 v4)
    cargo test --workspace
-   cargo tarpaulin --workspace              # ≥80% line coverage; never land a change that drops below target
+   cargo tarpaulin --engine Llvm --workspace  # ≥80% line coverage; never land a change that drops below target. `--engine Llvm` is mandatory in the devcontainer (seccomp blocks the ptrace engine — AGENTS.md)
    ```
+
+   Run `fmt`/`clippy`/`test` incrementally while implementing; run the full set (incl. tarpaulin, the slow gate) once at verification.
    If a gate cannot run in this environment (missing tool, no display, …), the story is **not done**: leave it *In progress* with the reason on the board.
-6. **Verify every AC**: run its check, record evidence in the story's Verification section (test names / command + result). All ✅ required.
+6. **Verify every AC**: run its check, record evidence in the story's Verification section (test names / command + result). All ✅ required — except an AC that genuinely needs a human with a display (GUI smoke): close it as ⚠️ *deferred to human* with a concrete checklist written into Verification. Every ⚠️ must be flagged in the progress log. An agent never marks a visual AC ✅ without having seen it.
 7. **Review cycle — fresh eyes, from disk.** Re-read from disk (not from memory): the story file, the full `git diff` of what will be committed, and `BOARD.md`. Fix anything that fails, then re-run the affected gates:
    - **Scope:** the diff does only what the story's scope says — no drive-by refactors, no unrelated files.
    - **AC integrity:** the acceptance criteria still read as written at breakdown (ground rule 5); any changed AC is flagged in Verification + progress log.
@@ -85,12 +87,12 @@ Blocked = conflict with a recorded decision, missing external dependency, or som
 If the board shows a story *In progress* at session start:
 
 - `git status` + diff: work complete but uncommitted → run gates, verify ACs, finish the commit.
-- Partial → either finish it or revert (`git checkout -- .`) and restart fresh.
+- Partial → either finish it or discard it and restart fresh. Discard with `git stash push -m "S-NNN partial"` (recoverable) — never an unscoped `git checkout -- .` / `git reset --hard`, because the tree may carry other sessions' work.
 - Log the recovery in the progress log.
 
 ## Completion phase (all stories done)
 
-1. Full gate run: `cargo fmt --check`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`, `cargo tarpaulin --workspace` (≥80%), `mkdocs build` (docs must build).
+1. Full gate run: `cargo fmt --check`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`, `cargo tarpaulin --engine Llvm --workspace` (≥80%), `mkdocs build` (docs must build).
 2. Flip any remaining implemented ADRs to `accepted`; ensure the `overview.md` tracker and all concept Implementation sections are current.
 3. Board: overall status ✅ complete; final progress-log entry summarizing the build (stories done, gate results, open follow-ups for human review — e.g. proposed ADRs).
 4. Commit: `chore(stories): all stories complete`.
