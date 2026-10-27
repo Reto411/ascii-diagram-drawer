@@ -26,13 +26,15 @@ Mission: take ascii-diagram-drawer from architecture docs to a finished, tested 
 | `doc/stories/BOARD.md` | Board (backlog / in progress / blocked / done) + progress log. Single source of truth for status. |
 | `doc/stories/S-NNN-<slug>.md` | One file per story, from `doc/templates/story.md`. IDs are sequential, never reused. |
 
+Keep progress-log entries to ~3 lines (landed / gates / next) — full evidence lives in the story's Verification section; the board is re-read in full every session.
+
 ## Session loop
 
 Run until the context budget is nearly exhausted, then stop cleanly (disk state stays consistent):
 
-1. **Load state.** Read `AGENTS.md`, the objectives (`doc/arc42/01-introduction-and-context.md` §1.1), and `BOARD.md`. If a story sits in *In progress* from a previous session → recover first (see Interruption recovery).
+1. **Load state.** Read `AGENTS.md`, the objectives (`doc/arc42/01-introduction-and-context.md` §1.1), and `BOARD.md`. If a story sits in *In progress* from a previous session → recover first (see Interruption recovery). Re-run this load after **any compaction event** — the algorithmic summary drops raw tool output, so re-orient from disk (story file + board + `git status`) before continuing.
 2. **No stories on the board?** Run the Breakdown phase, commit, then continue.
-3. **Pick the next ready story**: no unfinished dependencies, not blocked; highest priority, then board order. Start it only if you can plausibly finish implement + tests + docs + commit within your remaining context — otherwise stop now.
+3. **Pick the next ready story**: no unfinished dependencies, not blocked; highest priority, then board order. Start it only if you can plausibly finish implement + tests + docs + commit within your remaining context — otherwise stop now. Never start a story on a dirty tree: uncommitted changes in `git status` that are not attributable to the story you're about to work mean an interrupted session left state behind — recover it first (Interruption recovery).
 4. **Work the story** (Story phase). Then return to 3.
 5. **All stories done?** Run the Completion phase.
 
@@ -53,7 +55,7 @@ Run until the context budget is nearly exhausted, then stop cleanly (disk state 
 
 Context budget: read only the story file + the arc42 chapters / ADRs / concepts directly relevant to it.
 
-1. **Mark in progress** on the board (uncommitted local edit — this is the crash marker).
+1. **Mark in progress** on the board (uncommitted local edit — this is the crash marker), and use the row's *Notes* column for the current sub-step (e.g. `impl done, writing tests`) — update it at each phase boundary so recovery after compaction or a crash lands mid-story, not at its start.
 2. **Conflict check** against arc42/ADRs/concepts. Conflict → move to *Blocked* with reason, next story.
 3. **Implement** in the correct bounded context/crate per §8: rendering logic stays headless and unit-testable (no windowing deps); GUI code stays thin in `gui-app`.
 4. **Test**: unit tests for all new logic; golden-file tests wherever deterministic output matters (Q1).
@@ -66,8 +68,8 @@ Context budget: read only the story file + the arc42 chapters / ADRs / concepts 
    ```
 
    Run `fmt`/`clippy`/`test` incrementally while implementing; run the full set (incl. tarpaulin, the slow gate) once at verification.
-   If a gate cannot run in this environment (missing tool, no display, …), the story is **not done**: leave it *In progress* with the reason on the board.
-6. **Verify every AC**: run its check, record evidence in the story's Verification section (test names / command + result). All ✅ required — except an AC that genuinely needs a human with a display (GUI smoke): close it as ⚠️ *deferred to human* with a concrete checklist written into Verification. Every ⚠️ must be flagged in the progress log. An agent never marks a visual AC ✅ without having seen it.
+   If a gate cannot run in this environment (missing tool, no display, …), the story is **not done**: leave it *In progress* with the reason on the board. If a gate fails on code this story did not touch: diagnose — a one-line fix from an earlier story may be included (note it in the commit body); anything larger → leave the story *In progress* with the blocker logged, and do not start further stories while the workspace is red. If the story legitimately moves the coverage floor (new scaffold or wasm-only code), record old → new baseline in Verification + progress log.
+6. **Verify every AC**: run its check, record evidence in the story's Verification section (test names / command + result). All ✅ required — except an AC that genuinely needs a human with a display. GUI smokes should first be attempted headless under `xvfb-run` (launch-alive check, golden-screenshot diff — see `.devcontainer/README.md`; the in-container model has no vision) and count as machine-verified; only truly perceptual checks stay human: close them as ⚠️ *deferred to human* with a concrete checklist written into Verification. Every ⚠️ must be flagged in the progress log. An agent never marks a visual AC ✅ without having seen it.
 7. **Review cycle — fresh eyes, from disk.** Re-read from disk (not from memory): the story file, the full `git diff` of what will be committed, and `BOARD.md`. Fix anything that fails, then re-run the affected gates:
    - **Scope:** the diff does only what the story's scope says — no drive-by refactors, no unrelated files.
    - **AC integrity:** the acceptance criteria still read as written at breakdown (ground rule 5); any changed AC is flagged in Verification + progress log.
