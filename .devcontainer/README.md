@@ -51,6 +51,7 @@ podman run --rm -it \
   -v pi-agent-home:/root/.pi/agent \
   -v .devcontainer/models.json:/root/.pi/agent/models.json:ro \
   -v .devcontainer/settings.json:/root/.pi/agent/settings.json:ro \
+  -v .devcontainer/pi-blackhole-config.json:/root/.pi/agent/pi-blackhole/pi-blackhole-config.json:ro \
   pi-ascii --model "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL" --thinking medium
 ```
 
@@ -67,6 +68,7 @@ podman run --rm \
   -v pi-agent-home:/root/.pi/agent \
   -v .devcontainer/models.json:/root/.pi/agent/models.json:ro \
   -v .devcontainer/settings.json:/root/.pi/agent/settings.json:ro \
+  -v .devcontainer/pi-blackhole-config.json:/root/.pi/agent/pi-blackhole/pi-blackhole-config.json:ro \
   pi-ascii --model "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL" --thinking medium \
     -p "Use the story-implementation skill and work the story board until you run low on context."
 ```
@@ -92,12 +94,16 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
   access to git/npm, which `--network host` provides; later runs reuse the
   cached installs in the volume.
 - **pi-blackhole:** one of the packages above. It replaces Pi's LLM-based
-  `/compact` with zero-cost algorithmic compaction and runs three background
-  observational-memory workers (Observer/Reflector/Dropper) as separate model
-  calls — they default to the session model, which is free here (local
-  Unsloth server). Its config auto-creates in the volume at
-  `/root/.pi/agent/pi-blackhole/pi-blackhole-config.json`; adjust with
-  `/blackhole settings` (e.g. `compaction: "manual"` or `memory: false`).
+  `/compact` with zero-cost algorithmic compaction. The config is bind-mounted
+  read-only from `.devcontainer/pi-blackhole-config.json` (same pattern as
+  `models.json`/`settings.json`) and currently pins
+  `compaction: "auto"`, `compactionEngine: "blackhole"`, and
+  `memory: false` — i.e. algorithmic compaction only, with the three
+  background observational-memory workers (Observer/Reflector/Dropper)
+  disabled, so no extra model calls happen. To change it, edit the repo file
+  (a read-only mount also means `/blackhole settings` cannot save from inside
+  the container). Full key reference: `docs/CONFIG.md` in the pi-blackhole
+  repo.
 - **Network:** Unsloth Studio runs on this machine and listens on both
   `127.0.0.1:8888` and the LAN IP; `models.json` uses loopback so it keeps
   working if the LAN IP changes. Loopback only resolves to the host under
