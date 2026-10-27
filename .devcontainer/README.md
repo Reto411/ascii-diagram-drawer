@@ -12,6 +12,7 @@ a boundary — this container is.
 - Rust stable (rustup) + `cargo-tarpaulin` (+ `gdb`, which tarpaulin needs)
 - `git`, `ripgrep`, build essentials
 - `mkdocs` (default theme) for docs build checks
+- `xvfb` + ImageMagick (`import`/`compare`) for headless GUI smoke tests
 
 ## Build the image
 
@@ -104,6 +105,17 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
   (a read-only mount also means `/blackhole settings` cannot save from inside
   the container). Full key reference: `docs/CONFIG.md` in the pi-blackhole
   repo.
+- **Headless GUI smokes:** the image ships `xvfb` + ImageMagick so GUI stories
+  can verify without a display. The in-container model has no vision, so use
+  machine-checkable patterns:
+  - *launch-alive:* `timeout 10 xvfb-run -a cargo run -p gui-app` — exit 124
+    (killed by timeout) means the app started and stayed up; any other early
+    exit is a crash.
+  - *golden-screenshot diff:* capture with `xvfb-run -a sh -c 'cargo run -p
+    gui-app & sleep N; import -window root shot.png'`, then
+    `compare -metric AE shot.png golden.png null` (exit 0 = pixel-identical).
+    Generate the golden once inside the same image version — pixel-exact
+    matches are only stable within one image build.
 - **Network:** Unsloth Studio runs on this machine and listens on both
   `127.0.0.1:8888` and the LAN IP; `models.json` uses loopback so it keeps
   working if the LAN IP changes. Loopback only resolves to the host under

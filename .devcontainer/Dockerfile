@@ -33,6 +33,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends mkdocs \
  && rm -rf /var/lib/apt/lists/*
 
+# Headless GUI smoke testing: virtual X display + screenshot capture/compare.
+# GUI stories verify launch-alive checks and golden-screenshot pixel diffs
+# under xvfb-run (the in-container model has no vision — see README).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends xvfb xauth imagemagick \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 # ENTRYPOINT (not CMD) so args after the image name are passed to pi,
 # e.g. `podman run ... pi-ascii --model ... -p "..."` (see README).
