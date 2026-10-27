@@ -11,13 +11,22 @@
       "models": [
         {
           "id": "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
-          "name": "Qwen3.8 27B XL - 80k",
+          "name": "Qwen3.8 27B XL - 120k",
           "reasoning": true,
           "input": [
             "text"
           ],
-          "contextWindow": 80000,
+          "contextWindow": 120000,
           "maxTokens": 16384,
+          "thinkingLevelMap": {
+            "off": "off",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": null,
+            "xhigh": null,
+            "max": null
+          },
           "cost": {
             "input": 0,
             "output": 0,
