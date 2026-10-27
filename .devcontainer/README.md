@@ -91,6 +91,13 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
   installed by pi into the volume on first container start — needs network
   access to git/npm, which `--network host` provides; later runs reuse the
   cached installs in the volume.
+- **pi-blackhole:** one of the packages above. It replaces Pi's LLM-based
+  `/compact` with zero-cost algorithmic compaction and runs three background
+  observational-memory workers (Observer/Reflector/Dropper) as separate model
+  calls — they default to the session model, which is free here (local
+  Unsloth server). Its config auto-creates in the volume at
+  `/root/.pi/agent/pi-blackhole/pi-blackhole-config.json`; adjust with
+  `/blackhole settings` (e.g. `compaction: "manual"` or `memory: false`).
 - **Network:** Unsloth Studio runs on this machine and listens on both
   `127.0.0.1:8888` and the LAN IP; `models.json` uses loopback so it keeps
   working if the LAN IP changes. Loopback only resolves to the host under

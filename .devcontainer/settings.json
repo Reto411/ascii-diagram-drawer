@@ -4,7 +4,8 @@
     "npm:pi-wsl-clipboard",
     "git:github.com/trotsky1997/pi-lsp-extension",
     "npm:pi-memory",
-    "npm:pi-ast-sgrep"
+    "npm:pi-ast-sgrep",
+    "npm:pi-blackhole"
   ],
   "defaultTools": [
     "read",
