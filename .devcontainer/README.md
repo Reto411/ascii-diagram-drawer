@@ -106,8 +106,7 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
   the container). Full key reference: `docs/CONFIG.md` in the pi-blackhole
   repo.
 - **Headless GUI smokes:** the image ships `xvfb` + ImageMagick so GUI stories
-  can verify without a display. The in-container model has no vision, so use
-  machine-checkable patterns:
+  can verify without a display, in three tiers:
   - *launch-alive:* `timeout 10 xvfb-run -a cargo run -p gui-app` — exit 124
     (killed by timeout) means the app started and stayed up; any other early
     exit is a crash.
@@ -116,6 +115,14 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
     `compare -metric AE shot.png golden.png null` (exit 0 = pixel-identical).
     Generate the golden once inside the same image version — pixel-exact
     matches are only stable within one image build.
+  - *perceptual check (needs a vision model):* when the session model supports
+    images (`"images": true` in `models.json`), `read` the captured PNG — pi
+    attaches it to the context and the model judges semantic properties
+    ("box drawn at clicked position", "label legible"). Save the screenshot as
+    an artifact cited from the story's Verification section. Status 2026-10-27:
+    the Unsloth endpoint accepts `image_url` content parts, but the loaded
+    GGUF is not vision-capable (HTTP 400 "does not support vision") — load a
+    Qwen VL variant in Unsloth Studio and flip `images: true` to activate.
 - **Network:** Unsloth Studio runs on this machine and listens on both
   `127.0.0.1:8888` and the LAN IP; `models.json` uses loopback so it keeps
   working if the LAN IP changes. Loopback only resolves to the host under
