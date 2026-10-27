@@ -17,7 +17,7 @@
             "text"
           ],
           "contextWindow": 120000,
-          "maxTokens": 16384,
+          "maxTokens": 32768,
           "thinkingLevelMap": {
             "off": "off",
             "minimal": null,
