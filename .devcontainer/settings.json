@@ -29,12 +29,12 @@
   "defaultThinkingLevel": "medium",
   "compaction": {
     "enabled": true,
-    "reserveTokens": 28000,
+    "reserveTokens": 20000,
     "keepRecentTokens": 14000
   },
   "retry": {
     "enabled": true,
-    "maxRetries": 3
+    "maxRetries": 5
   },
   "showCacheMissNotices": true
 }
