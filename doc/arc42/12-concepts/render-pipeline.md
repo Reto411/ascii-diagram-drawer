@@ -25,7 +25,7 @@ Three stages, all pure functions:
 1. **Place** — objects are stamped onto the cell grid at their stored coordinates (no layout pass); connectors re-resolve their anchors and stamp routed edges + arrowhead ([connector routing, C9](connector-routing.md)).
 2. **Resolve** — every occupied cell gets exactly one glyph via [glyph resolution](glyph-resolution.md) (C1), based on the N/E/S/W connections and content passing through the cell.
 3. **Emit** — per output family:
-   - *Text*: dump the resolved grid (UTF-8, LF).
+   - *Text*: dump the resolved grid (UTF-8, LF) — written rule: rows joined with `\n`, each row's trailing whitespace trimmed, no final newline; the empty grid exports as the empty string.
    - *SVG* (svgbob-style interpretation, [ADR 005](../../adr/005-use-svgbob-as-vector-renderer.md)): the resolved grid **is** svgbob input ([ADR 001](../../adr/001-glyph-resolution-alphabet.md)) — it is passed unchanged to `svgbob::to_svg`, and the interpretation (per-cell fragments, merging of collinear fragments, promotion to high-level shapes such as rects and circles) is delegated to the `svgbob` crate.
    - *PNG*: rasterization of the produced SVG (rasterizer TBD).
 
@@ -47,5 +47,6 @@ Implemented in `crates/render-pipeline` (headless, no windowing or I/O), shared 
 - `connectors.rs` — stage 1 (connector branch, C9): endpoint resolution from anchor references (proportional `Rect` mapping, offset `Pattern` mapping), straight/single-corner L routing, structural-edge stamping, arrowhead at the target end ([ADR 013](../../adr/013-connector-routing.md)).
 - `resolve.rs` — stage 2: [glyph resolution](glyph-resolution.md) (C1), one svgbob-alphabet glyph per cell; trims to the occupied extent.
 - `grid.rs` — `ResolvedGrid` (the derived intermediate, never stored as source data) and `expand(&ResolvedGrid, scale)` — line glyphs fill their whole scale block so edges stay continuous; content glyphs land in a defined sub-cell.
-- Text/SVG/PNG emission lives in `exporters` (S-008).
+- Emission lives in `crates/exporters`: `to_text(&ResolvedGrid) -> String` (the rule above) and `to_svg(&ResolvedGrid) -> Result<String, ExportError>` — svgbob consumes the *exact* bytes of `to_text`, so text and SVG input are identical by construction; out-of-domain input degrades to literal text rather than failing (svgbob 0.7.6's public API is infallible — `ExportError::Svgbob` is the forward-compat seam, ADR 005). PNG emission follows in S-009.
+- Export goldens: `crates/exporters/tests/golden/*.txt|*.svg` (box, box+label, junction, connector with arrowhead, empty) pin exact bytes; re-export byte-stability is unit-tested.
 - Tests: per-rule-table unit tests, golden files under `tests/golden/*.grid` (incl. five connector scenarios), and proptest properties for determinism (AC1) and alphabet purity (AC4) over random diagrams with connectors.

@@ -3,7 +3,7 @@ title: arc42-overview
 description: arc42 document header, usage notes, and progress tracker for all 16 chapters
 scope: architecture
 status: draft
-updated: 2026-10-26
+updated: 2026-10-28
 ---
 
 # arc42 — ascii-diagram-drawer (Overview)
@@ -11,7 +11,7 @@ updated: 2026-10-26
 | | |
 |---|---|
 | **Document status** | Draft — being populated iteratively |
-| **Version** | 0.9 (S-001 scaffold + S-002 `diagram-model` + S-003 `.ad` format family spec C6/C7/C8 + S-004 `ad-format` parser/serializer + S-005 `shape-registry` catalog + S-006 render-pipeline place→resolve grid stage + S-007 anchor-bound connectors, ADR 013) |
+| **Version** | 0.9 (S-001 scaffold + S-002 `diagram-model` + S-003 `.ad` format family spec C6/C7/C8 + S-004 `ad-format` parser/serializer + S-005 `shape-registry` catalog + S-006 render-pipeline place→resolve grid stage + S-007 anchor-bound connectors, ADR 013 + S-008 exporters text/SVG via svgbob, ADR 005) |
 | **Date** | 2026-10-26 |
 | **Target audience** | Developers, reviewers |
 
@@ -55,4 +55,4 @@ updated: 2026-10-26
 | 15 | Risks and Technical Risks | [15](15-risks.md) | ⬜ |
 | 16 | Glossary | [16](16-glossary.md) | ⬜ |
 
-> **Implementation progress:** story-driven — see the board at [`doc/stories/BOARD.md`](../stories/BOARD.md). As of 2026-10-26: S-001 (workspace scaffold + quality tooling), S-002 (`diagram-model` aggregate, 100% line coverage), S-003 (`.ad` format family spec — concept docs C6/C7/C8; grammar, escaping, versioning, resolution rules all settled), S-004 (`ad-format` parser + canonical serializer — line/column errors, golden files, proptest lossless round-trip, 86% coverage; ADR 004 accepted) and S-005 (`shape-registry` — built-in catalog as data, `.adc` collection loading per C7/C8, disjoint `collection/name` resolution) and S-006 (render-pipeline place→resolve → `ResolvedGrid` for shapes + text; C1 rule table finalized with fallbacks F1–F5, golden grids, proptest determinism + svgbob-alphabet purity, scale expansion per FR8; ADR 001 accepted) and S-007 (anchor-bound connectors: endpoints re-resolve from anchor references, straight/single-corner L routing of structural edges + arrowhead at the target end, five connector golden grids; ADR 013, concept C9) done; next in dependency order: S-008 (exporters — text + SVG via svgbob).
+> **Implementation progress:** story-driven — see the board at [`doc/stories/BOARD.md`](../stories/BOARD.md). As of 2026-10-26: S-001 (workspace scaffold + quality tooling), S-002 (`diagram-model` aggregate, 100% line coverage), S-003 (`.ad` format family spec — concept docs C6/C7/C8; grammar, escaping, versioning, resolution rules all settled), S-004 (`ad-format` parser + canonical serializer — line/column errors, golden files, proptest lossless round-trip, 86% coverage; ADR 004 accepted) and S-005 (`shape-registry` — built-in catalog as data, `.adc` collection loading per C7/C8, disjoint `collection/name` resolution) and S-006 (render-pipeline place→resolve → `ResolvedGrid` for shapes + text; C1 rule table finalized with fallbacks F1–F5, golden grids, proptest determinism + svgbob-alphabet purity, scale expansion per FR8; ADR 001 accepted) and S-007 (anchor-bound connectors: endpoints re-resolve from anchor references, straight/single-corner L routing of structural edges + arrowhead at the target end, five connector golden grids; ADR 013, concept C9) and S-008 (exporters — `to_text` with the written trailing-whitespace rule + `to_svg` passing the exact text bytes to `svgbob::to_svg`, byte-exact goldens for both media incl. empty grid and connector arrowheads; ADR 005 accepted) done; next in dependency order: S-009 (exporters — PNG rasterization + ADR 014).

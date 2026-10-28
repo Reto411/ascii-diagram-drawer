@@ -7,6 +7,13 @@ license.workspace = true
 
 [dependencies]
 render-pipeline = { path = "../render-pipeline" }
+svgbob = "0.7"
+
+# Golden tests build `Diagram`s through the public API (dev-only; the T5 dependency
+# audit excludes dev-dependencies from the runtime DAG).
+[dev-dependencies]
+diagram-model = { path = "../diagram-model" }
+shape-registry = { path = "../shape-registry" }
 
 [lints]
 workspace = true
