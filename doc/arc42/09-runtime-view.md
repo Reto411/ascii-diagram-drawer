@@ -10,7 +10,7 @@ updated: 2026-10-22
 
 > *How the system behaves at runtime for the key scenarios.*
 >
-> *Status note: design-level, no code yet. The concurrency model is decided by [ADR 012](../adr/012-responsive-ui-threading.md) (`proposed`, v2): **a dedicated UI thread that is never blocked by application work** — frame-critical work runs inline on it, non-frame work (PNG rasterization) runs on a worker thread (native) with inline fallback on wasm. This keeps the runtime communication model a small, fixed extension of the static coupling strategy ([§8.3](08-building-block-view.md)) rather than a separate design problem. Diagrams in PlantUML per [ADR 003](../adr/003-plantuml-for-doc-diagrams.md).*
+> *Status note: the concurrency model is decided by [ADR 012](../adr/012-responsive-ui-threading.md) (`accepted`, v2): **a dedicated UI thread that is never blocked by application work** — frame-critical work runs inline on it, non-frame work (PNG rasterization) runs on a worker thread (native) with inline fallback on wasm. The worker mechanism itself is implemented and tested in `core-services::worker` (S-011: bounded queue + typed overflow, per-frame polling job API, drop drains the finite queue); the GUI wiring of the "exporting" state lands with S-015. This keeps the runtime communication model a small, fixed extension of the static coupling strategy ([§8.3](08-building-block-view.md)) rather than a separate design problem. Diagrams in PlantUML per [ADR 003](../adr/003-plantuml-for-doc-diagrams.md).*
 
 ## 9.1 Topology: One Process, Dedicated UI Thread + One Worker (Native)
 

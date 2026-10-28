@@ -2,15 +2,15 @@
 title: S-011-png-worker-thread
 description: ADR 012 mechanism — PNG jobs on a worker thread (native) / inline fallback (wasm), bounded queue, polling "exporting" state
 scope: core-services
-status: backlog
-updated: 2026-10-22
+status: done
+updated: 2026-10-28
 ---
 
 # S-011: core-services — responsive PNG worker
 
 ## Why
 
-[ADR 012](../adr/012-responsive-ui-threading.md) (proposed): the UI thread must never block on rasterization (RS4); native runs jobs on a dedicated worker with job/result channels, wasm falls back to inline execution. Both paths share the same golden tests; the GUI polls for an "exporting" state instead of blocking.
+[ADR 012](../adr/012-responsive-ui-threading.md) (accepted): the UI thread must never block on rasterization (RS4); native runs jobs on a dedicated worker with job/result channels, wasm falls back to inline execution. Both paths share the same golden tests; the GUI polls for an "exporting" state instead of blocking.
 
 ## Dependencies
 
@@ -28,13 +28,20 @@ updated: 2026-10-22
 
 ## Implementation notes
 
-- 
+- New module `crates/core-services/src/worker.rs`; re-exported from the crate root (`PngWorker`, `PngJob`, `JobState`, `QueueFull`).
+- **API:** `PngWorker::new()` (threaded, bounded queue, default capacity 4) / `with_capacity(n)` (native; clamped ≥ 1) / `inline()` (synchronous executor — the exact wasm32 code path, also used by tests). `submit(&ResolvedGrid) -> Result<PngJob, QueueFull>`; `PngJob::poll() -> JobState` is non-blocking (`try_recv`) and meant to be called once per frame.
+- **JobState:** `Pending` / `Done(Vec<u8>)` / `Error(ExportError)` (the three AC1 states) + defensive `Abandoned` (result channel gone — only observable if the worker thread dies abnormally).
+- **Ownership transfer, no shared mutable state** (ADR 012): the grid is cloned into a `PngWork` moved over a bounded `mpsc::sync_channel`; the result travels back over a per-job unbounded reply channel. The worker loop is a plain `for work in receiver.iter()`.
+- **Drop semantics:** dropping the worker stops *new* submissions (sender gone → `QueueFull`) but the finite bounded buffer still drains — queued and in-flight jobs all complete; nothing submitted is lost. Pinned by test.
+- **Wasm:** on `wasm32-unknown-unknown` the struct has no fields, `new()` = `inline()`, and `submit` rasterizes inline then hands back an already-complete job (first poll is `Done`). All threaded items are cfg-gated; zero warnings on the wasm target.
+- **Timing basis for tests:** a 300×150 frame rasterizes in ≈154 ms (release, measured with a throwaway example) and slower in debug — submit must return in milliseconds, so the "first poll still Pending" assertion has >100× headroom.
+- `PngWorker` sits beside `Services` (not inside it): the GUI story S-015 decides how the app struct holds both; ADR 012 only requires the worker be confined to core-services behind the seam, which it is.
 
 ## Verification
 
-- [ ] AC1 — 
-- [ ] AC2 — 
-- [ ] AC3 — 
-- [ ] AC4 — 
-- [ ] AC5 — 
-- [ ] AC6 — 
+- [x] AC1 — `overflow_is_a_typed_rejection`: capacity 1 + in-flight job, three rapid submits → at least one (at most two) rejected with typed `QueueFull`; every accepted job still completes. Queue growth is bounded by construction (`sync_channel`).
+- [x] AC2 — `submit_returns_while_rasterization_is_in_flight`: 300×150 grid (rasterization >100 ms measured), submit elapsed asserted < 50 ms, first poll asserts `Pending`, then the result arrives and is byte-equal to the direct call.
+- [x] AC3 — `cargo check -p core-services --target wasm32-unknown-unknown` exits 0 with zero warnings (threaded items cfg-gated); `inline_executor_completes_on_first_poll` exercises the exact wasm code path on native (first poll already `Done`, bytes match the direct call).
+- [x] AC4 — `worker_output_is_byte_identical_to_the_direct_call`: worker `Done(png)` == `exporters::to_png(grid)` byte-for-byte; same exporter call in both execution paths, so S-009's goldens apply unchanged.
+- [x] AC5 — fmt/clippy(0 warnings)/test green workspace-wide (231 tests); tarpaulin: worker.rs 42/42 (100%), core-services crate ≥ 80% floor holds, workspace total 97.43%.
+- [x] AC6 — ADR 012 → accepted (status flipped; the decision itself is unchanged — no version bump); overview tracker updated.

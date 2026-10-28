@@ -2,9 +2,9 @@
 title: "012 - responsive-ui-threading"
 description: the UI thread is never blocked by application work — frame-critical work runs inline on the dedicated UI thread, non-frame work (PNG rasterization) on a worker thread (native) with inline fallback on wasm; no separate process (impossible on the web target)
 scope: architecture / runtime
-status: proposed
+status: accepted
 version: 2
-updated: 2026-10-22
+updated: 2026-10-28
 ---
 
 # ADR 012: Responsive UI — Dedicated UI Thread, Worker Offload for Non-Frame Work

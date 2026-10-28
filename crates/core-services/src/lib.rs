@@ -11,7 +11,8 @@
 //!
 //! [`Services`](services::Services) is the composition root: native vs. web differ
 //! only in the store backend. [`fakes`] provides in-memory stand-ins for GUI tests
-//! (the T7 pattern, §6.3).
+//! (the T7 pattern, §6.3). [`PngWorker`](worker::PngWorker) offloads rasterization
+//! to a worker thread (native) / inline (wasm) per ADR 012.
 
 pub mod catalog;
 pub mod exporter;
@@ -19,9 +20,11 @@ pub mod fakes;
 pub mod renderer;
 pub mod services;
 pub mod store;
+pub mod worker;
 
 pub use catalog::RegistryCatalog;
 pub use exporter::GridExporter;
 pub use renderer::PipelineRenderer;
 pub use services::Services;
 pub use store::{FsStore, MemoryStore};
+pub use worker::{JobState, PngJob, PngWorker, QueueFull};
