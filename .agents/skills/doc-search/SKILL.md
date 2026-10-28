@@ -1,6 +1,6 @@
 ---
 name: doc-search
-description: Search the project's documentation pages (the MkDocs site under doc/) without burning context — frontmatter index, targeted ripgrep, and entry points per question type. Use when asked about a decision (ADR), concept, objective, requirement, or story status, or "where is X documented" — especially inside the isolated devcontainer, where web search is unavailable and these pages are the reference material.
+description: Search documentation without burning context — the project's own pages (MkDocs site under doc/: frontmatter index, targeted ripgrep, entry points per question type) plus the remote reference docs reachable through the egress proxy (Rust std/book/reference on doc.rust-lang.org, crate API docs on docs.rs, crate READMEs on crates.io). Use when asked about a decision (ADR), concept, objective, requirement, story status, "where is X documented", or Rust/crate API questions — especially inside the isolated devcontainer, where general web access is unavailable.
 metadata:
   scope: doc/ documentation site
   status: stable
@@ -35,6 +35,32 @@ The project's knowledge base is an MkDocs site rooted at `doc/` (`docs_dir: doc`
 | A decision / "is X decided?" | `doc/adr/NNN-slug.md` — frontmatter carries `status: proposed\|accepted` and `version` |
 | Story status / progress | `doc/stories/BOARD.md` + `doc/stories/S-NNN-*.md`; arc42 tracker in `doc/arc42/overview.md` |
 | Templates (concept / ADR / story) | `doc/templates/*.md` |
+
+## Remote reference pages (reachable via the egress proxy)
+
+Inside the devcontainer, `http(s)_proxy` env vars are already set, so plain
+`curl <url>` (or pi's web tools) works against the whitelisted hosts below —
+anything else gets a 403 by design. Verified 2026-10-28:
+
+| Reference | URL |
+|---|---|
+| Rust std/core/alloc API docs | `https://doc.rust-lang.org/stable/std/` (swap `std` for `core`, `alloc`) |
+| The Rust Book | `https://doc.rust-lang.org/book/` |
+| The Rust Reference | `https://doc.rust-lang.org/reference/` |
+| Third-party crate API docs (rustdoc) | `https://docs.rs/<crate>/` — e.g. `https://docs.rs/serde` |
+| Crate README + versions/metadata | `https://crates.io/crates/<name>` |
+
+Notes:
+- Fetch the specific item page, not a site root, and extract what you need —
+  these are full HTML pages; pipe through `head`/`grep` or save to a file and
+  read it with offset/limit instead of dumping into context.
+- **Offline alternative for dependency docs:** after any build, every
+  dependency's source (with all doc comments) is in
+  `$CARGO_HOME/registry/src/*/`, and `cargo doc --workspace` builds local
+  rustdoc HTML with no network at all — prefer this when the question is
+  about a crate already in the workspace.
+- crates.io blocks curl's default user agent (403); use `-A "cargo-1.85.0"`
+  or a browser UA for API/page fetches.
 
 ## Reading discipline
 
