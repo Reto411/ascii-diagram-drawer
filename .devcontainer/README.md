@@ -216,7 +216,10 @@ agent container ──(iptables: only these)──> 10.0.2.2:3128 = host 127.0.0
   the container). Full key reference: `docs/CONFIG.md` in the pi-blackhole
   repo.
 - **Headless GUI smokes:** the image ships `xvfb` + ImageMagick so GUI stories
-  can verify without a display, in three tiers:
+  can verify without a display. The canonical procedure (tiers, evidence rules,
+  golden management) is the **gui-testing skill**
+  (`.agents/skills/gui-testing/SKILL.md`, helper: `scripts/smoke.sh`); this
+  section documents only the environment — three tiers:
   - *launch-alive:* `timeout 10 xvfb-run -a cargo run -p gui-app` — exit 124
     (killed by timeout) means the app started and stayed up; any other early
     exit is a crash.
