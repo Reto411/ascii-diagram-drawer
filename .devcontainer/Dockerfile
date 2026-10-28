@@ -16,6 +16,12 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
+# Egress isolation tooling (see entrypoint.sh + README.md "Egress isolation").
+# Own layer so the heavy layers above stay cached.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends iptables iproute2 \
+ && rm -rf /var/lib/apt/lists/*
+
 # Rust stable via rustup (container-local toolchain; host ~/.cargo is not exposed)
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
@@ -40,7 +46,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends xvfb xauth imagemagick \
  && rm -rf /var/lib/apt/lists/*
 
+COPY .devcontainer/entrypoint.sh /usr/local/bin/isolated-entrypoint.sh
+RUN chmod +x /usr/local/bin/isolated-entrypoint.sh
+
 WORKDIR /workspace
 # ENTRYPOINT (not CMD) so args after the image name are passed to pi,
 # e.g. `podman run ... pi-ascii --model ... -p "..."` (see README).
-ENTRYPOINT ["pi"]
+# The entrypoint applies the egress firewall when ISOLATED_EGRESS=1.
+ENTRYPOINT ["/usr/local/bin/isolated-entrypoint.sh"]

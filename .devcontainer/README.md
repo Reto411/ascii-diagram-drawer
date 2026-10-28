@@ -13,6 +13,7 @@ a boundary — this container is.
 - `git`, `ripgrep`, build essentials
 - `mkdocs` (default theme) for docs build checks
 - `xvfb` + ImageMagick (`import`/`compare`) for headless GUI smoke tests
+- `iptables`/`iproute2` + `entrypoint.sh` — egress isolation gate (see "Egress isolation")
 
 ## Build the image
 
@@ -46,7 +47,15 @@ Credentials come from `.devcontainer/.env` (gitignored; create it once from
 
 ```sh
 podman run --rm -it \
-  --network host \
+  --network slirp4netns:allow_host_loopback=true \
+  --cap-add NET_ADMIN \
+  -e ISOLATED_EGRESS=1 \
+  -e http_proxy=http://10.0.2.2:3128 \
+  -e https_proxy=http://10.0.2.2:3128 \
+  -e HTTP_PROXY=http://10.0.2.2:3128 \
+  -e HTTPS_PROXY=http://10.0.2.2:3128 \
+  -e no_proxy=localhost,127.0.0.1,::1,10.0.2.2 \
+  -e NO_PROXY=localhost,127.0.0.1,::1,10.0.2.2 \
   --env-file .devcontainer/.env \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
@@ -63,7 +72,15 @@ the decision persists in the volume's `trust.json`).
 
 ```sh
 podman run --rm \
-  --network host \
+  --network slirp4netns:allow_host_loopback=true \
+  --cap-add NET_ADMIN \
+  -e ISOLATED_EGRESS=1 \
+  -e http_proxy=http://10.0.2.2:3128 \
+  -e https_proxy=http://10.0.2.2:3128 \
+  -e HTTP_PROXY=http://10.0.2.2:3128 \
+  -e HTTPS_PROXY=http://10.0.2.2:3128 \
+  -e no_proxy=localhost,127.0.0.1,::1,10.0.2.2 \
+  -e NO_PROXY=localhost,127.0.0.1,::1,10.0.2.2 \
   --env-file .devcontainer/.env \
   -v "$PWD:/workspace" \
   -v pi-agent-home:/root/.pi/agent \
@@ -75,6 +92,69 @@ podman run --rm \
 ```
 
 Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
+
+The flag set above is **required**, not optional: it is what makes the run
+isolated (see below). VS Code "Attach to running container" / devcontainer
+attach is not a supported way to get an isolated run — start containers with
+the commands above.
+
+## Egress isolation (Squid allow-list + netns firewall)
+
+The agent container has **no direct internet access**. Two layers enforce it:
+
+1. **Netns firewall** (`entrypoint.sh`, active when `ISOLATED_EGRESS=1`):
+   inside the container, `iptables`/`ip6tables` REJECT every outgoing packet
+   except to `10.0.2.2:3128` (the egress proxy) and `10.0.2.2:8888` (the
+   model server). Fails closed — if the rules cannot be applied, the container
+   does not start. Requires `--cap-add NET_ADMIN`.
+2. **Squid allow-list** (container `egress-proxy`, runs with `--network host`,
+   bound to `127.0.0.1:3128` only): all HTTP/HTTPS traffic from the agent must
+   pass through it; it serves only `crates.io` + subdomains, `rust-lang.org`
+   + subdomains, `rustup.rs`, `sh.rustup.rs`. Everything else gets a 403.
+
+How the pieces connect — the container runs with
+`--network slirp4netns:allow_host_loopback=true`, so `10.0.2.2` is an alias
+for the **host's loopback**:
+
+```
+agent container ──(iptables: only these)──> 10.0.2.2:3128 = host 127.0.0.1:3128 (Squid)
+                                              └──> crates.io / rustup hosts only
+                              └────────────────> 10.0.2.2:8888 = host 127.0.0.1:8888 (Unsloth, direct)
+```
+
+- **Model traffic is not proxied.** `models.json` uses
+  `baseUrl: http://10.0.2.2:8888/v1` and `10.0.2.2` is in `no_proxy`, so pi's
+  HTTP client (undici `EnvHttpProxyAgent`) talks to Unsloth directly; all
+  other HTTP(S) traffic (cargo, rustup, curl, git) goes through the proxy via
+  the `http(s)_proxy` env vars above.
+- **Why not a pure proxy design** (agent on an internal podman network,
+  everything incl. model through Squid): podman here uses the netavark backend,
+  which has no slirp4netns driver for named networks, and mode networks
+  (`host`/`slirp4netns`) cannot be combined with named ones — so a proxy
+  container could never reach both the internet *and* the host-loopback model
+  server. See [ADR 014](../doc/adr/014-egress-isolation-squid-proxy.md).
+- **Setup** (host side, idempotent): `sh .devcontainer/setup-egress.sh`
+  builds the proxy image and (re)starts `egress-proxy`. Re-run after any
+  `squid.conf` change or host reboot.
+- **Extending the whitelist:** edit `.devcontainer/proxy/squid.conf`, then
+  re-run `setup-egress.sh`. Squid 6 quirk: a bare `dstdomain` name matches the
+  apex only, a leading dot matches subdomains only — both forms are needed and
+  must live in separate ACLs (see the comment in the file).
+- **Not covered by design:** pi's own package fetches (`git:github.com/...`,
+  npm registry) are *not* on the whitelist. Packages are cached in the
+  `pi-agent-home` volume, so normal runs need nothing; if you add a new pi
+  package or reset the volume, either extend the whitelist temporarily or
+  pre-populate the volume from an online run first. In-container web tools get
+  403s — that is the point.
+- **Troubleshooting:** `podman logs egress-proxy` shows Squid's access log
+  (every allow/deny with target host); inside the container,
+  `iptables -S OUTPUT` shows the lockdown rules. If the model endpoint is
+  unreachable, check Unsloth on the host first:
+  `curl http://127.0.0.1:8888/v1/models`.
+- **Verified 2026-10-28:** allow/deny matrix (crates.io API + index + static,
+  rust-lang.org, rustup.rs allowed; google/pypi/github denied), direct egress
+  rejected, other host-loopback ports rejected, real model chat completion
+  under full isolation, fresh-crate `cargo build` through the proxy.
 
 ## Notes & troubleshooting
 
@@ -91,9 +171,10 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
   over the volume's path and mirrors the host's `~/.pi/agent/settings.json`.
   Re-copy it from the host when your config changes (keep `defaultProvider`/
   `defaultModel` consistent with `models.json`). The listed `packages` are
-  installed by pi into the volume on first container start — needs network
-  access to git/npm, which `--network host` provides; later runs reuse the
-  cached installs in the volume.
+  installed by pi into the volume on first container start; later runs reuse
+  the cached installs. Note: github/npm are *not* on the egress whitelist, so
+  package (re)fetches only work if the packages are already in the volume —
+  see "Egress isolation" above.
 - **pi-blackhole:** one of the packages above. It replaces Pi's LLM-based
   `/compact` with zero-cost algorithmic compaction. The config is bind-mounted
   read-only from `.devcontainer/pi-blackhole-config.json` (same pattern as
@@ -127,16 +208,15 @@ Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
     the Unsloth endpoint accepts `image_url` content parts, but the loaded
     GGUF is not vision-capable (HTTP 400 "does not support vision") — load a
     Qwen VL variant in Unsloth Studio and flip `images: true` to activate.
-- **Network:** Unsloth Studio runs on this machine and listens on both
-  `127.0.0.1:8888` and the LAN IP; `models.json` uses loopback so it keeps
-  working if the LAN IP changes. Loopback only resolves to the host under
-  `--network host` (with bridge networking it would be the container's own)
-  — which is also required here because the rootless podman bridge cannot
-  reach the server at all (verified). Trade-off of `--network host`: the
-  container shares the host's network stack. The server accepts concurrent
-  clients, so a container run does not block your host pi session.
-  If models ever fail to appear, check with
-  `podman run --rm --network host pi-ascii --list-models`.
+- **Network / model endpoint:** see the [Egress isolation](#egress-isolation-squid-allow-list--netns-firewall)
+  section. Short version: `models.json` uses `http://10.0.2.2:8888/v1`
+  because under `slirp4netns:allow_host_loopback=true`, `10.0.2.2` is the
+  host's loopback — the only way a container can reach the Unsloth server,
+  which binds to `127.0.0.1` only (no LAN/0.0.0.0 binding, by policy). The
+  server accepts concurrent clients, so a container run does not block your
+  host pi session. If models ever fail to appear, check with
+  `podman run --rm --network slirp4netns:allow_host_loopback=true \
+   -e no_proxy=10.0.2.2 -v .devcontainer/models.json:/root/.pi/agent/models.json:ro pi-ascii --list-models`
 - **Host auth.json:** if you ever want to reuse your host `auth.json` instead,
   copy it into the volume once (e.g. via a temporary container) rather than
   bind-mounting `~/.pi/agent`.
