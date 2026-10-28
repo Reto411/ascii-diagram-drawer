@@ -1,5 +1,6 @@
-//! Property tests (S-006 AC1/AC4): the pipeline is pure and deterministic, and every
-//! emitted character stays inside svgbob's ASCII input alphabet (ADR 001 v2).
+//! Property tests (S-006 AC1/AC4, S-007): the pipeline is pure and deterministic, and
+//! every emitted character stays inside svgbob's ASCII input alphabet (ADR 001 v2 +
+//! ADR 013 arrowheads). Random diagrams include anchor-bound connectors.
 //!
 //! Purity reading: svgbob consumes printable ASCII; characters outside its *drawing*
 //! vocabulary degrade to literal text (ADR 001 consequences). So the invariant is:
@@ -8,8 +9,11 @@
 //! that mixes plain letters/digits with drawing glyphs to exercise quote escaping.
 
 use diagram_model::Diagram;
+use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
-use diagram_model::objects::{Object, ObjectId, ShapeInstance, TextInstance};
+use diagram_model::objects::{
+    ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance,
+};
 use proptest::prelude::*;
 use shape_registry::ShapeRegistry;
 
@@ -66,7 +70,11 @@ fn one_object(id: u32) -> impl Strategy<Value = Option<Object>> {
         })
 }
 
-/// A random diagram: up to 6 objects inside a 24x16 canvas, scale 1..3.
+/// The four side anchors — every shape in the random diagrams is a box, so all exist.
+const SIDE_ANCHORS: &[&str] = &["n", "e", "s", "w"];
+
+/// A random diagram: up to 6 objects inside a 24x16 canvas, scale 1..3, plus up to two
+/// solid connectors chaining consecutive boxes (ids 200+; anchors re-resolve at render).
 fn random_diagram() -> impl Strategy<Value = Diagram> {
     (
         one_object(0),
@@ -75,8 +83,10 @@ fn random_diagram() -> impl Strategy<Value = Diagram> {
         one_object(3),
         one_object(4),
         one_object(5),
+        0..3u32,
     )
         .prop_map(|slots| {
+            let connector_count = slots.6 as usize;
             let objects: Vec<Object> = [slots.0, slots.1, slots.2, slots.3, slots.4, slots.5]
                 .into_iter()
                 .flatten()
@@ -87,12 +97,31 @@ fn random_diagram() -> impl Strategy<Value = Diagram> {
             if scale != 1 {
                 d.set_scale(scale).expect("scale >= 1");
             }
+            let mut box_ids: Vec<ObjectId> = Vec::new();
             for obj in objects {
                 match obj {
-                    Object::Shape(s) => d.place_shape(s).expect("unique ids"),
+                    Object::Shape(s) => {
+                        let id = s.id.clone();
+                        d.place_shape(s).expect("unique ids");
+                        box_ids.push(id);
+                    }
                     Object::Text(t) => d.place_text(t).expect("unique ids"),
                     Object::Connector(_) => unreachable!(),
                 }
+            }
+            // Chain up to `connector_count` consecutive boxes with random side anchors.
+            for k in 0..connector_count.min(box_ids.len().saturating_sub(1)) {
+                d.connect(ConnectorInstance::new(
+                    object_id((200 + k) as u32),
+                    AnchorRef::new(box_ids[k].clone(), SIDE_ANCHORS[k % 4]).expect("side anchor"),
+                    AnchorRef::new(
+                        box_ids[(k + 1) % box_ids.len()].clone(),
+                        SIDE_ANCHORS[(k + 1) % 4],
+                    )
+                    .expect("side anchor"),
+                    ConnectorStyle::Solid,
+                ))
+                .expect("endpoints are boxes");
             }
             d
         })

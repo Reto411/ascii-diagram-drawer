@@ -148,7 +148,7 @@ mod tests {
             match o {
                 Object::Shape(s) => d.place_shape(s).unwrap(),
                 Object::Text(t) => d.place_text(t).unwrap(),
-                Object::Connector(_) => panic!("connectors are out of scope (S-007)"),
+                Object::Connector(c) => d.connect(c).unwrap(),
             }
         }
         resolve(&place(&d, &ShapeRegistry::builtin()).expect("known shapes"))

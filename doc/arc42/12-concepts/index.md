@@ -3,7 +3,7 @@ title: "arc42-12-concepts"
 description: index of architecture concepts (C1+) — each concept has a full doc in doc/arc42/12-concepts/
 scope: architecture
 status: draft
-updated: 2026-10-23
+updated: 2026-10-28
 ---
 
 # 12. Concepts
@@ -75,3 +75,11 @@ updated: 2026-10-23
 - **Details:** [`doc/arc42/12-concepts/collection.md`](collection.md) · decided in [ADR 007](../../adr/007-user-defined-diagram-objects.md); syntax settled by S-003
 - **Interfaces (provided/required):** collection file → `shape-registry` (S-005) loads it; type-id resolution for `.ad` files (C6)
 - **Dependencies:** C7 (content unit), C6 (shared versioning scheme + reference form), C3 (Shape Catalog context)
+
+## Concept C9: Connector Routing
+
+- **ID:** C9
+- **Purpose:** how anchor-bound connectors become routed lines in the resolved grid — endpoints re-resolve from anchor references on every render, straight or single-corner L of structural edges, arrowhead at the target end; joins are clean by construction (C1 rule table)
+- **Details:** [`doc/arc42/12-concepts/connector-routing.md`](connector-routing.md) · decided in [ADR 013](../../adr/013-connector-routing.md); implemented in S-007
+- **Interfaces (provided/required):** place stage of `render-pipeline` (C2) stamps routes; catalog anchor sets (C7) supply template-space coordinates
+- **Dependencies:** C2 (pipeline stage), C1 (structural-edge resolution), C4 (`ConnectorInstance`/`AnchorRef`), C7 (anchor sets)

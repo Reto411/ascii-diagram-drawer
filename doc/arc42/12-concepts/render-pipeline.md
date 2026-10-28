@@ -22,7 +22,7 @@ The deterministic path from diagram model to output: objects with explicit grid 
 
 Three stages, all pure functions:
 
-1. **Place** — objects are stamped onto the cell grid at their stored coordinates (no layout pass).
+1. **Place** — objects are stamped onto the cell grid at their stored coordinates (no layout pass); connectors re-resolve their anchors and stamp routed edges + arrowhead ([connector routing, C9](connector-routing.md)).
 2. **Resolve** — every occupied cell gets exactly one glyph via [glyph resolution](glyph-resolution.md) (C1), based on the N/E/S/W connections and content passing through the cell.
 3. **Emit** — per output family:
    - *Text*: dump the resolved grid (UTF-8, LF).
@@ -35,7 +35,7 @@ The character grid is a **derived intermediate representation** — it is never 
 
 - **Glyph resolution (C1)** — stage 2 of this pipeline; the per-cell lookup that makes both text and vector output deterministic
 - **Diagram file format** (ADR 004) — defines the *stored* model; this pipeline consumes it, producing the grid only at render time
-- **Connector binding** (FR9) — bound connectors re-resolve their cells when a shape moves/resizes, keeping text and vector output in sync
+- **Connector routing (C9)** — the connector branch of the place stage: anchor references re-resolve to cells on every render, so moved/resized shapes carry their connectors; routing decision in [ADR 013](../../adr/013-connector-routing.md) (`doc/arc42/12-concepts/connector-routing.md`)
 - **WYSIWYG canvas** ([§8.4.7](../08-building-block-view.md)) — the GUI canvas renders this *same* resolved grid in a monospace font (the exact bytes of the text output) with selection/anchor overlays on top, so the view can never diverge from the export
 
 ## Implementation
@@ -44,7 +44,8 @@ Implemented in `crates/render-pipeline` (headless, no windowing or I/O), shared 
 
 - `render(&Diagram, &ShapeRegistry) -> Result<ResolvedGrid, RenderError>` — the public entry point: place → resolve → scale-expand (FR8).
 - `place.rs` — stage 1: stamps objects in document order at their stored coordinates (no layout pass). `Rect` geometry (box) derives borders from the instance pos/size; `Pattern` geometry (ellipse, custom templates) stamps verbatim art with passive anchor base edges (ADR 007); free text stamps verbatim with quote escaping.
+- `connectors.rs` — stage 1 (connector branch, C9): endpoint resolution from anchor references (proportional `Rect` mapping, offset `Pattern` mapping), straight/single-corner L routing, structural-edge stamping, arrowhead at the target end ([ADR 013](../../adr/013-connector-routing.md)).
 - `resolve.rs` — stage 2: [glyph resolution](glyph-resolution.md) (C1), one svgbob-alphabet glyph per cell; trims to the occupied extent.
 - `grid.rs` — `ResolvedGrid` (the derived intermediate, never stored as source data) and `expand(&ResolvedGrid, scale)` — line glyphs fill their whole scale block so edges stay continuous; content glyphs land in a defined sub-cell.
-- Connectors are not yet placed (S-007); text/SVG/PNG emission lives in `exporters` (S-008).
-- Tests: per-rule-table unit tests, golden files under `tests/golden/*.grid`, and proptest properties for determinism (AC1) and alphabet purity (AC4).
+- Text/SVG/PNG emission lives in `exporters` (S-008).
+- Tests: per-rule-table unit tests, golden files under `tests/golden/*.grid` (incl. five connector scenarios), and proptest properties for determinism (AC1) and alphabet purity (AC4) over random diagrams with connectors.

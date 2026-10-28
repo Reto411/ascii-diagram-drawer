@@ -15,8 +15,11 @@ use std::fs;
 use std::path::Path;
 
 use diagram_model::Diagram;
+use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
-use diagram_model::objects::{Object, ObjectId, ShapeInstance, TextInstance};
+use diagram_model::objects::{
+    ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance,
+};
 use shape_registry::ShapeRegistry;
 
 const GOLDEN_DIR: &str = "tests/golden";
@@ -66,9 +69,22 @@ fn diagram(scale: u32, objects: Vec<Object>) -> Diagram {
         match o {
             Object::Shape(s) => d.place_shape(s).expect("place shape"),
             Object::Text(t) => d.place_text(t).expect("place text"),
-            Object::Connector(_) => panic!("connectors are out of scope (S-007)"),
+            Object::Connector(c) => d.connect(c).expect("connect connector"),
         }
     }
+    d
+}
+
+/// Adds one solid connector to a diagram built by `diagram` (S-007, ADR 013): endpoint
+/// ids are the generated ids of the scenario's shapes; the connector itself is id 90.
+fn linked(mut d: Diagram, from_id: u32, from_anchor: &str, to_id: u32, to_anchor: &str) -> Diagram {
+    d.connect(ConnectorInstance::new(
+        ObjectId::generated(90),
+        AnchorRef::new(ObjectId::generated(from_id), from_anchor).expect("valid anchor"),
+        AnchorRef::new(ObjectId::generated(to_id), to_anchor).expect("valid anchor"),
+        ConnectorStyle::Solid,
+    ))
+    .expect("endpoints are placed shapes");
     d
 }
 
@@ -140,6 +156,77 @@ fn scenarios() -> Vec<(&'static str, Diagram)> {
             diagram(
                 2,
                 vec![box_obj(0, "AB", 0, 0, 9, 5), box_obj(1, "", 6, 0, 1, 7)],
+            ),
+        ),
+        // S-007 (ADR 013): straight horizontal route, T-junctions at both anchors,
+        // arrowhead '>' on the second-to-last cell.
+        (
+            "connector-horizontal",
+            linked(
+                diagram(
+                    1,
+                    vec![box_obj(0, "A", 0, 0, 9, 5), box_obj(1, "B", 14, 0, 9, 5)],
+                ),
+                0,
+                "e",
+                1,
+                "w",
+            ),
+        ),
+        // S-007: straight vertical route between two ellipse anchors (pattern base edges
+        // merge with the route into T-junctions), arrowhead 'v'.
+        (
+            "connector-vertical",
+            linked(
+                diagram(1, vec![ellipse(0, "DB", 0, 0), ellipse(1, "API", 0, 12)]),
+                0,
+                "s",
+                1,
+                "n",
+            ),
+        ),
+        // S-007: misaligned endpoints — single-corner L; the target's left side fixes the
+        // corner (vertical first, then horizontal into B.w).
+        (
+            "connector-diagonal",
+            linked(
+                diagram(
+                    1,
+                    vec![box_obj(0, "A", 0, 0, 9, 5), box_obj(1, "B", 14, 6, 9, 5)],
+                ),
+                0,
+                "e",
+                1,
+                "w",
+            ),
+        ),
+        // S-007: anchors on the same column — straight vertical route down A.s into B.n.
+        (
+            "connector-mid-edge",
+            linked(
+                diagram(
+                    1,
+                    vec![box_obj(0, "A", 0, 0, 9, 5), box_obj(1, "B", 0, 10, 9, 5)],
+                ),
+                0,
+                "s",
+                1,
+                "n",
+            ),
+        ),
+        // S-007 at scale 2: the route expands like any line; the arrowhead is content and
+        // lands in its defined sub-cell (the block keeps no line glyph around it).
+        (
+            "connector-scale-2",
+            linked(
+                diagram(
+                    2,
+                    vec![box_obj(0, "A", 0, 0, 9, 5), box_obj(1, "B", 14, 0, 9, 5)],
+                ),
+                0,
+                "e",
+                1,
+                "w",
             ),
         ),
     ]

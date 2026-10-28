@@ -14,8 +14,9 @@
 //!   the full pattern extent and may only land on space cells.
 //! - Free text: stamped verbatim at its position; lines containing svgbob-alphabet
 //!   characters are wrapped in quotes so they read as literal text in SVG output (C1).
-//!
-//! Connectors are ignored until S-007.
+//! - Connectors (ADR 013): endpoints re-resolved from anchor references, routed straight
+//!   or single-corner L, stamped as structural edges with an arrowhead at the target end.
+//!   See [`crate::connectors`].
 
 use diagram_model::Diagram;
 use diagram_model::objects::{Object, ShapeInstance, TextInstance};
@@ -52,7 +53,7 @@ impl CellState {
     }
 
     /// A content writer stamps a non-space glyph (z-order: becomes the top).
-    fn stamp_content(&mut self, c: char) {
+    pub(crate) fn stamp_content(&mut self, c: char) {
         self.content = Some(c);
         self.structural_top = false;
     }
@@ -65,8 +66,8 @@ impl CellState {
         self.structural_top = false;
     }
 
-    /// A structural writer stamps edges (borders, later: connectors) and claims the top.
-    fn stamp_edges(&mut self, edges: EdgeSet) {
+    /// A structural writer stamps edges (borders, connectors) and claims the top.
+    pub(crate) fn stamp_edges(&mut self, edges: EdgeSet) {
         debug_assert!(
             !edges.is_empty(),
             "structural stamps carry at least one edge"
@@ -95,7 +96,7 @@ impl PlacedGrid {
     }
 
     /// Applies `f` to the cell at `(x, y)`, growing the grid as needed.
-    fn with_cell(&mut self, x: u32, y: u32, f: impl FnOnce(&mut CellState)) {
+    pub(crate) fn with_cell(&mut self, x: u32, y: u32, f: impl FnOnce(&mut CellState)) {
         if x >= self.width {
             self.grow_width(x + 1);
         }
@@ -132,7 +133,7 @@ impl PlacedGrid {
 }
 
 /// Stamps every object at its stored coordinates in document order (no layout pass).
-/// Unknown shape types are an error; connectors are ignored until S-007.
+/// Unknown shape types and unresolvable connector anchors are errors.
 pub(crate) fn place(
     diagram: &Diagram,
     registry: &ShapeRegistry,
@@ -142,11 +143,24 @@ pub(crate) fn place(
         match object {
             Object::Shape(shape) => place_shape(&mut grid, shape, registry)?,
             Object::Text(text) => place_text_object(&mut grid, text),
-            // S-007: anchor-bound connectors join the resolve stage.
-            Object::Connector(_) => {}
+            Object::Connector(connector) => {
+                crate::connectors::place_connector(&mut grid, diagram, registry, connector)?
+            }
         }
     }
     Ok(grid)
+}
+
+/// Looks up the shape type for an instance; unknown type ids are a typed error.
+pub(crate) fn lookup_shape<'a>(
+    instance: &ShapeInstance,
+    registry: &'a ShapeRegistry,
+) -> Result<&'a ShapeType, RenderError> {
+    registry
+        .lookup(&instance.type_id)
+        .map_err(|_| RenderError::UnknownShapeType {
+            type_id: instance.type_id.clone(),
+        })
 }
 
 fn place_shape(
@@ -154,11 +168,7 @@ fn place_shape(
     instance: &ShapeInstance,
     registry: &ShapeRegistry,
 ) -> Result<(), RenderError> {
-    let shape = registry
-        .lookup(&instance.type_id)
-        .map_err(|_| RenderError::UnknownShapeType {
-            type_id: instance.type_id.clone(),
-        })?;
+    let shape = lookup_shape(instance, registry)?;
     match shape.geometry {
         GeometryKind::Rect => place_rect(grid, instance),
         GeometryKind::Pattern => place_pattern(grid, instance, shape),
@@ -435,7 +445,7 @@ mod tests {
             match o {
                 Object::Shape(s) => d.place_shape(s).unwrap(),
                 Object::Text(t) => d.place_text(t).unwrap(),
-                Object::Connector(_) => panic!("connectors not needed in place tests"),
+                Object::Connector(c) => d.connect(c).unwrap(),
             }
         }
         d

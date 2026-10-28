@@ -192,8 +192,8 @@ ascii-diagram-drawer/
 
 - **Domain service:** `render(&Diagram, &ShapeCatalog) -> ResolvedGrid` — spans two contexts (aggregate + catalog), so it lives as a free function/service rather than on either aggregate.
 - **Value object:** `ResolvedGrid { width, height, cells: Vec<Cell> }` — one canonical-alphabet glyph per occupied cell; the grid is a **derived intermediate, never stored** ([ADR 004](../adr/004-diagram-file-format.md)).
-- **Sub-modules (pipeline):** `place`, `resolve` ([glyph resolution, concept C1](12-concepts/glyph-resolution.md)), `grid`.
-- **Key algorithms:** stamp objects in document order (z-order) → per-cell glyph selection from N/E/S/W connections + content (§8.5); strictly row-major traversal and fixed priority orders — no hash-iteration order may reach the output (Q1, T1).
+- **Sub-modules (pipeline):** `place`, `connectors` ([connector routing, concept C9](12-concepts/connector-routing.md)), `resolve` ([glyph resolution, concept C1](12-concepts/glyph-resolution.md)), `grid`.
+- **Key algorithms:** stamp objects in document order (z-order) → per-cell glyph selection from N/E/S/W connections + content (§8.5); strictly row-major traversal and fixed priority orders — no hash-iteration order may reach the output (Q1, T1). Connectors re-resolve both anchors to cells on every render, then route straight or as a single-corner L of structural edges with an arrowhead at the target end ([ADR 013](../adr/013-connector-routing.md)) — joins stay clean because route cells resolve through the same C1 rule table as borders.
 - **Exporters** (`text`, `svg`, `png` sub-modules) present the one grid in three media:
   - *Text*: dump the resolved grid as UTF-8 with LF — the grid **is** the output.
   - *SVG*: pass the resolved grid **unchanged** to `svgbob::to_svg` — no adapter layer ([ADR 005](../adr/005-use-svgbob-as-vector-renderer.md)); fixed attribute set, no timestamps → byte-identical re-export (QS1/QS2).
