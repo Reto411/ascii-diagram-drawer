@@ -196,7 +196,14 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 name = "core-services"
 version = "0.1.0"
 dependencies = [
+ "ad-format",
+ "diagram-model",
+ "exporters",
+ "render-pipeline",
+ "shape-registry",
+ "tempfile",
  "toml",
+ "ui-api",
 ]
 
 [[package]]
@@ -1538,6 +1545,10 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "ui-api"
 version = "0.1.0"
+dependencies = [
+ "diagram-model",
+ "render-pipeline",
+]
 
 [[package]]
 name = "unarray"

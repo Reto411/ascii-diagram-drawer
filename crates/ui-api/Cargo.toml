@@ -5,9 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# Allowed edges per §8.3: { diagram-model, render-pipeline }.
-# Declared in S-010 when the trait signatures are pinned (they name model/grid types).
+# Allowed edges per §8.3: { diagram-model, render-pipeline } — pinned in S-010
+# when the trait signatures were fixed (they name Diagram / ResolvedGrid /
+# RenderError). No context-crate error type may cross this seam.
 [dependencies]
+diagram-model = { path = "../diagram-model" }
+render-pipeline = { path = "../render-pipeline" }
 
 [lints]
 workspace = true

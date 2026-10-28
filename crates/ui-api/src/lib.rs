@@ -1,5 +1,68 @@
 //! Application layer — the service seam, [ADR 009](../../../doc/adr/009-ui-api-service-layer.md).
 //!
-//! Trait definitions only (`DiagramStore`, `Renderer`, `Exporter`, `ShapeCatalog`):
-//! the GUI depends on these abstractions; concrete backends are injected at the
-//! composition root in `core-services`. Signatures pinned in S-010.
+//! Four small, object-safe traits pin the whole surface `gui-app` may use: the GUI
+//! depends on these abstractions (held as `Arc<dyn …>`), never on a context crate.
+//! Concrete backends live in `core-services`; platform IO stays there (C3 rule).
+//!
+//! Deliberate non-abstraction (ADR 009): diagram *mutation* stays direct manipulation
+//! of the pure [`Diagram`] value type inside the GUI — there is no "model service".
+
+use std::path::Path;
+
+use diagram_model::Diagram;
+use render_pipeline::{RenderError, ResolvedGrid};
+
+pub mod error;
+pub mod types;
+
+pub use error::{ExportError, StoreError};
+pub use types::{AnchorInfo, ShapeInfo};
+
+/// Loads and saves `.ad` documents (FR4). The native backend uses the filesystem;
+/// targets without one (wasm) get an in-memory store behind this same trait.
+///
+/// Save serializes the current [`Diagram`] canonically (`ad-format`); statements a
+/// newer file version preserved verbatim are part of the parser-level round trip,
+/// not of the post-edit GUI save flow.
+pub trait DiagramStore {
+    /// Reads and parses the `.ad` document at `path`.
+    fn load(&self, path: &Path) -> Result<Diagram, StoreError>;
+
+    /// Serializes `diagram` canonically and writes it to `path`.
+    fn save(&self, path: &Path, diagram: &Diagram) -> Result<(), StoreError>;
+}
+
+/// Renders a diagram into the resolved character grid (the single source of truth
+/// for all outputs, C2). The shape catalog is bound at construction — the GUI never
+/// passes registry types across the seam.
+pub trait Renderer {
+    /// Places and resolves `diagram` against the bound catalog.
+    fn render(&self, diagram: &Diagram) -> Result<ResolvedGrid, RenderError>;
+}
+
+/// Emits the resolved grid as user-facing media (FR2/FR5). Text is infallible; SVG
+/// and PNG may fail — and `to_png` reports [`ExportError::Unsupported`] when no
+/// rasterizer backend was compiled in, which the GUI turns into an SVG-only offer.
+pub trait Exporter {
+    /// The grid as plain monospace text (LF-joined, trailing whitespace trimmed).
+    fn to_text(&self, grid: &ResolvedGrid) -> String;
+
+    /// The grid as an SVG document (svgbob interpretation of the exact text bytes).
+    fn to_svg(&self, grid: &ResolvedGrid) -> Result<String, ExportError>;
+
+    /// The grid as a PNG image (rasterization of the SVG output, ADR 016).
+    fn to_png(&self, grid: &ResolvedGrid) -> Result<Vec<u8>, ExportError>;
+}
+
+/// Lists and looks up shape types (FR3; registration is v1+). Data crosses the seam
+/// as read models ([`ShapeInfo`], [`AnchorInfo`]) — never registry types.
+pub trait ShapeCatalog {
+    /// Every available shape type: built-ins plus all loaded collections, in order.
+    fn list(&self) -> Vec<ShapeInfo>;
+
+    /// The shape with the given catalog key (`"box"`, `"mycol/arrow"`), if any.
+    fn get(&self, type_id: &str) -> Option<ShapeInfo>;
+
+    /// The named anchors of a shape type, in name order — `None` for unknown ids.
+    fn anchors(&self, type_id: &str) -> Option<Vec<AnchorInfo>>;
+}

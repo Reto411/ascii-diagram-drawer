@@ -3,7 +3,7 @@ title: bounded-contexts
 description: the strategic DDD decomposition — five bounded contexts + application/presentation layer, realized as crate boundaries in one binary; context mapping defines how they talk
 scope: architecture
 status: stable
-updated: 2026-10-22
+updated: 2026-10-28
 ---
 
 # Concept: Bounded Contexts
@@ -49,3 +49,5 @@ Rules: strictly one-directional dependencies (presentation → application layer
 Scaffolded in S-001: all nine workspace crates exist per [§8.3](../../arc42/08-building-block-view.md) (one crate per context; Rendering & Export and Application/Presentation span two/three crates), each with `[lints] workspace = true`.
 
 The context boundaries are **machine-checked** by the T5 dependency-audit test (`crates/core-services/tests/dependency_audit.rs`): it parses every member `Cargo.toml` and fails the build if any workspace-internal dependency edge is not on the §8.3 allow-list (which is acyclic, so the whole graph is acyclic). Adding a new cross-context edge requires extending the allow-list deliberately — that is the enforcement of the context-mapping rules above.
+
+The **application layer** between presentation and core contexts exists since S-010: `ui-api` defines the four seam traits (`DiagramStore`, `Renderer`, `Exporter`, `ShapeCatalog`) plus seam-level error types and read models; `core-services` implements them over the context crates and provides the `Services` composition root (`native()`/`web()` — only the store backend differs per target) and in-memory fakes for GUI tests (T7). Cross-context data crosses only as `diagram-model` value types or seam read models — never context-crate types.

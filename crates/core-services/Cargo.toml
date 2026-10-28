@@ -1,17 +1,24 @@
 [package]
 name = "core-services"
-description = "Application layer: concrete service backends + composition root (ADR 009); PNG worker (ADR 012)"
+description = "Application layer: concrete service backends + composition root (ADR 009)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 # Allowed edges per §8.3: { ui-api, diagram-model, ad-format, shape-registry,
-# render-pipeline, exporters, ascii-import (v1+) }. Declared in S-010/S-011 as the
-# backends land; the T5 dependency audit (tests/dependency_audit.rs) pins the DAG.
+# render-pipeline, exporters, ascii-import (v1+) }. All declared now — the T5
+# dependency audit (tests/dependency_audit.rs) pins the DAG.
 [dependencies]
+ui-api = { path = "../ui-api" }
+diagram-model = { path = "../diagram-model" }
+ad-format = { path = "../ad-format" }
+shape-registry = { path = "../shape-registry" }
+render-pipeline = { path = "../render-pipeline" }
+exporters = { path = "../exporters" }
 
 [dev-dependencies]
 toml = "0.9"
+tempfile = "3"
 
 [lints]
 workspace = true
