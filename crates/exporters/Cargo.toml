@@ -5,14 +5,24 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# The PNG rasterizer (ADR 014) is a build-time concern: default on, opt-out builds
+# keep text/SVG working and get `ExportError::Unsupported` from `to_png`.
+[features]
+default = ["raster"]
+raster = ["dep:resvg", "dep:tiny-skia", "dep:usvg"]
+
 [dependencies]
 render-pipeline = { path = "../render-pipeline" }
+resvg = { version = "0.49", optional = true }
 svgbob = "0.7"
+tiny-skia = { version = "0.12", optional = true }
+usvg = { version = "0.49", optional = true }
 
 # Golden tests build `Diagram`s through the public API (dev-only; the T5 dependency
 # audit excludes dev-dependencies from the runtime DAG).
 [dev-dependencies]
 diagram-model = { path = "../diagram-model" }
+png = "0.17"
 shape-registry = { path = "../shape-registry" }
 
 [lints]

@@ -46,6 +46,7 @@ nav:
       - "013 Connector routing": adr/013-connector-routing.md
       - "014 Egress isolation (Squid proxy)": adr/014-egress-isolation-squid-proxy.md
       - "015 Apache-2.0 project license": adr/015-apache-2-0-license.md
+      - "016 PNG rasterizer (resvg)": adr/016-png-rasterizer.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md
