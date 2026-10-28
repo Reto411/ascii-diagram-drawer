@@ -3,7 +3,7 @@ title: 014 - egress-isolation-squid-proxy
 description: agent devcontainer has no direct internet — netns firewall restricts it to a loopback-bound Squid allow-list proxy (crates.io, rustup) plus the local model server
 scope: tooling
 status: proposed
-version: 1
+version: 2
 updated: 2026-10-28
 ---
 
@@ -78,9 +78,11 @@ Host-side setup is idempotent: `.devcontainer/setup-egress.sh`.
   loopback-only and is additionally filtered to port 8888 at the firewall;
   fails closed on firewall errors; setup is one idempotent script.
 - **Negative / costs:** `--cap-add NET_ADMIN` on the agent container (scoped to
-  its own netns, rootless); extra container + image to maintain; pi's own
-  package fetches (github.com, npm registry) are not whitelisted — they work
-  only from the `pi-agent-home` volume cache; in-container web tools get 403s.
+  its own netns, rootless); extra container + image to maintain; github.com and
+  the npm registry are not whitelisted — pi's own extension packages are
+  therefore baked into the image at build time (`/opt/pi-seed`) and seeded
+  into a fresh agent-home volume on first run (package-list changes need an
+  image rebuild); in-container web tools get 403s.
 - **Follow-ups:** flip `status` to `accepted` after user review; if new pi
   packages or git-based crate deps appear, extend the whitelist deliberately;
   consider a host systemd unit for `egress-proxy` so it survives reboots
@@ -88,6 +90,11 @@ Host-side setup is idempotent: `.devcontainer/setup-egress.sh`.
 
 ## Version history
 
+- **v2 (2026-10-28):** pi extension packages are now baked into the agent
+  image at build time and seeded into a fresh agent-home volume by
+  `entrypoint.sh` — runtime github/npm fetches are no longer needed or
+  possible. Adds `.devcontainer/start.sh` (one-shot: egress proxy +
+  interactive isolated pi run). Decision unchanged.
 - **v1 (2026-10-28):** initial decision. Implemented and verified same day
   (allow/deny matrix, direct-egress rejection, model chat under full
   isolation, fresh-crate cargo build through the proxy). Supersedes in

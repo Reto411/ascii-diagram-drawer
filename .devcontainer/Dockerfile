@@ -31,6 +31,22 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --pr
 # pi coding agent (rebuild the image to update pi)
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
+# Bake pi's extension packages into the image. Isolated runs cannot reach
+# github.com / the npm registry (egress whitelist — ADR 014), so install them
+# at build time (full network available) and let entrypoint.sh copy them into
+# a fresh agent-home volume on first run. Rebuild when settings.json's
+# package list changes.
+COPY .devcontainer/settings.json /tmp/pi-seed-settings.json
+RUN export HOME=/opt/pi-build-home \
+ && mkdir -p "$HOME/.pi/agent" \
+ && cp /tmp/pi-seed-settings.json "$HOME/.pi/agent/settings.json" \
+ && (pi --list-models || true) 2>/dev/null \
+ && test -d "$HOME/.pi/agent/git/github.com/arcanemachine/pi-web-search" \
+ && test -d "$HOME/.pi/agent/npm/node_modules/pi-blackhole" \
+ && mkdir -p /opt/pi-seed \
+ && mv "$HOME/.pi/agent/git" "$HOME/.pi/agent/npm" /opt/pi-seed/ \
+ && rm -rf "$HOME" /tmp/pi-seed-settings.json
+
 # Coverage tooling (quality gate: >=80% line coverage per AGENTS.md)
 RUN cargo install cargo-tarpaulin
 

@@ -14,6 +14,10 @@ a boundary — this container is.
 - `mkdocs` (default theme) for docs build checks
 - `xvfb` + ImageMagick (`import`/`compare`) for headless GUI smoke tests
 - `iptables`/`iproute2` + `entrypoint.sh` — egress isolation gate (see "Egress isolation")
+- pi extension packages (`pi-web-search`, `pi-lsp-extension`, `pi-blackhole`
+  + deps) baked into `/opt/pi-seed` at build time and auto-seeded into a
+  fresh agent-home volume on first run — no github/npm access needed at
+  runtime (rebuild the image when `settings.json`'s package list changes)
 
 ## Build the image
 
@@ -39,6 +43,18 @@ Keep it in sync when your host config changes; never put secrets in it
 (keys belong in `.env`).
 
 ## Run pi interactively (from the repo root)
+
+One-shot start — egress proxy + fully isolated interactive pi session
+(TUI, no `-p` prompt; `/exit` to leave):
+
+```sh
+sh .devcontainer/start.sh
+```
+
+Env overrides: `PI_MODEL`, `PI_THINKING`, `PI_AGENT_HOME` (volume name),
+`PI_IMAGE`. The script starts the egress proxy idempotently
+(`setup-egress.sh`) and then runs exactly the command below — shown for
+reference and one-off tweaks.
 
 Credentials come from `.devcontainer/.env` (gitignored; create it once from
 `.env.example`) via `--env-file`, the provider definition from
@@ -140,12 +156,12 @@ agent container ──(iptables: only these)──> 10.0.2.2:3128 = host 127.0.0
   re-run `setup-egress.sh`. Squid 6 quirk: a bare `dstdomain` name matches the
   apex only, a leading dot matches subdomains only — both forms are needed and
   must live in separate ACLs (see the comment in the file).
-- **Not covered by design:** pi's own package fetches (`git:github.com/...`,
-  npm registry) are *not* on the whitelist. Packages are cached in the
-  `pi-agent-home` volume, so normal runs need nothing; if you add a new pi
-  package or reset the volume, either extend the whitelist temporarily or
-  pre-populate the volume from an online run first. In-container web tools get
-  403s — that is the point.
+- **Not covered by design:** github.com and the npm registry are *not* on
+  the whitelist. That does not affect pi itself: its extension packages are
+  baked into the image at build time and seeded into a fresh agent-home
+  volume on first run (see "What's in the image") — resetting the volume is
+  safe, and package-list changes need an image rebuild, not a runtime fetch.
+  In-container web tools get 403s — that is the point.
 - **Troubleshooting:** `podman logs egress-proxy` shows Squid's access log
   (every allow/deny with target host); inside the container,
   `iptables -S OUTPUT` shows the lockdown rules. If the model endpoint is

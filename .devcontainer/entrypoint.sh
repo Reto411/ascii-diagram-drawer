@@ -11,6 +11,17 @@
 #
 # Args after the image name are passed to pi (same as before this wrapper).
 # For non-pi commands, override explicitly: --entrypoint sh / --entrypoint bash ...
+
+# Seed a fresh agent-home volume with baked-in pi packages: the volume mount
+# shadows /root/.pi/agent, so copy them from /opt/pi-seed (installed at build
+# time) when missing. Never overwrites existing state. To force a re-seed of
+# a broken install: delete ~/.pi/agent/git and/or ~/.pi/agent/npm in the volume.
+for d in git npm; do
+  if [ -d "/opt/pi-seed/$d" ] && [ ! -e "$HOME/.pi/agent/$d" ]; then
+    cp -a "/opt/pi-seed/$d" "$HOME/.pi/agent/$d"
+  fi
+done
+
 if [ "${ISOLATED_EGRESS:-0}" = "1" ]; then
   set -e
   iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
