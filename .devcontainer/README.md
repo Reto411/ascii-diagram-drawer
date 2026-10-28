@@ -128,7 +128,12 @@ The agent container has **no direct internet access**. Two layers enforce it:
    inside the container, `iptables`/`ip6tables` REJECT every outgoing packet
    except to `10.0.2.2:3128` (the egress proxy) and `10.0.2.2:8888` (the
    model server). Fails closed — if the rules cannot be applied, the container
-   does not start. Requires `--cap-add NET_ADMIN`.
+   does not start. Requires `--cap-add NET_ADMIN` — but only to install the
+   rules: the entrypoint then **drops `CAP_NET_ADMIN` again** (via `capsh`)
+   before starting pi, so no process inside the container can modify the
+   firewall (netfilter ops fail with EPERM) and the agent cannot remove its
+   own isolation. Only an operator `podman exec`-ing from the host keeps that
+   ability.
 2. **Squid allow-list** (container `egress-proxy`, runs with `--network host`,
    bound to `127.0.0.1:3128` only): all HTTP/HTTPS traffic from the agent must
    pass through it; it serves only `crates.io` + subdomains, `rust-lang.org`

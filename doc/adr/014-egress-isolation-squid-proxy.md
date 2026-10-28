@@ -3,7 +3,7 @@ title: 014 - egress-isolation-squid-proxy
 description: agent devcontainer has no direct internet — netns firewall restricts it to a loopback-bound Squid allow-list proxy (crates.io, rustup) plus the local model server
 scope: tooling
 status: proposed
-version: 2
+version: 3
 updated: 2026-10-28
 ---
 
@@ -45,7 +45,11 @@ Two enforcement layers:
    OUTPUT rules that REJECT everything except `10.0.2.2:3128` and
    `10.0.2.2:8888` (plus local loopback). Fails closed: if the rules cannot be
    applied, the container exits instead of starting unisolated. Requires
-   `--cap-add NET_ADMIN`.
+   `--cap-add NET_ADMIN` — granted only to install the rules; the entrypoint
+   then drops it again via `capsh` before exec-ing pi, so the agent (root in
+   the container) cannot modify netfilter and cannot remove its own isolation
+   (verified: `iptables` ops from the reduced process tree fail with EPERM,
+   while the rules persist in the kernel's netns).
 2. **Squid allow-list proxy** (`egress-proxy` container, built from
    `.devcontainer/proxy/`, runs with `--network host`, bound to
    `127.0.0.1:3128` only). Allowed destinations: `crates.io` + subdomains,
@@ -78,7 +82,8 @@ Host-side setup is idempotent: `.devcontainer/setup-egress.sh`.
   loopback-only and is additionally filtered to port 8888 at the firewall;
   fails closed on firewall errors; setup is one idempotent script.
 - **Negative / costs:** `--cap-add NET_ADMIN` on the agent container (scoped to
-  its own netns, rootless); extra container + image to maintain; github.com and
+  its own netns, rootless; dropped again before pi starts — see Decision);
+  extra container + image to maintain; github.com and
   the npm registry are not whitelisted — pi's own extension packages are
   therefore baked into the image at build time (`/opt/pi-seed`) and seeded
   into a fresh agent-home volume on first run (package-list changes need an
@@ -90,6 +95,11 @@ Host-side setup is idempotent: `.devcontainer/setup-egress.sh`.
 
 ## Version history
 
+- **v3 (2026-10-28):** closes the self-removal hole — after applying the
+  firewall rules, the entrypoint drops `CAP_NET_ADMIN` from pi's process tree
+  (`capsh --drop=cap_net_admin`, new `libcap2-bin` image dependency), so a
+  prompt-injected agent cannot flush its own netns firewall. Verified in a
+  live isolated run (CapEff without cap_net_admin; model call unaffected).
 - **v2 (2026-10-28):** pi extension packages are now baked into the agent
   image at build time and seeded into a fresh agent-home volume by
   `entrypoint.sh` — runtime github/npm fetches are no longer needed or

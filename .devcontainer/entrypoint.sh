@@ -31,4 +31,13 @@ if [ "${ISOLATED_EGRESS:-0}" = "1" ]; then
   ip6tables -A OUTPUT -d ::1/128 -j ACCEPT
   ip6tables -A OUTPUT -j REJECT
 fi
+
+# Drop CAP_NET_ADMIN now that the rules are in place: without it, even root
+# in this container cannot modify netfilter (verified: iptables ops fail with
+# EPERM), so the agent cannot remove its own isolation. capsh re-execs pi
+# with the reduced capability set; the rules themselves live in the kernel's
+# netns and stay in effect.
+if [ "${ISOLATED_EGRESS:-0}" = "1" ]; then
+  exec capsh --drop=cap_net_admin --shell=/bin/sh -- -c 'exec pi "$@"' pi "$@"
+fi
 exec pi "$@"

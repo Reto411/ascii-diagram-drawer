@@ -62,6 +62,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends xvfb xauth imagemagick \
  && rm -rf /var/lib/apt/lists/*
 
+# libcap2-bin (capsh): the entrypoint drops CAP_NET_ADMIN after applying the
+# egress firewall, so the agent cannot remove its own isolation. Own final
+# layer to keep the cached layers above intact.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libcap2-bin \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY .devcontainer/entrypoint.sh /usr/local/bin/isolated-entrypoint.sh
 RUN chmod +x /usr/local/bin/isolated-entrypoint.sh
 
