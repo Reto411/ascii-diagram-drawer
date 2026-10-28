@@ -25,6 +25,12 @@ a boundary — this container is.
 podman build -t pi-ascii -f .devcontainer/Dockerfile .
 ```
 
+Run from the **repo root** — the `.` context is required (the Dockerfile
+copies `.devcontainer/settings.json`). The build itself needs **unrestricted
+internet access**: it downloads Node, Rust, and pi, and bakes pi's extension
+packages in from github.com/npm. That is deliberate — the image is what makes
+the *runs* isolated, not the build.
+
 One-time setup:
 
 ```sh
