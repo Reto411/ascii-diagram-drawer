@@ -1,0 +1,51 @@
+site_name: ascii-diagram-drawer — Documentation
+docs_dir: doc
+nav:
+  - Home: index.md
+  - arc42:
+      - Overview: arc42/overview.md
+      - "1. Introduction and Context": arc42/01-introduction-and-context.md
+      - "2. Architecture Vision": arc42/02-architecture-vision.md
+      - "3. Business Scope": arc42/03-business-scope.md
+      - "4. Stakeholders and Users": arc42/04-stakeholders-and-users.md
+      - "5. Constraints": arc42/05-constraints.md
+      - "6. Quality Model": arc42/06-quality-model.md
+      - "7. Solution Strategy": arc42/07-solution-strategy.md
+      - "8. Building Block View": arc42/08-building-block-view.md
+      - "9. Runtime View": arc42/09-runtime-view.md
+      - "10. Deployment View": arc42/10-deployment-view.md
+      - "11. Cross-cutting Concerns": arc42/11-cross-cutting-concerns.md
+      - "12. Concepts":
+          - Overview: arc42/12-concepts/index.md
+          - Glyph resolution: arc42/12-concepts/glyph-resolution.md
+          - Render pipeline: arc42/12-concepts/render-pipeline.md
+          - Bounded contexts: arc42/12-concepts/bounded-contexts.md
+          - Diagram aggregate: arc42/12-concepts/diagram-aggregate.md
+          - Cell grid: arc42/12-concepts/cell-grid.md
+          - Diagram file format (.ad): arc42/12-concepts/diagram-file-format.md
+          - Shape template: arc42/12-concepts/shape-template.md
+          - Collection: arc42/12-concepts/collection.md
+      - "13. Building Blocks (Detail)": arc42/13-building-blocks-detail.md
+      - "14. Important Requirements": arc42/14-important-requirements.md
+      - "15. Risks and Technical Risks": arc42/15-risks.md
+      - "16. Glossary": arc42/16-glossary.md
+  - Stories: stories/BOARD.md
+  - ADRs:
+      - "001 Glyph resolution & canonical alphabet": adr/001-glyph-resolution-alphabet.md
+      - "002 MkDocs documentation site": adr/002-mkdocs-documentation-site.md
+      - "003 PlantUML for doc diagrams": adr/003-plantuml-for-doc-diagrams.md
+      - "004 Plain-text diagram file format": adr/004-diagram-file-format.md
+      - "005 Use svgbob as the vector renderer": adr/005-use-svgbob-as-vector-renderer.md
+      - "007 User-defined diagram objects and collections": adr/007-user-defined-diagram-objects.md
+      - "008 GUI framework choice": adr/008-gui-framework-choice.md
+      - "009 UI API service layer": adr/009-ui-api-service-layer.md
+      - '010 Clippy lint policy (clippy::all deny)': adr/010-deny-all-clippy-lints.md
+      - "011 Domain-Driven Design for building blocks": adr/011-domain-driven-design.md
+      - "012 Responsive UI threading (dedicated UI thread + worker)": adr/012-responsive-ui-threading.md
+      - "013 Connector routing": adr/013-connector-routing.md
+      - "014 Egress isolation (Squid proxy)": adr/014-egress-isolation-squid-proxy.md
+      - "015 Apache-2.0 project license": adr/015-apache-2-0-license.md
+  - Templates:
+      - Concept template: templates/concept.md
+      - ADR template: templates/adr.md
+      - Story template: templates/story.md

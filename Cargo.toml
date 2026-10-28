@@ -1,3 +1,31 @@
 [workspace]
-members = ["src-tauri"]
 resolver = "2"
+members = [
+    "crates/diagram-model",
+    "crates/ad-format",
+    "crates/shape-registry",
+    "crates/render-pipeline",
+    "crates/exporters",
+    "crates/ascii-import",
+    "crates/ui-api",
+    "crates/core-services",
+    "gui-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+# ADR 010 v4: only Clippy's default group (`clippy::all` = correctness, suspicious,
+# style, complexity, perf) is active at deny in every crate — violations fail the build.
+# The opt-in groups (pedantic, restriction, nursery, cargo) are deliberately NOT enforced;
+# if review misses a class of issue, re-enable that specific lint individually (with reason).
+# Priority -1 keeps individual `#[allow]` overrides possible (Clippy >= 1.93).
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+
+# Coverage gate (80% target, AGENTS.md): run `cargo tarpaulin --engine Llvm --workspace`.
+# The default ptrace engine hard-fails in this devcontainer: seccomp blocks the
+# `personality` syscall, so tarpaulin cannot disable ASLR (ENOSYS); 0.37.5 has no
+# config escape hatch for it.

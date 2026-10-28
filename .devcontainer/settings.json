@@ -1,0 +1,40 @@
+{
+  "packages": [
+    "git:github.com/arcanemachine/pi-web-search",
+    "npm:pi-wsl-clipboard",
+    "git:github.com/trotsky1997/pi-lsp-extension",
+    "npm:pi-memory",
+    "npm:pi-ast-sgrep",
+    "npm:pi-blackhole"
+  ],
+  "defaultTools": [
+    "read",
+    "bash",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
+    "tool_search"
+  ],
+  "lastChangelogVersion": "1.4.0",
+  "extensions": [
+    "+builtin:llama.cpp"
+  ],
+  "skills": [
+    "-skills/stock-kb-server/SKILL.md"
+  ],
+  "defaultProvider": "unsloth",
+  "defaultModel": "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
+  "defaultThinkingLevel": "medium",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 20000,
+    "keepRecentTokens": 14000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 5
+  },
+  "showCacheMissNotices": true
+}

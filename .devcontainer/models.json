@@ -1,0 +1,40 @@
+{
+  "providers": {
+    "unsloth": {
+      "baseUrl": "http://10.0.2.2:8888/v1",
+      "api": "openai-completions",
+      "apiKey": "$UNSLOTH_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL",
+          "name": "Qwen3.8 27B XL - 120k",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 120000,
+          "maxTokens": 32768,
+          "thinkingLevelMap": {
+            "off": "off",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": null,
+            "xhigh": null,
+            "max": null
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}

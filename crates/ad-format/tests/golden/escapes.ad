@@ -1,0 +1,4 @@
+ad 1.0
+scale 1
+text as t1 "a \"quote\", a \\ backslash" at 0 0
+text as t2 "line one\nline two" at 4 2

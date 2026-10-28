@@ -1,0 +1,12 @@
+[package]
+name = "exporters"
+description = "Rendering & Export bounded context (2/2): text / SVG / PNG emission from the ResolvedGrid (ADR 005)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+render-pipeline = { path = "../render-pipeline" }
+
+[lints]
+workspace = true

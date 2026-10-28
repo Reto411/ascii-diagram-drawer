@@ -1,0 +1,13 @@
+[package]
+name = "ui-api"
+description = "Application layer: the service trait seam between GUI and core (ADR 009)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Allowed edges per §8.3: { diagram-model, render-pipeline }.
+# Declared in S-010 when the trait signatures are pinned (they name model/grid types).
+[dependencies]
+
+[lints]
+workspace = true

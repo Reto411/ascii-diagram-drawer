@@ -1,0 +1,16 @@
+[package]
+name = "ad-format"
+description = "Persistence bounded context: .ad file format — parse/serialize of the Diagram aggregate (ADR 004)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+diagram-model = { path = "../diagram-model" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+diagram-model = { path = "../diagram-model" }
+proptest = "1.12.0"
