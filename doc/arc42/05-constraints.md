@@ -12,7 +12,7 @@ updated: 2026-10-23
 
 ## 5.1 Legal & Regulatory Constraints
 
-- **Open-source product.** ascii-diagram-drawer is a community tool, not a commercial product (§3). The codebase ships under a permissive OSS license (MIT and/or Apache-2.0 — final choice open); all dependencies in the distributed product must be permissively licensed. No GPL/AGPL components in core or GUI.
+- **Open-source product.** ascii-diagram-drawer is a community tool, not a commercial product (§3). The codebase ships under **Apache-2.0** ([ADR 015](../adr/015-apache-2-0-license.md); full canonical text in `LICENSE` at repo root); all dependencies in the distributed product must be permissively licensed. No GPL/AGPL components in core or GUI.
 - **No font/glyph data licensing burden in v1.** Text output uses the user's system monospace font; SVG output is vector paths produced by `svgbob` (no embedded fonts). If a later version embeds a font (e.g. for standalone PNG rasterization), it must be OFL-licensed.
 - **No regulatory constraints.** The tool handles no personal data, no industry-regulated content, and makes no network calls — nothing to comply with beyond licensing.
 

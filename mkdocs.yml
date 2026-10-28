@@ -42,6 +42,9 @@ nav:
       - '010 Clippy lint policy (clippy::all deny)': adr/010-deny-all-clippy-lints.md
       - "011 Domain-Driven Design for building blocks": adr/011-domain-driven-design.md
       - "012 Responsive UI threading (dedicated UI thread + worker)": adr/012-responsive-ui-threading.md
+      - "013 Connector routing": adr/013-connector-routing.md
+      - "014 Egress isolation (Squid proxy)": adr/014-egress-isolation-squid-proxy.md
+      - "015 Apache-2.0 project license": adr/015-apache-2-0-license.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md

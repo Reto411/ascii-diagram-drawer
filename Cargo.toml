@@ -15,7 +15,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "Apache-2.0"
 
 # ADR 010 v4: only Clippy's default group (`clippy::all` = correctness, suspicious,
 # style, complexity, perf) is active at deny in every crate — violations fail the build.
