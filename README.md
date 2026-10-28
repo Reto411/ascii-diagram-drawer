@@ -27,6 +27,10 @@ Early development, driven by user stories — see the [board](doc/stories/BOARD.
 - 🔨 in progress: anchor-bound connectors
 - ⏳ next: SVG/PNG export, then the canvas GUI (egui/eframe — desktop **and** browser via wasm), file I/O, scale control
 
+## Local LLMs only
+
+This project doubles as an experiment in autonomous development with **local** LLM models: everything so far was implemented by local LLM agents (a Qwen3.8-27B GGUF served on local hardware via [Unsloth](https://github.com/unslothai/unsloth)) — **no cloud LLM APIs were used at any point**. The agents run in an isolated devcontainer ([.devcontainer/README.md](.devcontainer/README.md)) with an allow-listed egress firewall, so they cannot reach external AI services.
+
 ## How it works
 
 A layered Rust workspace: headless core (model → format → shapes → render → export), an application service seam, and a thin egui presentation layer on top. All rendering logic is platform-independent and unit-testable without a GUI; the GUI draws the resolved grid and translates gestures into model mutations.
