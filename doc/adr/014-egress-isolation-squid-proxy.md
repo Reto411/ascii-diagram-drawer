@@ -1,9 +1,9 @@
 ---
 title: 014 - egress-isolation-squid-proxy
-description: agent devcontainer has no direct internet — netns firewall restricts it to a loopback-bound Squid allow-list proxy (crates.io, rustup) plus the local model server
+description: agent devcontainer has no direct internet — netns firewall restricts it to a loopback-bound Squid allow-list proxy (crates.io, docs.rs, rust-lang.org, rustup) plus the local model server
 scope: tooling
 status: proposed
-version: 3
+version: 4
 updated: 2026-10-28
 ---
 
@@ -53,7 +53,10 @@ Two enforcement layers:
 2. **Squid allow-list proxy** (`egress-proxy` container, built from
    `.devcontainer/proxy/`, runs with `--network host`, bound to
    `127.0.0.1:3128` only). Allowed destinations: `crates.io` + subdomains,
-   `rust-lang.org` + subdomains, `rustup.rs`, `sh.rustup.rs`; all else 403.
+   `docs.rs` (generated crate API docs — rustdoc HTML is not hosted on
+   crates.io itself), `rust-lang.org` + subdomains (incl. `doc.rust-lang.org`:
+   std/core/alloc API docs, The Rust Book, Rust Reference), `rustup.rs`,
+   `sh.rustup.rs`; all else 403.
 
 The agent container runs with `--network slirp4netns:allow_host_loopback=true`,
 so `10.0.2.2` aliases the **host's loopback**: it reaches Squid at
@@ -95,6 +98,12 @@ Host-side setup is idempotent: `.devcontainer/setup-egress.sh`.
 
 ## Version history
 
+- **v4 (2026-10-28):** whitelist extended with `docs.rs` — the canonical host
+  for generated third-party crate API docs (rustdoc HTML), which crates.io
+  itself does not serve. Motivation: the isolated agent's reference material
+  should include dependency API docs, not just sources. Verified through the
+  live proxy after re-running `setup-egress.sh`; all previously allowed hosts
+  still allow, non-whitelisted hosts (e.g. google.com) still get Squid 403.
 - **v3 (2026-10-28):** closes the self-removal hole — after applying the
   firewall rules, the entrypoint drops `CAP_NET_ADMIN` from pi's process tree
   (`capsh --drop=cap_net_admin`, new `libcap2-bin` image dependency), so a

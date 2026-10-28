@@ -110,7 +110,7 @@ podman run --rm \
   -v .devcontainer/settings.json:/root/.pi/agent/settings.json:ro \
   -v .devcontainer/pi-blackhole-config.json:/root/.pi/agent/pi-blackhole/pi-blackhole-config.json:ro \
   pi-ascii --model "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL" --thinking medium \
-    -p "Use the story-implementation skill and work the story board until you run low on context."
+    -p "Use the story-implementation skill and work the story board until you run low on context.Use the story-implementation skill and work the story board until you run low on context.Use the story-implementation skill and work the story board until you run low on context."
 ```
 
 Re-run as needed — `doc/stories/BOARD.md` makes every run resumable.
@@ -136,8 +136,10 @@ The agent container has **no direct internet access**. Two layers enforce it:
    ability.
 2. **Squid allow-list** (container `egress-proxy`, runs with `--network host`,
    bound to `127.0.0.1:3128` only): all HTTP/HTTPS traffic from the agent must
-   pass through it; it serves only `crates.io` + subdomains, `rust-lang.org`
-   + subdomains, `rustup.rs`, `sh.rustup.rs`. Everything else gets a 403.
+   pass through it; it serves only `crates.io` + subdomains, `docs.rs`
+   (generated crate API docs), `rust-lang.org` + subdomains (incl.
+   `doc.rust-lang.org`: std API docs, Rust Book, Reference), `rustup.rs`,
+   `sh.rustup.rs`. Everything else gets a 403.
 
 How the pieces connect — the container runs with
 `--network slirp4netns:allow_host_loopback=true`, so `10.0.2.2` is an alias
@@ -145,7 +147,7 @@ for the **host's loopback**:
 
 ```
 agent container ──(iptables: only these)──> 10.0.2.2:3128 = host 127.0.0.1:3128 (Squid)
-                                              └──> crates.io / rustup hosts only
+                                              └──> crates.io / docs.rs / rust-lang.org / rustup
                               └────────────────> 10.0.2.2:8888 = host 127.0.0.1:8888 (Unsloth, direct)
 ```
 
