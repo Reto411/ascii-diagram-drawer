@@ -258,11 +258,7 @@ mod tests {
     /// A catalog carrying the built-in `box` (9×5, standard mid-side anchors) — the seam
     /// fake keeps this test hermetic.
     fn catalog() -> core_services::fakes::FakeCatalog {
-        let box_info = ShapeInfo {
-            type_id: "box".to_owned(),
-            name: "Box".to_owned(),
-            size: CellSize::new(9, 5).expect("valid size"),
-        };
+        let box_info = ShapeInfo::builtin("box", "Box", CellSize::new(9, 5).expect("valid size"));
         let anchors = [
             ("n", CellPos::new(4, 0)),
             ("s", CellPos::new(4, 4)),
@@ -467,6 +463,8 @@ mod tests {
             type_id: "mycol/arrow".to_owned(),
             name: "Arrow".to_owned(),
             size: CellSize::new(5, 3).expect("valid size"),
+            collection: Some("mycol".to_owned()),
+            preview: vec!["..#..".to_owned()],
         };
         let catalog = catalog().add(
             arrow,

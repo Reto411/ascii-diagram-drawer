@@ -1,0 +1,8 @@
+adc 1.0
+# S-016 visual-test fixture: a small user collection (loaded via --collections).
+template star 3 x 3
+###
+#.#
+###
+anchor n at 1 0
+anchor s at 1 2

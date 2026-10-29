@@ -63,14 +63,23 @@ pub struct DrawingApp {
     confirming_save: bool,
     /// An inline Open/Save-As path prompt is showing (and its kind).
     path_prompt: Option<PathPrompt>,
+    /// Collection files skipped at startup (S-016 AC2) — shown in the sidebar, never
+    /// fatal: startup always succeeds with at least the built-ins.
+    collection_warnings: Vec<String>,
 }
 
-/// Builds the app from services and an optional startup fixture (the visual test tiers
-/// pass a `.ad` path as the first CLI argument). Load failures are reported, not fatal —
-/// the user can still open a file later.
+/// Builds the app from services, an optional startup fixture (the visual test tiers
+/// pass a `.ad` path as the first CLI argument) and the collection-load warnings from
+/// startup (S-016 AC2). Load failures are reported, not fatal — the user can still
+/// open a file later.
 #[must_use]
-pub fn create_app(services: Services, fixture: Option<&Path>) -> DrawingApp {
+pub fn create_app(
+    services: Services,
+    fixture: Option<&Path>,
+    collection_warnings: Vec<String>,
+) -> DrawingApp {
     let mut app = DrawingApp::new(services);
+    app.collection_warnings = collection_warnings;
     if let Some(path) = fixture {
         let outcome = app.open(path);
         if !matches!(outcome, crate::fileio::OpenOutcome::Loaded { .. }) {
@@ -98,6 +107,7 @@ impl DrawingApp {
             skipped_unknowns: 0,
             confirming_save: false,
             path_prompt: None,
+            collection_warnings: Vec::new(),
         }
     }
 
@@ -638,20 +648,42 @@ impl eframe::App for DrawingApp {
                 });
         }
 
-        // Shape template sidebar (FR3 read model from the catalog).
-        let templates = self.services.catalog.list();
+        // Shape template sidebar (FR3 read model from the catalog, S-016 AC1):
+        // built-in group + one group per loaded collection, each shape with a
+        // small preview of its glyph pattern.
+        let groups = crate::sidebar::group_templates(&self.services.catalog.list());
         let placing_id = self.editor.placing.as_ref().map(|p| p.type_id.clone());
         egui::Panel::left("templates")
             .size_range(SIDEBAR_PX..=SIDEBAR_PX)
             .show(ui, |ui| {
-                ui.heading("Shapes");
-                for info in &templates {
-                    let selected = Some(info.type_id.as_str()) == placing_id.as_deref();
-                    if ui.selectable_label(selected, &info.name).clicked() {
-                        self.editor.select_template(info.clone());
-                        self.status = format!("Placing {} — click the canvas", info.name);
+                // Scrollable: a few loaded collections easily exceed one screen.
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Shapes");
+                    for warning in &self.collection_warnings {
+                        ui.label(RichText::new(warning.clone()).color(ERROR_COLOR).weak());
                     }
-                }
+                    for group in &groups {
+                        ui.add_space(6.0);
+                        ui.strong(&group.label);
+                        for info in &group.shapes {
+                            let selected = Some(info.type_id.as_str()) == placing_id.as_deref();
+                            if ui.selectable_label(selected, &info.name).clicked() {
+                                self.editor.select_template(info.clone());
+                                self.status = format!("Placing {} — click the canvas", info.name);
+                            }
+                            // Small preview of the glyph pattern (S-016 AC1) — the same
+                            // bytes the renderer stamps on placement.
+                            for row in &info.preview {
+                                ui.label(
+                                    RichText::new(row.clone())
+                                        .monospace()
+                                        .size(9.0)
+                                        .color(TEXT_COLOR),
+                                );
+                            }
+                        }
+                    }
+                });
             });
 
         // Keyboard edges (S-013 AC3): Delete/Backspace removes the selection, Escape
@@ -863,7 +895,7 @@ mod tests {
         let services = Services::native();
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/one-box.ad");
-        let app = create_app(services, Some(&fixture));
+        let app = create_app(services, Some(&fixture), Vec::new());
         assert_eq!(app.diagram.len(), 1);
 
         // A missing fixture is reported (eprintln), not fatal — the app still starts empty.
@@ -871,8 +903,14 @@ mod tests {
         let app = create_app(
             services,
             Some(std::path::Path::new("/nonexistent/missing.ad")),
+            vec!["broken.adc: line 2, column 1: boom".to_owned()],
         );
         assert_eq!(app.diagram.len(), 0);
+        // Startup warnings are carried into the sidebar (S-016 AC2).
+        assert_eq!(
+            app.collection_warnings,
+            vec!["broken.adc: line 2, column 1: boom"]
+        );
     }
 
     /// Keyboard seam: Delete removes the selection, Escape cancels (S-013 AC3).

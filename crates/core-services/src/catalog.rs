@@ -1,12 +1,20 @@
 //! Catalog backend (ADR 009): wraps `shape-registry` and presents its data as the
 //! seam's read models — registry types never cross into the GUI.
 
-use shape_registry::ShapeRegistry;
+use shape_registry::{ShapeRegistry, ShapeType};
 use ui_api::{AnchorInfo, ShapeCatalog, ShapeInfo};
+
+/// The collection a shape belongs to (via its qualified `collection/name` id), if any.
+/// Bare ids are built-ins and never belong to a collection — even when a user
+/// collection happens to be named like one.
+fn collection_of(registry: &ShapeRegistry, shape: &ShapeType) -> Option<String> {
+    let (prefix, _) = shape.type_id.split_once('/')?;
+    registry.collection(prefix).map(|c| c.name.clone())
+}
 
 /// Converts a registry shape type to its seam-level read model (geometry crosses
 /// from the registry's local value objects into `diagram-model`'s shared kernel).
-fn to_info(shape: &shape_registry::ShapeType) -> ShapeInfo {
+fn to_info(shape: &shape_registry::ShapeType, collection: Option<&str>) -> ShapeInfo {
     let pattern = &shape.glyph_pattern;
     ShapeInfo {
         type_id: shape.type_id.clone(),
@@ -15,6 +23,10 @@ fn to_info(shape: &shape_registry::ShapeType) -> ShapeInfo {
             width: pattern.width(),
             height: pattern.height(),
         },
+        collection: collection.map(str::to_owned),
+        preview: (0..pattern.height())
+            .filter_map(|y| pattern.row(y))
+            .collect(),
     }
 }
 
@@ -36,17 +48,21 @@ impl ShapeCatalog for RegistryCatalog {
     fn list(&self) -> Vec<ShapeInfo> {
         self.registry
             .builtins()
-            .map(to_info)
-            .chain(
-                self.registry
-                    .collections()
-                    .flat_map(|c| c.types.iter().map(to_info)),
-            )
+            .map(|s| to_info(s, None))
+            .chain(self.registry.collections().flat_map(|c| {
+                let label = c.name.clone();
+                c.types
+                    .iter()
+                    .map(move |s| to_info(s, Some(label.as_str())))
+            }))
             .collect()
     }
 
     fn get(&self, type_id: &str) -> Option<ShapeInfo> {
-        self.registry.lookup(type_id).ok().map(to_info)
+        self.registry
+            .lookup(type_id)
+            .ok()
+            .map(|s| to_info(s, collection_of(&self.registry, s).as_deref()))
     }
 
     fn anchors(&self, type_id: &str) -> Option<Vec<AnchorInfo>> {
@@ -118,6 +134,37 @@ mod tests {
         let anchors = catalog.anchors("mycol/arrow").expect("has anchors");
         assert_eq!(anchors.len(), 1);
         assert_eq!((anchors[0].position.x, anchors[0].position.y), (2, 0));
+    }
+
+    /// A user collection named like a built-in id must not re-label the built-in
+    /// (bare ids never belong to a collection, even by name collision).
+    #[test]
+    fn builtin_is_not_relabelled_by_a_colliding_collection_name() {
+        use shape_registry::{AnchorSet, Collection, ShapeType, TemplateGrid};
+
+        let mut registry = ShapeRegistry::builtin();
+        registry.add_collection(Collection {
+            name: "box".into(),
+            types: vec![ShapeType {
+                type_id: "box/star".into(),
+                name: "star".into(),
+                glyph_pattern: TemplateGrid::from_rows(&["#.#", "###", "#.#"]).unwrap(),
+                anchor_set: AnchorSet::new(),
+                geometry: shape_registry::GeometryKind::Pattern,
+                resize_rules: None,
+            }],
+        });
+
+        let catalog = RegistryCatalog::new(registry);
+        assert_eq!(catalog.get("box").expect("builtin").collection, None);
+        assert_eq!(
+            catalog
+                .get("box/star")
+                .expect("qualified")
+                .collection
+                .as_deref(),
+            Some("box")
+        );
     }
 
     /// Unknown ids are `None`, not panics — the GUI filters on this.

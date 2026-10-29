@@ -16,6 +16,26 @@ pub struct ShapeInfo {
     pub name: String,
     /// The shape's footprint — the size of its glyph pattern.
     pub size: CellSize,
+    /// Group label for the sidebar (ADR 009 v5): `None` = built-in group, `Some(name)`
+    /// = a loaded collection. Custom shapes are always qualified (`collection/name`).
+    pub collection: Option<String>,
+    /// The glyph pattern rows, verbatim — the sidebar draws them as a small preview
+    /// (ADR 009 v5). Same bytes the renderer stamps on placement.
+    pub preview: Vec<String>,
+}
+
+impl ShapeInfo {
+    /// A built-in shape with no preview rows (test/placeholder construction).
+    #[must_use]
+    pub fn builtin(type_id: impl Into<String>, name: impl Into<String>, size: CellSize) -> Self {
+        Self {
+            type_id: type_id.into(),
+            name: name.into(),
+            size,
+            collection: None,
+            preview: Vec::new(),
+        }
+    }
 }
 
 /// A named anchor point on a shape type (S-013 connectors).
@@ -62,9 +82,16 @@ mod tests {
             type_id: "box".into(),
             name: "Box".into(),
             size: CellSize::new(9, 5).expect("valid size"),
+            collection: None,
+            preview: vec!["+-------+".to_owned()],
         };
         assert_eq!(info.size.width, 9);
         assert_eq!(info.size.height, 5);
+
+        // ADR 009 v5: the sidebar group + preview fields — built-ins have no collection.
+        let custom = ShapeInfo::builtin("col/star", "Star", CellSize::new(3, 3).expect("valid"));
+        assert_eq!(custom.collection, None);
+        assert!(custom.preview.is_empty());
 
         let anchor = AnchorInfo {
             name: "e".into(),

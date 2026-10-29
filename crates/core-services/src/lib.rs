@@ -15,6 +15,7 @@
 //! to a worker thread (native) / inline (wasm) per ADR 012.
 
 pub mod catalog;
+pub mod collections;
 pub mod exporter;
 pub mod fakes;
 pub mod renderer;
@@ -23,6 +24,7 @@ pub mod store;
 pub mod worker;
 
 pub use catalog::RegistryCatalog;
+pub use collections::{CollectionLoadWarning, load_from_dir};
 pub use exporter::GridExporter;
 pub use renderer::PipelineRenderer;
 pub use services::Services;

@@ -3,7 +3,7 @@ title: collection
 description: a named plain-text file (.adc) grouping shape templates; the manifest + resolution rule for collection/name type-ids; read before implementing collection loading (S-005)
 scope: format / domain model
 status: stable
-updated: 2026-10-25
+updated: 2026-10-29
 ---
 
 # Concept: Collection
@@ -44,7 +44,7 @@ The **search path** (where `.adc` files are looked up — e.g. project directory
 
 ### Loading semantics
 
-- Collections are loaded on demand when a diagram references them (S-005); template definitions are immutable once parsed.
+- Collections are loaded on demand when a diagram references them (S-005), and — separately, as an application concern — the native GUI discovers `*.adc` files from a configured directory at startup (`--collections <dir>`, S-016); invalid files become warnings, never startup failures. Template definitions are immutable once parsed.
 - A collection never references other collections (no includes in v1).
 - Editing: text mode is the source of truth; the graphical editor (FR11, S-017) reads and writes the same file — it must re-serialize canonically so hand edits survive a round trip through the GUI.
 
@@ -56,4 +56,4 @@ The **search path** (where `.adc` files are looked up — e.g. project directory
 
 ## Implementation
 
-`crates/shape-registry` (landed with S-005): `templates.rs::parse_collection(name, text)` parses a `.adc` file — identity passed in from the filename stem per this spec — into a `Collection` plus ordered statement slots and the source header version, so unknown statements from higher minor versions are preserved verbatim and re-emitted legally on save; `registry.rs::ShapeRegistry` implements the resolution rule above (disjoint bare/qualified namespaces, typed errors). The GUI collections sidebar is S-016, the graphical editor S-017.
+`crates/shape-registry` (landed with S-005): `templates.rs::parse_collection(name, text)` parses a `.adc` file — identity passed in from the filename stem per this spec — into a `Collection` plus ordered statement slots and the source header version, so unknown statements from higher minor versions are preserved verbatim and re-emitted legally on save; `registry.rs::ShapeRegistry` implements the resolution rule above (disjoint bare/qualified namespaces, typed errors). Startup discovery + the grouped sidebar with glyph previews landed with S-016: `core-services collections.rs` (directory scan → registry + warnings) and `gui-app sidebar.rs` (pure view model over the `ShapeCatalog` seam); the graphical editor is S-017.

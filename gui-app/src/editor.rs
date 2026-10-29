@@ -312,10 +312,18 @@ mod tests {
     use ui_api::{AnchorInfo, ShapeInfo};
 
     fn info(type_id: &str, name: &str, width: u32, height: u32) -> ShapeInfo {
+        // Qualified ids (`collection/name`) belong to a collection group (ADR 009 v5).
+        let collection = type_id
+            .split('/')
+            .next()
+            .filter(|_| type_id.contains('/'))
+            .map(str::to_owned);
         ShapeInfo {
             type_id: type_id.to_owned(),
             name: name.to_owned(),
             size: CellSize::new(width, height).expect("test sizes are valid"),
+            collection,
+            preview: Vec::new(),
         }
     }
 
@@ -441,6 +449,31 @@ mod tests {
         // Placement mode is single-shot and the new object is selected.
         assert!(editor.placing.is_none());
         assert_eq!(editor.selection, Some(ObjectId::generated(1)));
+    }
+
+    /// S-016 AC3 — a custom (collection) template places at its fixed pattern size;
+    /// the qualified id lands on the instance verbatim (the renderer stamps it,
+    /// canvas.rs pins that it gets no resize handle).
+    #[test]
+    fn custom_templates_place_at_their_fixed_size() {
+        let mut editor = EditorState::default();
+        let mut diagram = Diagram::new();
+
+        let star = info("stars/star", "star", 3, 3);
+        assert_eq!(star.collection.as_deref(), Some("stars"));
+        editor.select_template(star);
+        assert_eq!(
+            down(&mut editor, &mut diagram, 10, 2),
+            EditOutcome::Placed {
+                id: ObjectId::generated(1),
+                type_id: "stars/star".to_owned()
+            }
+        );
+
+        let shape = first_shape(&diagram);
+        assert_eq!((shape.pos.x, shape.pos.y), (10, 2));
+        // Fixed size from the template — no resize in v1 (ADR 007 v3).
+        assert_eq!((shape.size.width, shape.size.height), (3, 3));
     }
 
     #[test]

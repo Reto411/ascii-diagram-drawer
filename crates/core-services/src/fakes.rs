@@ -209,11 +209,7 @@ mod tests {
         assert_eq!(&exporter.to_png(&grid).expect("png")[..4], b"\x89PNG");
 
         // Catalog: list/get/anchors, including the empty-anchors and missing cases.
-        let info = ShapeInfo {
-            type_id: "box".into(),
-            name: "Box".into(),
-            size: CellSize::new(9, 5).expect("valid size"),
-        };
+        let info = ShapeInfo::builtin("box", "Box", CellSize::new(9, 5).expect("valid size"));
         let anchor = AnchorInfo {
             name: "n".into(),
             position: CellPos::new(4, 0),
@@ -221,11 +217,11 @@ mod tests {
         let catalog = FakeCatalog::default()
             .add(info.clone(), vec![anchor.clone()])
             .add(
-                ShapeInfo {
-                    type_id: "ellipse".into(),
-                    name: "Ellipse".into(),
-                    size: CellSize::new(7, 4).expect("valid size"),
-                },
+                ShapeInfo::builtin(
+                    "ellipse",
+                    "Ellipse",
+                    CellSize::new(7, 4).expect("valid size"),
+                ),
                 Vec::new(),
             );
         assert_eq!(catalog.list().len(), 2);

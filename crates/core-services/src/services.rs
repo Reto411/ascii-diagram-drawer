@@ -1,12 +1,14 @@
 //! The composition root (ADR 009): one `Services` aggregate holds all four seam
 //! services as `Arc<dyn …>` — exactly what the eframe app struct will carry.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use shape_registry::ShapeRegistry;
 use ui_api::{DiagramStore, Exporter, Renderer, ShapeCatalog};
 
 use crate::catalog::RegistryCatalog;
+use crate::collections::{CollectionLoadWarning, load_from_dir};
 use crate::exporter::GridExporter;
 use crate::renderer::PipelineRenderer;
 use crate::store::{FsStore, MemoryStore};
@@ -36,6 +38,27 @@ impl Services {
             exporter: Arc::new(GridExporter),
             catalog: Arc::new(RegistryCatalog::new(registry)),
         }
+    }
+
+    /// Native composition with collections discovered from `dir` (S-016 AC2): every
+    /// `*.adc` file loads into the catalog; invalid files are skipped and reported in
+    /// the returned warnings — startup always succeeds. `None` = built-ins only.
+    #[must_use]
+    pub fn native_with_collections(dir: Option<&Path>) -> (Self, Vec<CollectionLoadWarning>) {
+        let mut registry = ShapeRegistry::builtin();
+        let warnings = match dir {
+            Some(d) => load_from_dir(&mut registry, d),
+            None => Vec::new(),
+        };
+        (
+            Self {
+                store: Arc::new(FsStore),
+                renderer: Arc::new(PipelineRenderer::new(registry.clone())),
+                exporter: Arc::new(GridExporter),
+                catalog: Arc::new(RegistryCatalog::new(registry)),
+            },
+            warnings,
+        )
     }
 
     /// Web (wasm) composition: in-memory store; everything else identical — the seam
@@ -109,11 +132,11 @@ mod tests {
             )),
             exporter: Arc::new(FakeExporter),
             catalog: Arc::new(FakeCatalog::default().add(
-                ShapeInfo {
-                    type_id: "box".into(),
-                    name: "Box".into(),
-                    size: diagram_model::geometry::CellSize::new(9, 5).expect("valid size"),
-                },
+                ShapeInfo::builtin(
+                    "box",
+                    "Box",
+                    diagram_model::geometry::CellSize::new(9, 5).expect("valid size"),
+                ),
                 Vec::new(),
             )),
         };
@@ -139,5 +162,64 @@ mod tests {
             failing.renderer.render(&diagram),
             Err(render_pipeline::RenderError::UnknownShapeType { .. })
         ));
+    }
+
+    /// S-016 AC2 — the composition root discovers collections: valid files reach the
+    /// catalog (with group + preview fields), invalid ones become warnings, and
+    /// startup always succeeds.
+    #[test]
+    fn native_with_collections_loads_valid_and_warns_on_invalid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("stars.adc"),
+            "adc 1.0\ntemplate star 3 x 3\n###\n#.#\n###\nanchor n at 1 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("broken.adc"),
+            "adc 1.0\ntemplate x 2 x 2\na\nb\nc\n",
+        )
+        .unwrap();
+
+        let (services, warnings) = Services::native_with_collections(Some(dir.path()));
+
+        // The valid collection is usable through the seam…
+        let star = services
+            .catalog
+            .get("stars/star")
+            .expect("collection shape");
+        assert_eq!(star.collection.as_deref(), Some("stars"));
+        assert_eq!(star.preview, vec!["###", "#.#", "###"]);
+
+        // …the broken one is a warning with line/column, not an error…
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].file, "broken.adc");
+        assert!(
+            warnings[0].reason.starts_with("line "),
+            "{:?}",
+            warnings[0].reason
+        );
+
+        // …and built-ins survived (startup always succeeds).
+        assert!(services.catalog.get("box").is_some());
+        let list = services.catalog.list();
+        assert!(
+            list.iter()
+                .all(|s| s.collection.as_deref() != Some("broken"))
+        );
+    }
+
+    /// S-016 AC2 — `None` keeps the built-in-only composition (no discovery).
+    #[test]
+    fn native_with_no_collections_dir_is_builtins_only() {
+        let (services, warnings) = Services::native_with_collections(None);
+        assert!(warnings.is_empty());
+        assert!(
+            services
+                .catalog
+                .list()
+                .iter()
+                .all(|s| s.collection.is_none())
+        );
     }
 }
