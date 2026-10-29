@@ -50,6 +50,22 @@ RUN export HOME=/opt/pi-build-home \
 # Coverage tooling (quality gate: >=80% line coverage per AGENTS.md)
 RUN cargo install cargo-tarpaulin
 
+# WASM tooling for S-019 (web milestone) — isolated runs cannot install tools
+# at runtime (egress allow-list, ADR 014), so bake them in:
+#   wasm32 target        container rustup/cargo state is ephemeral (no volume),
+#                        so the target must come from the image
+#   trunk                builds the servable web bundle of gui-app (AC1)
+#   wasm-bindgen-cli     pinned to the exact version Cargo.lock resolves for
+#                        eframe 0.37 (wasm-bindgen 0.2.129) — a mismatched CLI
+#                        fails when processing the built .wasm. This package
+#                        also ships wasm-bindgen-test-runner, which runs the
+#                        headless crates' test suites on wasm32 (AC2).
+#                        KEEP THE PIN IN SYNC with Cargo.lock's wasm-bindgen
+#                        version when eframe/wasm deps move — rebuild after.
+RUN rustup target add wasm32-unknown-unknown \
+ && cargo install trunk \
+ && cargo install wasm-bindgen-cli --version 0.2.129
+
 # Docs build check (mkdocs from the distro repo; PyPI is flaky under rootless podman)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends mkdocs \

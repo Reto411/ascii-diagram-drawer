@@ -10,6 +10,7 @@ a boundary — this container is.
 
 - Node 24 + `@earendil-works/pi-coding-agent` (`pi`)
 - Rust stable (rustup) + `cargo-tarpaulin` (+ `gdb`, which tarpaulin needs)
+- WASM tooling for S-019: `wasm32-unknown-unknown` target, `trunk` (web bundle builds), `wasm-bindgen-cli` **pinned to the version in `Cargo.lock`** (currently 0.2.129 — also provides `wasm-bindgen-test-runner` for running core tests on wasm32). When the lockfile's `wasm-bindgen` version moves, update the pin in the Dockerfile and rebuild
 - `git`, `ripgrep`, build essentials
 - `mkdocs` (default theme) for docs build checks
 - `xvfb` + ImageMagick (`import`/`compare`) for headless GUI smoke tests
