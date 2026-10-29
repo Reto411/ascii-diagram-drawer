@@ -1,5 +1,5 @@
 //! ascii-diagram-drawer GUI entry point (ADR 008): eframe/egui on native desktop and
-//! browser wasm. The app itself lives in [`app::DrawingApp`]; this is bootstrap only.
+//! browser wasm. The app itself lives in [`app`]; this is bootstrap only.
 //!
 //! Optional CLI argument: a `.ad` file to load at startup — used by the visual test
 //! tiers (gui-testing skill) for deterministic golden captures.
@@ -16,7 +16,6 @@ mod editor;
 fn main() -> eframe::Result<()> {
     use std::path::Path;
 
-    use app::DrawingApp;
     use eframe::egui;
 
     let services = core_services::Services::native();
@@ -33,17 +32,10 @@ fn main() -> eframe::Result<()> {
             // skill): fixed dark theme. egui 0.37 has no animation toggle — the UI
             // is static (no animated widgets), so settled frames are stable.
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-
-            let mut app = DrawingApp::new(services.clone());
-            // Load the optional startup fixture, reporting (but not aborting on) failure.
-            if let Some((path, e)) = fixture
-                .as_deref()
-                .map(Path::new)
-                .and_then(|p| app.load(p).err().map(|e| (p, e)))
-            {
-                eprintln!("could not load {}: {e}", path.display());
-            }
-            Ok(Box::new(app))
+            Ok(Box::new(app::create_app(
+                services.clone(),
+                fixture.as_deref().map(Path::new),
+            )))
         }),
     )
 }

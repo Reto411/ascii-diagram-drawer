@@ -1,0 +1,4 @@
+ad 1.0
+shape box "Server" as s1 at 3 4 w 9 h 5
+shape box "Client" as s2 at 3 14 w 9 h 5
+connect as c1 from s1.s to s2.n

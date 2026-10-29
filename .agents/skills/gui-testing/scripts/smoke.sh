@@ -8,10 +8,13 @@ die() { printf 'smoke.sh: %s\n' "$*" >&2; exit 2; }
 
 usage() {
   cat >&2 <<'EOF'
-usage: smoke.sh <command>
+usage: smoke.sh <command> [args…]
   launch                          app must stay up for 10 s (timeout kill = PASS)
   capture <out.png> [idle_s]      build, run under xvfb, screenshot after idle_s (default 2)
   diff <shot.png> <golden.png>    pixel-exact compare (AE metric)
+
+Extra args (after the command's own) are passed through to gui-app — e.g. a startup
+fixture:  smoke.sh capture shot.png 3 path/to/fixture.ad
 EOF
   exit 2
 }
@@ -29,9 +32,10 @@ build() { cargo build -q -p gui-app || die "cargo build -p gui-app failed"; }
 
 case "$cmd" in
   launch)
+    # Remaining args (if any) are passed through to the app.
     build
     set +e
-    timeout 10 xvfb-run -a "$BIN"
+    timeout 10 xvfb-run -a "$BIN" "$@"
     rc=$?
     set -e
     if [ "$rc" -eq 124 ]; then
@@ -45,13 +49,25 @@ case "$cmd" in
   capture)
     out="${1:-}"
     [ -n "$out" ] || die "capture needs <out.png>"
-    idle="${2:-2}"
+    shift
+    idle="${1:-2}"
     case "$idle" in '' | *[!0-9]*) die "idle_s must be a non-negative integer, got '$idle'";; esac
+    # Remaining args (if any) are passed through to the app.
+    [ $# -gt 0 ] && shift || true
     build
     set +e
     # App must still be alive at capture time — a crashed app fails loudly
-    # instead of producing a black-frame "pass".
-    xvfb-run -a sh -c "$BIN & pid=\$!; sleep $idle; if kill -0 \$pid 2>/dev/null; then import -window root '$out'; else printf 'FAIL capture: app died before screenshot\n' >&2; exit 1; fi"
+    # instead of producing a black-frame "pass". The inner shell receives the
+    # binary as $1 and the pass-through args after it; idle/out ride in env.
+    SMOKE_IDLE="$idle" SMOKE_OUT="$out" xvfb-run -a sh -c '
+      "$@" & pid=$!
+      sleep "$SMOKE_IDLE"
+      if kill -0 "$pid" 2>/dev/null; then
+        import -window root "$SMOKE_OUT"
+      else
+        printf "FAIL capture: app died before screenshot\n" >&2
+        exit 1
+      fi' "$BIN" "$@"
     rc=$?
     set -e
     [ "$rc" -eq 0 ] && [ -s "$out" ] || die "capture failed (xvfb/import exit $rc, or $out missing/empty)"

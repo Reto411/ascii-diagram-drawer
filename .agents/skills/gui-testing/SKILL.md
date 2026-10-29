@@ -39,6 +39,12 @@ sh .agents/skills/gui-testing/scripts/smoke.sh capture shot.png 3   # build, run
 sh .agents/skills/gui-testing/scripts/smoke.sh diff shot.png gui-app/tests/goldens/<name>.png
 ```
 
+Args after the command's own are passed through to gui-app — capture with a startup fixture:
+
+```sh
+sh .agents/skills/gui-testing/scripts/smoke.sh capture shot.png 3 gui-app/tests/fixtures/one-box.ad
+```
+
 - **Goldens live in `gui-app/tests/goldens/`** and are committed with the story that introduces them.
 - Generate a golden **once, inside the same image build** — pixel-exact matches are only stable within one image build (fonts/renderer come from the image's apt packages). If the Dockerfile changes anything GUI-relevant (fonts, ImageMagick, eframe version), regenerate goldens and note it in the progress log.
 - The capture script verifies the app is still alive before capturing — a crashed app fails loudly instead of producing a black-frame "pass".

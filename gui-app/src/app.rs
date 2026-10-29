@@ -10,9 +10,9 @@ use std::path::Path;
 
 use core_services::Services;
 use diagram_model::{Diagram, objects::Object};
-use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Pos2, RichText, Sense};
+use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense};
 
-use crate::canvas::Viewport;
+use crate::canvas::{HitTarget, Viewport, hit_target};
 use crate::editor::{EditOutcome, EditorState, PointerEvent};
 
 /// Monospace font size for the canvas; the actual cell size is measured from it at
@@ -28,6 +28,8 @@ const GRID_LINE_COLOR: Color32 = Color32::from_rgb(44, 47, 54);
 const SELECTION_COLOR: Color32 = Color32::from_rgb(90, 160, 255);
 const GHOST_COLOR: Color32 = Color32::from_rgb(140, 200, 140);
 const ERROR_COLOR: Color32 = Color32::from_rgb(255, 96, 96);
+const ANCHOR_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
+const CONNECT_LINE_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
 
 /// The eframe app state. Everything user-visible is derived from `diagram` (the model)
 /// plus transient view state in `editor` — ADR 009.
@@ -39,6 +41,20 @@ pub struct DrawingApp {
     pub status: String,
     /// Whether the primary button was held on the previous frame (edge detection).
     pointer_held: bool,
+}
+
+/// Builds the app from services and an optional startup fixture (the visual test tiers
+/// pass a `.ad` path as the first CLI argument). Load failures are reported, not fatal —
+/// the user can still open a file later.
+#[must_use]
+pub fn create_app(services: Services, fixture: Option<&Path>) -> DrawingApp {
+    let mut app = DrawingApp::new(services);
+    if let Some(path) = fixture
+        && let Err(e) = app.load(path)
+    {
+        eprintln!("could not load {}: {e}", path.display());
+    }
+    app
 }
 
 impl DrawingApp {
@@ -102,26 +118,64 @@ impl DrawingApp {
 
     /// Maps one frame of raw pointer state to editor events (press/release edge
     /// detection) and returns what changed — the seam between egui input and the
-    /// pure gesture machine, unit-testable without a window.
-    pub fn handle_pointer_frame(&mut self, held: bool, cell: Option<(u32, u32)>) -> EditOutcome {
+    /// pure gesture machine, unit-testable without a window. `hit` is the canvas cell
+    /// plus the interactive target under it (see [`crate::canvas::hit_target`]).
+    pub fn handle_pointer_frame(
+        &mut self,
+        held: bool,
+        hit: Option<((u32, u32), HitTarget)>,
+    ) -> EditOutcome {
         let outcome = match (held, self.pointer_held) {
-            (true, false) => match cell {
-                Some((col, row)) => self
-                    .editor
-                    .on_pointer(PointerEvent::Down { col, row }, &mut self.diagram),
+            (true, false) => match hit {
+                Some(((col, row), target)) => self.editor.on_pointer(
+                    PointerEvent::Down {
+                        cell: (col, row),
+                        target,
+                    },
+                    &mut self.diagram,
+                ),
                 None => EditOutcome::Nothing,
             },
-            (true, true) => match cell {
-                Some((col, row)) => self
-                    .editor
-                    .on_pointer(PointerEvent::Move { col, row }, &mut self.diagram),
+            (true, true) => match hit {
+                Some(((col, row), target)) => self.editor.on_pointer(
+                    PointerEvent::Move {
+                        cell: (col, row),
+                        target,
+                    },
+                    &mut self.diagram,
+                ),
                 None => EditOutcome::Nothing,
             },
-            (false, true) => self.editor.on_pointer(PointerEvent::Up, &mut self.diagram),
+            (false, true) => match hit {
+                Some((_, target)) => self
+                    .editor
+                    .on_pointer(PointerEvent::Up { target }, &mut self.diagram),
+                // Released off-canvas: drop on nothing cancels any gesture.
+                None => self.editor.on_pointer(
+                    PointerEvent::Up {
+                        target: HitTarget::Empty,
+                    },
+                    &mut self.diagram,
+                ),
+            },
             (false, false) => EditOutcome::Nothing,
         };
         self.pointer_held = held;
         outcome
+    }
+
+    /// Keyboard edge for one frame: Delete/Backspace removes the selection, Escape
+    /// cancels placement/gestures/selection. Returns a status message on change.
+    /// The booleans are parsed from egui input in `ui()` so this seam stays testable
+    /// without a window.
+    pub fn handle_key_frame(&mut self, delete: bool, escape: bool) -> Option<String> {
+        if delete {
+            return status_for(self.editor.delete_selection(&mut self.diagram));
+        }
+        if escape {
+            return status_for(self.editor.on_escape());
+        }
+        None
     }
 
     /// Draws the cell-aligned canvas: grid lines, the exact text bytes, selection and
@@ -206,10 +260,25 @@ impl DrawingApp {
             );
         }
 
-        // Placement ghost at the hovered cell (model space — unbounded).
+        // Hover: the model cell under the pointer plus the interactive target there
+        // (anchors / resize handle of the selection, or connect targets while dragging).
         let hover_cell = response
             .hover_pos()
             .and_then(|p| vp.screen_to_model_cell(p.x - rect.min.x, p.y - rect.min.y));
+        let hit: Option<((u32, u32), HitTarget)> = hover_cell.map(|(col, row)| {
+            (
+                (col, row),
+                hit_target(
+                    &self.diagram,
+                    self.services.catalog.as_ref(),
+                    self.editor.selection.as_ref(),
+                    self.editor.connecting_source(),
+                    (col, row),
+                ),
+            )
+        });
+
+        // Placement ghost at the hovered cell (model space — unbounded).
         if let (Some(info), Some((col, row))) = (&self.editor.placing, hover_cell) {
             let (x, y, w, h) = vp.cell_block(col, row, info.size.width, info.size.height);
             painter.rect_stroke(
@@ -220,16 +289,83 @@ impl DrawingApp {
             );
         }
 
+        // Anchor dots, resize handle and the connect drag line (S-013).
+        draw_overlays(painter, self, &vp, cell_px, response.hover_pos());
+
         // Pointer edges → editor events (AC3/AC4); report the outcome in the status bar.
-        // Right-click cancels placement mode and returns to selection/drag.
+        // Right-click cancels placement/gestures/selection.
         if ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
-            self.editor.cancel_placing();
-            self.status = "Placement cancelled".to_owned();
+            let _ = self.editor.on_escape();
+            self.status = "Action cancelled".to_owned();
         }
 
         let held = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-        if let Some(message) = status_for(self.handle_pointer_frame(held, hover_cell)) {
+        if let Some(message) = status_for(self.handle_pointer_frame(held, hit)) {
             self.status = message;
+        }
+    }
+}
+
+/// Draws the interactive overlays (S-013): anchor dots on the selected shape — and on
+/// every other shape while a connection is in flight — the resize handle on the
+/// selection's bottom-right corner, and the connect drag line from the source anchor.
+fn draw_overlays(
+    painter: &egui::Painter,
+    app: &DrawingApp,
+    vp: &Viewport,
+    cell_px: f32,
+    cursor: Option<Pos2>,
+) {
+    let center_of = |col: u32, row: u32| -> Pos2 {
+        let (x, y) = vp.cell_origin(col, row);
+        Pos2::new(x + cell_px / 2.0, y + cell_px / 2.0)
+    };
+
+    // Anchor dots + resize handle: the *which cells* decisions live in `canvas.rs`
+    // (unit-tested); this is pixels only.
+    for overlay in crate::canvas::overlays(
+        &app.diagram,
+        app.services.catalog.as_ref(),
+        app.editor.selection.as_ref(),
+        app.editor.connecting_source(),
+    ) {
+        match overlay {
+            crate::canvas::Overlay::AnchorDot((col, row)) => {
+                painter.circle_filled(center_of(col, row), 3.0, ANCHOR_COLOR);
+            }
+            crate::canvas::Overlay::ResizeHandle((col, row)) => {
+                let (x, y) = vp.cell_origin(col, row);
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        Pos2::new(x - 3.0, y - 3.0),
+                        Pos2::new(x + 3.0, y + 3.0),
+                    ),
+                    0.0,
+                    ANCHOR_COLOR,
+                );
+            }
+        }
+    }
+
+    // Connect drag: line from the source anchor to the cursor (the source dot is not in
+    // `overlays()` while connecting — it belongs to this line).
+    if let Some(source) = app.editor.connecting_source()
+        && let Some(Object::Shape(shape)) = app.diagram.get(source.object())
+    {
+        let anchor_info = app
+            .services
+            .catalog
+            .anchors(&shape.type_id)
+            .and_then(|anchors| anchors.into_iter().find(|a| a.name == source.anchor()));
+        let source_cell = anchor_info.as_ref().and_then(|info| {
+            crate::canvas::anchor_cell(shape, app.services.catalog.as_ref(), info)
+        });
+        if let (Some((col, row)), Some(cursor)) = (source_cell, cursor) {
+            painter.line_segment(
+                [center_of(col, row), cursor],
+                egui::epaint::Stroke::new(1.5, CONNECT_LINE_COLOR),
+            );
+            painter.circle_filled(center_of(col, row), 3.0, ANCHOR_COLOR);
         }
     }
 }
@@ -257,6 +393,15 @@ impl eframe::App for DrawingApp {
                 }
             });
 
+        // Keyboard edges (S-013 AC3): Delete/Backspace removes the selection, Escape
+        // cancels placement/gestures/selection.
+        let ctx = ui.ctx();
+        let delete = ctx.input(|i| i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace));
+        let escape = ctx.input(|i| i.key_pressed(Key::Escape));
+        if let Some(message) = self.handle_key_frame(delete, escape) {
+            self.status = message;
+        }
+
         // WYSIWYG canvas: re-render the model every frame (live updates during gestures).
         egui::CentralPanel::default_margins().show(ui, |ui| match self.canvas_frame() {
             Err(e) => {
@@ -275,6 +420,24 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
         EditOutcome::Selected(id) => Some(format!("Selected {id}")),
         EditOutcome::Placed { id, type_id } => Some(format!("Placed {type_id} as {id}")),
         EditOutcome::Moved { id, to } => Some(format!("{id} moved to ({}, {})", to.x, to.y)),
+        EditOutcome::Resized { id, to } => {
+            Some(format!("{id} resized to {}×{}", to.width, to.height))
+        }
+        EditOutcome::Connecting { from } => Some(format!(
+            "Connecting from {} anchor of {} — drop on another anchor (Esc cancels)",
+            from.anchor(),
+            from.object()
+        )),
+        EditOutcome::Connected { id } => Some(format!("Connector added as {id}")),
+        EditOutcome::Deleted { id, removed } => {
+            let connectors = removed.saturating_sub(1);
+            Some(if connectors == 0 {
+                format!("Deleted {id}")
+            } else {
+                format!("Deleted {id} and {connectors} connector(s)")
+            })
+        }
+        EditOutcome::Cancelled => Some("Action cancelled".to_owned()),
     }
 }
 
@@ -312,7 +475,7 @@ mod tests {
         let mut app = app();
         app.editor.select_template(box_info());
         assert!(matches!(
-            app.handle_pointer_frame(true, Some((3, 4))),
+            app.handle_pointer_frame(true, Some(((3, 4), HitTarget::Empty))),
             EditOutcome::Placed { .. }
         ));
         app.handle_pointer_frame(false, None);
@@ -372,18 +535,21 @@ mod tests {
         // Place a box at (3,4) with two frames (press + release).
         app.editor.select_template(box_info());
         assert!(matches!(
-            app.handle_pointer_frame(true, Some((3, 4))),
+            app.handle_pointer_frame(true, Some(((3, 4), HitTarget::Empty))),
             EditOutcome::Placed { .. }
         ));
         assert_eq!(app.handle_pointer_frame(false, None), EditOutcome::Nothing);
 
         // Press inside the placed box (cell (5,5) is within its 9×5 at (3,4)) and drag.
         assert_eq!(
-            app.handle_pointer_frame(true, Some((5, 5))),
+            app.handle_pointer_frame(
+                true,
+                Some(((5, 5), HitTarget::Shape(ObjectId::generated(1))))
+            ),
             EditOutcome::Selected(ObjectId::generated(1))
         );
         assert!(matches!(
-            app.handle_pointer_frame(true, Some((12, 8))),
+            app.handle_pointer_frame(true, Some(((12, 8), HitTarget::Empty))),
             EditOutcome::Moved { .. }
         ));
         // Grab offset was (2,1): top-left now at (10,7).
@@ -397,6 +563,75 @@ mod tests {
             })
             .expect("the box exists");
         assert_eq!((shape.pos.x, shape.pos.y), (10, 7));
+    }
+
+    /// AC4: the canvas frame is re-rendered from the mutated model in the same frame —
+    /// a move changes the exact bytes the canvas draws.
+    #[test]
+    fn a_move_changes_the_rendered_grid_in_the_same_frame() {
+        let mut app = app();
+        // Two boxes so moving one actually changes the trimmed grid.
+        app.editor.select_template(box_info());
+        app.handle_pointer_frame(true, Some(((0, 0), HitTarget::Empty)));
+        app.handle_pointer_frame(false, None);
+        app.editor.select_template(box_info());
+        app.handle_pointer_frame(true, Some(((20, 0), HitTarget::Empty)));
+        app.handle_pointer_frame(false, None);
+
+        let before = app.canvas_frame().expect("renders").0;
+
+        // Drag the first box (press at its interior cell (2,1), drag right).
+        app.handle_pointer_frame(
+            true,
+            Some(((2, 1), HitTarget::Shape(ObjectId::generated(1)))),
+        );
+        let moved = app.handle_pointer_frame(true, Some(((30, 1), HitTarget::Empty)));
+        assert!(
+            matches!(moved, EditOutcome::Moved { .. }),
+            "the drag moved it"
+        );
+
+        // Same frame: the canvas bytes are re-rendered from the mutated model.
+        let (after, _, _) = app.canvas_frame().expect("renders");
+        assert_ne!(before, after, "moving a shape changes the rendered grid");
+    }
+
+    /// The startup fixture path (visual test tiers) loads through the store seam.
+    #[test]
+    fn create_app_loads_the_startup_fixture() {
+        let services = Services::native();
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/one-box.ad");
+        let app = create_app(services, Some(&fixture));
+        assert_eq!(app.diagram.len(), 1);
+
+        // A missing fixture is reported (eprintln), not fatal — the app still starts empty.
+        let services = Services::native();
+        let app = create_app(
+            services,
+            Some(std::path::Path::new("/nonexistent/missing.ad")),
+        );
+        assert_eq!(app.diagram.len(), 0);
+    }
+
+    /// Keyboard seam: Delete removes the selection, Escape cancels (S-013 AC3).
+    #[test]
+    fn key_frames_delete_and_cancel() {
+        let mut app = app();
+        app.editor.select_template(box_info());
+        app.handle_pointer_frame(true, Some(((0, 0), HitTarget::Empty)));
+        app.handle_pointer_frame(false, None);
+
+        // Delete removes the placed (and selected) box.
+        assert!(
+            app.handle_key_frame(true, false)
+                .unwrap()
+                .contains("Deleted")
+        );
+        assert_eq!(app.diagram.len(), 0);
+
+        // Escape with nothing to cancel is a no-op.
+        assert_eq!(app.handle_key_frame(false, true), None);
     }
 
     #[test]
@@ -430,6 +665,8 @@ mod tests {
 
     #[test]
     fn status_for_covers_every_outcome() {
+        use diagram_model::anchors::AnchorRef;
+
         assert_eq!(status_for(EditOutcome::Nothing), None);
         assert_eq!(
             status_for(EditOutcome::Deselected).as_deref(),
@@ -439,6 +676,48 @@ mod tests {
             status_for(EditOutcome::Selected(ObjectId::generated(0)))
                 .unwrap()
                 .contains("obj-0")
+        );
+        assert!(
+            status_for(EditOutcome::Resized {
+                id: ObjectId::generated(0),
+                to: CellSize::new(3, 2).expect("valid")
+            })
+            .unwrap()
+            .contains("3×2")
+        );
+        assert!(
+            status_for(EditOutcome::Connecting {
+                from: AnchorRef::new(ObjectId::generated(0), "e").expect("valid")
+            })
+            .unwrap()
+            .contains("e anchor")
+        );
+        assert!(
+            status_for(EditOutcome::Connected {
+                id: ObjectId::generated(9)
+            })
+            .unwrap()
+            .contains("obj-9")
+        );
+        assert_eq!(
+            status_for(EditOutcome::Deleted {
+                id: ObjectId::generated(0),
+                removed: 1
+            })
+            .as_deref(),
+            Some("Deleted obj-0")
+        );
+        assert!(
+            status_for(EditOutcome::Deleted {
+                id: ObjectId::generated(0),
+                removed: 3
+            })
+            .unwrap()
+            .contains("2 connector")
+        );
+        assert_eq!(
+            status_for(EditOutcome::Cancelled).as_deref(),
+            Some("Action cancelled")
         );
         assert!(
             status_for(EditOutcome::Placed {
