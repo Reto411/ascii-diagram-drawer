@@ -13,6 +13,7 @@
 mod app;
 mod canvas;
 mod editor;
+mod exportio;
 mod fileio;
 mod sidebar;
 mod template_editor;

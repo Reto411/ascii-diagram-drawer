@@ -60,9 +60,11 @@ pub struct PngJob {
 }
 
 impl PngJob {
-    /// Test hook: wrap an existing reply channel (lets tests observe `Abandoned`).
-    #[cfg(test)]
-    pub(crate) fn from_reply(reply: Receiver<Result<Vec<u8>, ExportError>>) -> Self {
+    /// Test hook: wrap an existing reply channel. Lets GUI-level tests drive the
+    /// Pending → Done/Error transitions of a "slow exporter" deterministically (S-015)
+    /// and observe `Abandoned`.
+    #[must_use]
+    pub fn from_reply(reply: Receiver<Result<Vec<u8>, ExportError>>) -> Self {
         Self { reply }
     }
 
@@ -119,6 +121,21 @@ impl PngWorker {
 }
 
 impl PngWorker {
+    /// The default executor for the current target (ADR 012, “one API either way”):
+    /// threaded on native, inline on wasm32. This is what the composition root
+    /// (`Services`) uses — it never needs to know which one it got.
+    #[must_use]
+    pub fn for_target() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::new()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self::inline()
+        }
+    }
+
     /// A synchronous executor: `submit` rasterizes inline before returning, so the
     /// first poll already yields `Done`/`Error`. Used by wasm32 (no threads) and by
     /// tests that want the worker code path without a thread.

@@ -13,6 +13,7 @@ use crate::exporter::GridExporter;
 use crate::registry_state::SharedRegistry;
 use crate::renderer::PipelineRenderer;
 use crate::store::{FsStore, MemoryStore};
+use crate::worker::PngWorker;
 
 /// All application services behind the ADR 009 seam. The GUI depends only on this
 /// type (plus `ui-api` traits and `diagram-model` value types) — never on a backend.
@@ -26,6 +27,10 @@ pub struct Services {
     pub exporter: Arc<dyn Exporter>,
     /// Shape type listing/lookup + template registration (FR3/FR11, S-017).
     pub catalog: Arc<dyn ShapeCatalog>,
+    /// Non-blocking PNG rasterization (RS4, ADR 012): submit a job, poll per frame
+    /// while the UI shows its "exporting" state (S-015). Threaded on native, inline
+    /// on wasm32 — one API either way.
+    pub png_worker: Arc<PngWorker>,
 }
 
 impl Services {
@@ -40,6 +45,7 @@ impl Services {
             renderer: Arc::new(PipelineRenderer::with_shared(state.clone())),
             exporter: Arc::new(GridExporter),
             catalog: Arc::new(RegistryCatalog::with_shared(state)),
+            png_worker: Arc::new(PngWorker::for_target()),
         }
     }
 
@@ -65,6 +71,7 @@ impl Services {
                 renderer: Arc::new(PipelineRenderer::with_shared(state.clone())),
                 exporter: Arc::new(GridExporter),
                 catalog: Arc::new(RegistryCatalog::with_shared(state)),
+                png_worker: Arc::new(PngWorker::for_target()),
             },
             warnings,
         )
@@ -81,6 +88,9 @@ impl Services {
             renderer: Arc::new(PipelineRenderer::with_shared(state.clone())),
             exporter: Arc::new(GridExporter),
             catalog: Arc::new(RegistryCatalog::with_shared(state)),
+            // Target-aware executor (ADR 012): threaded here, inline on wasm32 where
+            // no threads exist. On native this composition is test-only.
+            png_worker: Arc::new(PngWorker::for_target()),
         }
     }
 }
@@ -149,6 +159,7 @@ mod tests {
                 ),
                 Vec::new(),
             )),
+            png_worker: Arc::new(PngWorker::inline()),
         };
 
         // The GUI's whole service flow — no backend type in sight.

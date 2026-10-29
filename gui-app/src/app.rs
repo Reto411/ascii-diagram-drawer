@@ -15,6 +15,7 @@ use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichTex
 
 use crate::canvas::{HitTarget, Viewport, hit_target};
 use crate::editor::{EditOutcome, EditorState, PointerEvent};
+use crate::exportio::{self, PngExport};
 use crate::template_editor::TemplateEditorSession;
 
 /// Monospace font size for the canvas; the actual cell size is measured from it at
@@ -43,6 +44,10 @@ pub(crate) enum PathPrompt {
     Open,
     /// Collecting a path to save the current document as (sets the current file).
     SaveAs,
+    /// Collecting a path for the SVG export (S-015 FR5).
+    ExportSvg,
+    /// Collecting a path for the PNG export (S-015 FR5/RS4).
+    ExportPng,
 }
 
 pub struct DrawingApp {
@@ -69,6 +74,11 @@ pub struct DrawingApp {
     collection_warnings: Vec<String>,
     /// The open template editor session (S-017); `None` when the window is closed.
     template_editor: Option<TemplateEditorSession>,
+    /// In-flight PNG export (S-015 RS4): ticked once per frame while the worker
+    /// rasterizes; the UI stays responsive meanwhile (ADR 012).
+    png_export: Option<PngExport>,
+    /// Sink for the in-flight PNG job — where the bytes are written on completion.
+    pending_png_path: Option<PathBuf>,
 }
 
 /// Builds the app from services, an optional startup fixture (the visual test tiers
@@ -112,6 +122,8 @@ impl DrawingApp {
             path_prompt: None,
             collection_warnings: Vec::new(),
             template_editor: None,
+            png_export: None,
+            pending_png_path: None,
         }
     }
 
@@ -263,6 +275,83 @@ impl DrawingApp {
             PathPrompt::SaveAs => {
                 let _ = self.save_as(path);
             }
+            // AC1/AC2 — a failed export shows a notice, never fails silently.
+            PathPrompt::ExportSvg => {
+                if let Err(e) = self.export_svg_to(path) {
+                    self.status = format!("SVG export failed: {e}");
+                }
+            }
+            PathPrompt::ExportPng => {
+                if let Err(e) = self.begin_png_export(path) {
+                    self.status = format!("PNG export failed: {e}");
+                }
+            }
+        }
+    }
+
+    // ── Export (S-015) — pure flows in [`crate::exportio`], this is the glue ─────
+
+    /// AC1 — synchronous SVG export: the exact exporter bytes go to `path`. The
+    /// bytes are produced by the same render + `to_svg` call that feeds the canvas
+    /// (WYSIWYG). Native only; wasm has no filesystem (S-019).
+    pub fn export_svg_to(&mut self, path: &Path) -> Result<(), String> {
+        let bytes = exportio::svg_bytes(&self.services, &self.diagram)?;
+        exportio::write_bytes_file(path, bytes.as_bytes())?;
+        self.status = format!("SVG saved to {}", path.display());
+        Ok(())
+    }
+
+    /// AC2/RS4 — starts the non-blocking PNG export: submits the grid to the
+    /// [`PngWorker`] (ADR 012) and remembers the sink. The UI shows an
+    /// "exporting" state; completion arrives via [`Self::tick_png_export`].
+    pub fn begin_png_export(&mut self, path: &Path) -> Result<(), String> {
+        let export = PngExport::start(&self.services, &self.diagram)?;
+        self.png_export = Some(export);
+        self.pending_png_path = Some(path.to_path_buf());
+        self.status = "Exporting PNG…".to_owned();
+        Ok(())
+    }
+
+    /// AC2/RS4 — polls the in-flight PNG job once (non-blocking). Called from
+    /// [`Self::ui`] every frame; on completion it writes the exact bytes to the
+    /// sink and clears the "exporting" state, on failure it reports the message.
+    pub fn tick_png_export(&mut self) {
+        let Some(export) = self.png_export.as_mut() else {
+            return;
+        };
+        let Some(tick) = export.tick() else {
+            return; // still exporting
+        };
+        self.png_export = None;
+        let Some(path) = self.pending_png_path.take() else {
+            return;
+        };
+        match tick {
+            exportio::PngTick::Done(bytes) => match exportio::write_bytes_file(&path, &bytes) {
+                Ok(()) => self.status = format!("PNG saved to {}", path.display()),
+                Err(msg) => self.status = msg,
+            },
+            exportio::PngTick::Failed(msg) => self.status = format!("PNG export failed: {msg}"),
+        }
+    }
+
+    /// The prefilled default for an export prompt: the document's sibling path with
+    /// the given extension (S-015); empty when there is no current file.
+    fn default_export_path(&self, ext: &str) -> String {
+        self.current_file()
+            .map(|p| exportio::export_output_path(p, ext).display().to_string())
+            .unwrap_or_default()
+    }
+
+    /// AC3 — the whole-diagram scale control (FR8): clamped to [1, MAX_GUI_SCALE];
+    /// the model enforces ≥ 1 anyway. The canvas and every export follow it.
+    pub fn change_scale(&mut self, delta: i32) {
+        let current = self.diagram.scale();
+        let next = (current as i32 + delta).clamp(1, exportio::MAX_GUI_SCALE as i32) as u32;
+        if next != current {
+            // Clamped to ≥ 1 above, so the model invariant cannot fire.
+            self.diagram.set_scale(next).expect("scale clamped to ≥ 1");
+            self.status = format!("Scale ×{next}");
         }
     }
 
@@ -787,6 +876,10 @@ fn services_preview(services: &Services, rows: &[String]) -> Result<String, Stri
 
 impl eframe::App for DrawingApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // AC2/RS4 — poll the in-flight PNG job once per frame (non-blocking); on
+        // completion the exact bytes are written and the "exporting" state clears.
+        self.tick_png_export();
+
         // Toolbar + status bar (S-014): file actions on the left, last-action text on
         // the right. Ctrl+S saves without touching the mouse (read before the panel —
         // `ui.ctx()` is a borrow that must not live across `Panel::show`).
@@ -821,12 +914,37 @@ impl eframe::App for DrawingApp {
                         Err(e) => self.status = e,
                     }
                 }
+                // AC1 — SVG export (synchronous): the exact exporter bytes to file.
+                if ui.button("Export SVG…").clicked() {
+                    self.begin_path_prompt(PathPrompt::ExportSvg);
+                }
+                // AC2/RS4 — PNG export starts non-blocking (ADR 012); the status
+                // bar shows "exporting" until the worker's job completes.
+                let exporting = self.png_export.is_some();
+                if ui
+                    .add_enabled(!exporting, egui::Button::new("Export PNG…"))
+                    .clicked()
+                {
+                    self.begin_path_prompt(PathPrompt::ExportPng);
+                }
                 ui.separator();
                 let file = self
                     .current_file()
                     .map(|p| format!("[{}] ", p.display()))
                     .unwrap_or_default();
                 ui.label(RichText::new(format!("{file}{}", self.status)).weak());
+
+                // AC3/FR8 — whole-diagram scale control, top-right: the canvas and
+                // every export follow it; the model enforces ≥ 1.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(format!("Scale ×{}", self.diagram.scale()));
+                    if ui.button("−").clicked() {
+                        self.change_scale(-1);
+                    }
+                    if ui.button("+").clicked() {
+                        self.change_scale(1);
+                    }
+                });
             });
 
             // Inline path prompt (v1: no native file dialog).
@@ -835,10 +953,25 @@ impl eframe::App for DrawingApp {
                     let label = match kind {
                         PathPrompt::Open => "Open file:",
                         PathPrompt::SaveAs => "Save as:",
+                        PathPrompt::ExportSvg => "Export SVG as:",
+                        PathPrompt::ExportPng => "Export PNG as:",
                     };
                     ui.label(label);
-                    let mut path_str = String::new();
-                    if ui.text_edit_singleline(&mut path_str).lost_focus() && !path_str.is_empty() {
+                    // Prefill: exports default to the document's sibling path
+                    // (`diagram.ad` → `diagram.svg`/`.png`, S-015); open/save start empty.
+                    let mut path_str = match kind {
+                        PathPrompt::ExportSvg => self.default_export_path("svg"),
+                        PathPrompt::ExportPng => self.default_export_path("png"),
+                        _ => String::new(),
+                    };
+                    // Per-kind widget id: egui persists text-edit state by id, so
+                    // without this a cancelled prompt would leak its typed text into
+                    // the next prompt of a different kind (S-015; latent since S-014).
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut path_str)
+                            .id_source(egui::Id::unique(("path_prompt", kind as u8))),
+                    );
+                    if response.lost_focus() && !path_str.is_empty() {
                         self.submit_path_prompt(&path_str);
                     }
                     if ui.button("OK").clicked() && !path_str.is_empty() {
@@ -1458,5 +1591,168 @@ mod tests {
         assert_eq!(session.draft.rows, vec!["###", "#.#", "###"]);
         assert_eq!(session.draft.anchors.len(), 1);
         assert_eq!(session.draft.anchors[0].name, "n");
+    }
+
+    // ── S-015: SVG/PNG export + scale ────────────────────────────────────────────
+
+    /// Places the built-in box on the canvas and releases the pointer.
+    fn place_box(app: &mut DrawingApp) {
+        app.editor.select_template(box_info());
+        assert!(matches!(
+            app.handle_pointer_frame(true, Some(((3, 4), HitTarget::Empty))),
+            EditOutcome::Placed { .. }
+        ));
+        app.handle_pointer_frame(false, None);
+    }
+
+    /// AC3 — scale control: default ×1; “+” doubles the rendered size and both the
+    /// canvas text and the SVG bytes follow it; clamped to [1, MAX_GUI_SCALE].
+    #[test]
+    fn scale_control_changes_rendered_output_and_clamps() {
+        let mut app = app();
+        assert_eq!(app.diagram.scale(), 1);
+        place_box(&mut app);
+
+        let (text1, w1, h1) = app.canvas_frame().expect("renders");
+        assert_eq!((w1, h1), (9, 5));
+
+        app.change_scale(1); // ×2 — every cell becomes a 2×2 block
+        assert_eq!(app.diagram.scale(), 2);
+        let (text2, w2, h2) = app.canvas_frame().expect("renders");
+        assert_eq!((w2, h2), (18, 10));
+        assert_ne!(text1, text2);
+
+        // The SVG bytes follow the scale too.
+        let svg_at_2 = exportio::svg_bytes(&app.services, &app.diagram).expect("svg");
+        app.change_scale(1); // ×4
+        let svg_at_4 = exportio::svg_bytes(&app.services, &app.diagram).expect("svg");
+        assert_ne!(svg_at_2, svg_at_4);
+
+        // Lower bound: never below 1 (the model enforces it anyway).
+        for _ in 0..5 {
+            app.change_scale(-1);
+        }
+        assert_eq!(app.diagram.scale(), 1);
+
+        // Upper bound: clamped to MAX_GUI_SCALE.
+        for _ in 0..20 {
+            app.change_scale(1);
+        }
+        assert_eq!(app.diagram.scale(), exportio::MAX_GUI_SCALE);
+    }
+
+    /// AC1 — the SVG sink receives exactly what `to_svg` produced (fakes pin the
+    /// bytes, so any re-serialization or mutation would be visible).
+    #[test]
+    fn svg_export_sink_gets_the_exporters_exact_bytes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("out.svg");
+        let services = Services {
+            renderer: Arc::new(FakeRenderer::with_grid(
+                ui_api::ResolvedGrid::from_rows(&["+---+"]).expect("grid"),
+            )),
+            exporter: Arc::new(core_services::fakes::FakeExporter),
+            ..Services::native()
+        };
+        let mut app = DrawingApp::new(services);
+
+        app.export_svg_to(&path).expect("writes");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("reads"),
+            "<svg xmlns=\"http://www.w3.org/2000/svg\">fake</svg>"
+        );
+        assert!(app.status.contains("SVG saved"));
+    }
+
+    /// AC1 — through the real pipeline: the file equals `to_svg` of the same grid
+    /// the canvas shows (WYSIWYG).
+    #[test]
+    fn svg_export_matches_the_canvas_grid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("out.svg");
+        let mut app = app();
+        place_box(&mut app);
+
+        app.export_svg_to(&path).expect("writes");
+        let on_disk = std::fs::read_to_string(&path).expect("reads");
+        let grid = app.services.renderer.render(&app.diagram).expect("renders");
+        assert_eq!(on_disk, app.services.exporter.to_svg(&grid).expect("svg"));
+    }
+
+    /// AC2/RS4 — PNG export through the app: start → “Exporting PNG…” state; per-frame
+    /// ticks complete without blocking; the exact PNG bytes land at the sink.
+    #[test]
+    fn png_export_completes_through_per_frame_ticks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("out.png");
+        let mut app = app();
+        place_box(&mut app);
+
+        app.begin_png_export(&path).expect("starts");
+        assert_eq!(app.status, "Exporting PNG…");
+        assert!(app.png_export.is_some());
+
+        // Drive the per-frame polling exactly like `ui()` does — spaced like frames
+        // (~2 ms), so we don't outrun the worker thread's startup.
+        for _ in 0..500 {
+            app.tick_png_export();
+            if app.png_export.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(app.png_export.is_none(), "job finished");
+        let bytes = std::fs::read(&path).expect("png on disk");
+        assert_eq!(&bytes[0..4], &b"\x89PNG"[..4], "PNG signature");
+        assert!(app.status.contains("PNG saved"));
+    }
+
+    /// AC2 — a failed worker job surfaces as a user-facing status, not a panic.
+    #[test]
+    fn png_export_failure_is_reported_in_the_status() {
+        let mut app = app();
+        let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<u8>, ui_api::ExportError>>();
+        app.png_export = Some(exportio::PngExport::from_job(
+            core_services::PngJob::from_reply(rx),
+        ));
+        app.pending_png_path = Some(std::path::PathBuf::from("/tmp/never.png"));
+
+        tx.send(Err(ui_api::ExportError::Unsupported))
+            .expect("sends");
+        app.tick_png_export();
+        assert!(
+            app.status.starts_with("PNG export failed:"),
+            "got: {}",
+            app.status
+        );
+        assert!(app.png_export.is_none());
+    }
+
+    /// AC1 — a failed SVG export (bad sink path) shows a failure notice instead of
+    /// failing silently.
+    #[test]
+    fn svg_export_failure_shows_a_notice() {
+        let mut app = app();
+        app.begin_path_prompt(PathPrompt::ExportSvg);
+        app.submit_path_prompt("/nonexistent-dir-xyz-1234/out.svg");
+        assert!(
+            app.status.starts_with("SVG export failed:"),
+            "got: {}",
+            app.status
+        );
+    }
+
+    /// S-015 — export prompts prefill with the document's sibling path.
+    #[test]
+    fn export_prompt_defaults_to_document_sibling() {
+        let mut app = app();
+        assert_eq!(
+            app.default_export_path("svg"),
+            "",
+            "no current file → empty"
+        );
+        app.current_file = Some(std::path::PathBuf::from("/tmp/diagram.ad"));
+        assert_eq!(app.default_export_path("svg"), "/tmp/diagram.svg");
+        assert_eq!(app.default_export_path("png"), "/tmp/diagram.png");
     }
 }

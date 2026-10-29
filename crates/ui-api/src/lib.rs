@@ -10,12 +10,15 @@
 use std::path::Path;
 
 use diagram_model::Diagram;
-use render_pipeline::{RenderError, ResolvedGrid};
 
 pub mod error;
 pub mod types;
 
 pub use error::{CatalogError, ExportError, StoreError};
+// Seam re-exports (ADR 009 v7): these render-pipeline types already appear in the
+// `Renderer`/`Exporter` signatures below — naming them here keeps consumers inside
+// the documented dependency edge (`gui-app` never links `render-pipeline` directly).
+pub use render_pipeline::{RenderError, ResolvedGrid};
 pub use types::{AnchorInfo, LoadedDocument, NewTemplate, ShapeInfo};
 
 /// Loads and saves `.ad` documents (FR4). The native backend uses the filesystem;
