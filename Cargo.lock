@@ -1633,6 +1633,7 @@ dependencies = [
  "core-services",
  "diagram-model",
  "eframe",
+ "tempfile",
  "ui-api",
 ]
 

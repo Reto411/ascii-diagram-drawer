@@ -3,8 +3,8 @@ title: "009 - ui-api-service-layer"
 description: GUI talks to core only through a small trait-based service layer (ui-api) with pluggable backends wired at a composition root — loose coupling, per-target stores, swappable PNG rasterizer, fakeable GUI tests; five services incl. ASCII import (v1+)
 scope: architecture
 status: accepted
-version: 3
-updated: 2026-10-28
+version: 4
+updated: 2026-10-29
 ---
 
 # ADR 009: UI API service layer with pluggable backends
@@ -30,7 +30,7 @@ Five services (the last is v1+ scope):
 
 | Service | Trait responsibility | Backends |
 |---------|----------------------|----------|
-| `DiagramStore` | load/save `.ad` files (FR4) — `load` is the importer for *our own* format: file bytes → `ad-format` parser → `Diagram` | native fs store; browser store (wasm) |
+| `DiagramStore` | load/save `.ad` files (FR4) — `load` is the importer for *our own* format: file bytes → `ad-format` parser → `LoadedDocument { diagram, skipped_unknowns }` (v4) | native fs store; browser store (wasm) |
 | `Renderer` | `render(&Diagram) -> ResolvedGrid` — the shape catalog is **bound at construction** (the GUI never passes registry types across the seam) | render-pipeline (thin wrapper over its pure functions) |
 | `Exporter` | grid → text / SVG / PNG (FR2/FR5); `to_png()` may return `Err(Unsupported)` without a rasterizer backend ([ADR 016](016-png-rasterizer.md)) | svgbob exporter + optional rasterizer backend |
 | `ShapeCatalog` | list/lookup shape types & anchor sets; registration (v1+, FR12) | builtin catalog + file-backed collections |
@@ -56,12 +56,14 @@ Rules:
 - **Positive:** backends swappable per target (store) and per build configuration (PNG); GUI logic testable with in-memory fakes (T7); headless/CLI export reuses the same `Services`; the open PNG decision (R3) stops blocking architecture.
 - **Relation to [ADR 011](011-domain-driven-design.md):** the seam is reinterpreted as the *application-layer* boundary of the DDD structure — this decision is unchanged.
 - **Negative / costs:** one seam crate + one services crate; risk of a poorly-shaped API surface — mitigated by keeping exactly four traits derived from actual GUI needs and reviewing them at scaffolding time; `dyn` dispatch (negligible here).
-- **Follow-ups:** ~~pin exact trait signatures~~ (done in S-010, v3); decide where platform store impls live (`core-services` vs a `platform-io` crate) — S-010 put both stores in `core-services`, revisit if wasm needs more; ASCII-import matching heuristics (segmentation + tolerance scoring) are an open spec point for v1+ — pin with golden tests when implemented; revisit if egui's testing story matures.
+- **Follow-ups:** ~~pin exact trait signatures~~ (done in S-010, v3; `load` widened to `LoadedDocument` in v4); decide where platform store impls live (`core-services` vs a `platform-io` crate) — S-010 put both stores in `core-services`, revisit if wasm needs more; ASCII-import matching heuristics (segmentation + tolerance scoring) are an open spec point for v1+ — pin with golden tests when implemented; revisit if egui's testing story matures.
+- **Auxiliary text output (S-014):** the `.txt` sink of "Copy/Save text" is *not* a `.ad` document, so it does not go through `DiagramStore`; `gui-app` computes the exact bytes via `Exporter::to_text` and writes them with one small cfg-gated platform helper (native: `std::fs`; wasm: typed error until the browser download lands in S-019). This is the single sanctioned direct-file-access exception in the view layer — `.ad` IO still goes exclusively through the seam.
 
 ## Version history
 
 > When a decision changes: bump `version` in the header, update Context/Decision to the *current* state, and add an entry here (newest first) recording what changed, why, and when. Never create a superseding ADR.
 
+- **v4 (2026-10-29):** `DiagramStore::load` now returns `LoadedDocument { diagram, skipped_unknowns }` instead of a bare `Diagram`. Why: RS2 (parse errors shown with line/column, *nothing silently dropped*) + S-014 AC4 (no silent data loss) require the GUI to know when a load dropped forward-compat statements — the parser preserves unknown statements of newer minor versions in its `Document`, but the bare-`Diagram` seam return discarded that knowledge (and with it any chance to warn before an overwrite). The count is the minimal read model: carrying `ad-format::Document` across the seam would force `ui-api` to depend on `ad-format`, breaking this ADR's dependency rule. Consequence: preservation-on-resave of unknown statements is *not* possible at the seam today (the GUI saves the edited `Diagram` via `serialize`, which cannot re-emit dropped lines) — so per S-014 AC4 the GUI warns before overwriting a document that came from a file with skipped statements, instead of silently losing them. Full preservation (stable slot identity across edits + `Document` across the seam) is a follow-up if/when newer minor versions actually ship.
 - **v3 (2026-10-28):** signatures pinned and implemented in S-010 — `Renderer::render(&self, &Diagram)` binds the shape catalog at construction instead of taking it per call (the GUI never passes registry types across the seam); exporter methods are `to_text`/`to_svg`/`to_png`; seam error types are `StoreError::{Io, Parse{line,column,message}}` and `ExportError::{Vector, Raster, Unsupported}`; read models `ShapeInfo`/`AnchorInfo` carry geometry as `diagram-model` value objects. Status flipped to accepted.
 - **v2 (2026-10-18):** added `DiagramImporter` as the fifth service (v1+, F9/FR12) — ASCII import of foreign diagrams goes through the same seam instead of being special-cased in `gui-app` or buried in `shape-registry`; the pure matching logic gets its own `ascii-import` core crate.
 - **v1 (2026-10-18):** initial decision — UI API seam with four services (`DiagramStore`, `Renderer`, `Exporter`, `ShapeCatalog`), `core-services` composition root, direct model mutation kept unabstracted.

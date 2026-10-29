@@ -4,6 +4,7 @@
 //! these plain value types — built from registry types by the backend, using
 //! `diagram-model`'s geometry vocabulary (the shared kernel of C3).
 
+use diagram_model::Diagram;
 use diagram_model::geometry::{CellPos, CellSize};
 
 /// A shape type as the GUI needs it: identity + size (S-016 sidebar/placement).
@@ -24,6 +25,28 @@ pub struct AnchorInfo {
     pub name: String,
     /// Position relative to the shape's top-left corner.
     pub position: CellPos,
+}
+
+/// A loaded `.ad` document plus forward-compat metadata (ADR 009 v4, RS2):
+/// how many unknown statements of a newer minor version the reader skipped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedDocument {
+    /// The parsed diagram content (scale + objects in file order).
+    pub diagram: Diagram,
+    /// Unknown statements skipped at load; they are **not** part of `diagram` and
+    /// would be lost if the document is saved. `0` = lossless load.
+    pub skipped_unknowns: usize,
+}
+
+impl LoadedDocument {
+    /// A load that dropped nothing (the common case, incl. in-memory stores).
+    #[must_use]
+    pub fn lossless(diagram: Diagram) -> Self {
+        Self {
+            diagram,
+            skipped_unknowns: 0,
+        }
+    }
 }
 
 #[cfg(test)]

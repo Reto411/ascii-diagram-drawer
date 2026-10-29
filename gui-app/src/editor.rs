@@ -78,6 +78,12 @@ pub struct EditorState {
 }
 
 impl EditorState {
+    /// Clears all transient state (selection, placement, in-flight gesture) — used
+    /// when a new document replaces the model (S-014 open), so no stale id survives.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     /// Sidebar action: pick a template to place (replaces a previous pick, clears the
     /// selection so the next click is unambiguously a placement).
     pub fn select_template(&mut self, info: ShapeInfo) {

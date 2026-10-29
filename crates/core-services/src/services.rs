@@ -119,10 +119,11 @@ mod tests {
         };
 
         // The GUI's whole service flow — no backend type in sight.
-        let diagram = services
+        let loaded = services
             .store
             .load(std::path::Path::new("a.ad"))
             .expect("seeded");
+        let diagram = loaded.diagram;
         assert_eq!(diagram, one_box());
         let grid = services.renderer.render(&diagram).expect("fake render");
         assert_eq!(grid.to_text(), "+---+");

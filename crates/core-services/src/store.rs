@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use diagram_model::Diagram;
-use ui_api::{DiagramStore, StoreError};
+use ui_api::{DiagramStore, LoadedDocument, StoreError};
 
 /// Maps an `ad-format` parse failure into the seam's vocabulary (line/column kept —
 /// the GUI's error dialog jumps there).
@@ -24,11 +24,17 @@ fn map_parse(err: ad_format::ParseError) -> StoreError {
 pub struct FsStore;
 
 impl DiagramStore for FsStore {
-    fn load(&self, path: &Path) -> Result<Diagram, StoreError> {
+    fn load(&self, path: &Path) -> Result<LoadedDocument, StoreError> {
         let text = std::fs::read_to_string(path).map_err(|err| StoreError::Io {
             message: format!("{}: {err}", path.display()),
         })?;
-        ad_format::parse(&text).map_err(map_parse)
+        // `parse_document` (not `parse`): the count of skipped unknown statements is
+        // part of the seam return since ADR 009 v4 — RS2, nothing silently dropped.
+        let document = ad_format::parse_document(&text).map_err(map_parse)?;
+        Ok(LoadedDocument {
+            skipped_unknowns: document.unknown_count(),
+            diagram: document.diagram,
+        })
     }
 
     fn save(&self, path: &Path, diagram: &Diagram) -> Result<(), StoreError> {
@@ -59,12 +65,15 @@ impl MemoryStore {
 }
 
 impl DiagramStore for MemoryStore {
-    fn load(&self, path: &Path) -> Result<Diagram, StoreError> {
+    fn load(&self, path: &Path) -> Result<LoadedDocument, StoreError> {
+        // In-memory documents are `Diagram`s without file-level metadata — nothing
+        // can be skipped in a store that never parses.
         self.documents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(path)
             .cloned()
+            .map(LoadedDocument::lossless)
             .ok_or_else(|| StoreError::Io {
                 message: format!("no such document: {}", path.display()),
             })
@@ -114,7 +123,8 @@ mod tests {
         assert!(text.starts_with("ad 1.0"), "canonical header: {text:?}");
 
         let loaded = store.load(&path).expect("load");
-        assert_eq!(loaded, diagram);
+        assert_eq!(loaded.diagram, diagram);
+        assert_eq!(loaded.skipped_unknowns, 0, "same-version load is lossless");
     }
 
     #[test]
@@ -143,6 +153,25 @@ mod tests {
         }
     }
 
+    /// RS2/AC4 — a newer minor version with unknown statements loads in forward-compat
+    /// mode and the skipped count is reported at the seam (never silently dropped).
+    #[test]
+    fn fs_store_load_reports_skipped_unknowns_for_newer_minor_versions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("newer.ad");
+        // `ad 1.3` > reader's 1.0: the two `foo` statements are unknown and preserved
+        // by the parser; the seam must surface their count to the GUI (S-014 AC4).
+        std::fs::write(
+            &path,
+            "ad 1.3\nscale 1\ntext as t1 \"x\" at 0 0\nfoo one\nfoo two\n",
+        )
+        .expect("write");
+
+        let loaded = FsStore.load(&path).expect("forward-compat load");
+        assert_eq!(loaded.skipped_unknowns, 2);
+        assert_eq!(loaded.diagram.len(), 1, "known content still parses");
+    }
+
     #[test]
     fn memory_store_holds_documents_by_path() {
         let store = MemoryStore::default();
@@ -155,7 +184,9 @@ mod tests {
 
         let diagram = small_diagram();
         store.save(path, &diagram).expect("save");
-        assert_eq!(store.load(path).expect("load"), diagram);
+        let loaded = store.load(path).expect("load");
+        assert_eq!(loaded.diagram, diagram);
+        assert_eq!(loaded.skipped_unknowns, 0);
     }
 
     #[test]

@@ -16,5 +16,9 @@ ui-api = { path = "../crates/ui-api" }
 # never reaches the core). 0.37 is the version S-012 was built and tested against.
 eframe = "0.37"
 
+[dev-dependencies]
+# AC3 test: the `.txt` sink writes into a throwaway directory.
+tempfile = "3"
+
 [lints]
 workspace = true

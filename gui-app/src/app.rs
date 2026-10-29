@@ -1,12 +1,13 @@
 //! The eframe application (ADR 008) — deliberately thin egui glue around the pure
-//! helpers in [`crate::canvas`] and [`crate::editor`], which carry all interaction
-//! logic and are unit-tested headlessly.
+//! helpers in [`crate::canvas`], [`crate::editor`] and [`crate::fileio`], which carry
+//! all interaction/file-IO logic and are unit-tested headlessly.
 //!
 //! Per-frame flow: re-render the model through the ADR 009 seam (live WYSIWYG, AC2),
 //! draw the exact text bytes on a cell-aligned canvas, map pointer edges to editor
-//! events, and report what happened in the status bar.
+//! events, run file-IO flows on menu actions, and report what happened in the status
+//! bar.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use core_services::Services;
 use diagram_model::{Diagram, objects::Object};
@@ -33,14 +34,35 @@ const CONNECT_LINE_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
 
 /// The eframe app state. Everything user-visible is derived from `diagram` (the model)
 /// plus transient view state in `editor` — ADR 009.
+/// An inline path prompt (v1 has no native file dialog — works identically on
+/// native and wasm; a future story may swap in `rfd` for native targets).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PathPrompt {
+    /// Collecting a path to open.
+    Open,
+    /// Collecting a path to save the current document as (sets the current file).
+    SaveAs,
+}
+
 pub struct DrawingApp {
     services: Services,
-    diagram: Diagram,
+    /// `pub` like `status`: this is a binary crate — the file-IO tests in
+    /// [`crate::fileio`] read the model through it.
+    pub diagram: Diagram,
     editor: EditorState,
     /// Last action summary for the status bar.
     pub status: String,
     /// Whether the primary button was held on the previous frame (edge detection).
     pointer_held: bool,
+    /// The file the current model was loaded from — `Save` targets it (S-014).
+    current_file: Option<PathBuf>,
+    /// Unknown statements skipped when loading `current_file` (ADR 009 v4 / RS2):
+    /// non-zero arms the AC4 save warning.
+    skipped_unknowns: usize,
+    /// The AC4 lossy-save confirmation dialog is open.
+    confirming_save: bool,
+    /// An inline Open/Save-As path prompt is showing (and its kind).
+    path_prompt: Option<PathPrompt>,
 }
 
 /// Builds the app from services and an optional startup fixture (the visual test tiers
@@ -49,10 +71,15 @@ pub struct DrawingApp {
 #[must_use]
 pub fn create_app(services: Services, fixture: Option<&Path>) -> DrawingApp {
     let mut app = DrawingApp::new(services);
-    if let Some(path) = fixture
-        && let Err(e) = app.load(path)
-    {
-        eprintln!("could not load {}: {e}", path.display());
+    if let Some(path) = fixture {
+        let outcome = app.open(path);
+        if !matches!(outcome, crate::fileio::OpenOutcome::Loaded { .. }) {
+            eprintln!(
+                "could not load {}: {}",
+                path.display(),
+                crate::fileio::open_message(&outcome)
+            );
+        }
     }
     app
 }
@@ -67,14 +94,167 @@ impl DrawingApp {
             editor: EditorState::default(),
             status: "Ready".to_owned(),
             pointer_held: false,
+            current_file: None,
+            skipped_unknowns: 0,
+            confirming_save: false,
+            path_prompt: None,
         }
     }
 
-    /// Loads a `.ad` document from the store, replacing the current diagram.
-    pub fn load(&mut self, path: &Path) -> Result<(), String> {
-        self.diagram = self.services.store.load(path).map_err(|e| e.to_string())?;
-        self.status = format!("Loaded {}", path.display());
-        Ok(())
+    // ── File IO (S-014) — pure flows in [`crate::fileio`], this is the glue ───────
+
+    /// The file the current model was loaded from (`Save` targets it).
+    #[must_use]
+    pub fn current_file(&self) -> Option<&PathBuf> {
+        self.current_file.as_ref()
+    }
+
+    /// AC4 state: is the lossy-save confirmation dialog open?
+    #[must_use]
+    pub fn confirming_save(&self) -> bool {
+        self.confirming_save
+    }
+
+    /// AC1 — open a `.ad` file through the store seam. On success the model is
+    /// replaced and the file remembered; on failure the previous model is kept and a
+    /// notice with line/column (parse) or cause (IO) is shown (RS2/RS5).
+    #[must_use]
+    pub fn open(&mut self, path: &Path) -> crate::fileio::OpenOutcome {
+        let outcome = crate::fileio::open(self.services.store.as_ref(), path);
+        if let crate::fileio::OpenOutcome::Loaded {
+            diagram,
+            skipped_unknowns,
+            ..
+        } = &outcome
+        {
+            self.diagram = diagram.clone();
+            self.current_file = Some(path.to_path_buf());
+            self.skipped_unknowns = *skipped_unknowns;
+            // A new document invalidates any in-flight interaction.
+            self.editor.reset();
+        }
+        self.status = crate::fileio::open_message(&outcome);
+        outcome
+    }
+
+    /// AC2/AC4 — `Save` (or Ctrl+S): writes immediately for clean documents; for lossy
+    /// loads it opens the confirmation dialog instead of writing. Without a current
+    /// file there is nothing to save (use Save As).
+    #[must_use]
+    pub fn save_requested(&mut self) -> crate::fileio::SaveOutcome {
+        let Some(path) = self.current_file.clone() else {
+            self.status = "Nothing to save — use Save As…".to_owned();
+            return crate::fileio::SaveOutcome::IoError {
+                path: PathBuf::new(),
+                message: "no document open".to_owned(),
+            };
+        };
+        self.write_to(&path)
+    }
+
+    /// AC4 — the user confirmed the lossy save; it writes now.
+    #[must_use]
+    pub fn confirm_save(&mut self) -> crate::fileio::SaveOutcome {
+        let path = self.current_file.clone().unwrap_or_default();
+        let outcome = crate::fileio::save(
+            self.services.store.as_ref(),
+            &path,
+            &self.diagram,
+            self.skipped_unknowns,
+            true,
+        );
+        self.confirming_save = false;
+        self.status = crate::fileio::save_message(&outcome);
+        outcome
+    }
+
+    /// AC4 — the user cancelled the lossy save; nothing is written.
+    pub fn cancel_confirmation(&mut self) {
+        self.confirming_save = false;
+        self.status = "Save cancelled — document unchanged".to_owned();
+    }
+
+    /// AC2/AC4 — `Save As…`: remembers the new current file, then runs the same save
+    /// flow (a lossy document still warns before overwriting).
+    #[must_use]
+    pub fn save_as(&mut self, path: &Path) -> crate::fileio::SaveOutcome {
+        self.current_file = Some(path.to_path_buf());
+        self.write_to(path)
+    }
+
+    /// The shared write path behind Save / Save As (AC2 + AC4).
+    fn write_to(&mut self, path: &Path) -> crate::fileio::SaveOutcome {
+        let outcome = crate::fileio::save(
+            self.services.store.as_ref(),
+            path,
+            &self.diagram,
+            self.skipped_unknowns,
+            false,
+        );
+        if matches!(
+            outcome,
+            crate::fileio::SaveOutcome::ConfirmationNeeded { .. }
+        ) {
+            self.confirming_save = true;
+        }
+        self.status = crate::fileio::save_message(&outcome);
+        outcome
+    }
+
+    /// AC3 — the exact text output of the current model (same bytes as the canvas).
+    pub fn text_output(&self) -> Result<String, String> {
+        crate::fileio::text_output(&self.services, &self.diagram)
+    }
+
+    /// AC3 — write the text output next to the document (`<name>.txt`).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn save_text(&mut self) -> Result<PathBuf, String> {
+        let Some(path) = self.current_file.clone() else {
+            return Err("no document open — nothing to export".to_owned());
+        };
+        let text = self.text_output()?;
+        let txt_path = crate::fileio::text_output_path(&path);
+        crate::fileio::write_text_file(&txt_path, &text)?;
+        self.status = format!("Text output saved: {}", txt_path.display());
+        Ok(txt_path)
+    }
+
+    /// AC3 — web target: no filesystem; the browser download lands in S-019.
+    #[cfg(target_arch = "wasm32")]
+    pub fn save_text(&mut self) -> Result<PathBuf, String> {
+        Err("text download arrives with the wasm milestone (S-019)".to_owned())
+    }
+
+    /// Starts an inline Open/Save-As path prompt (v1: no native file dialog).
+    pub fn begin_path_prompt(&mut self, kind: PathPrompt) {
+        self.path_prompt = Some(kind);
+    }
+
+    /// The active path prompt, if any (the top bar renders it when `Some`).
+    #[must_use]
+    pub fn path_prompt(&self) -> Option<PathPrompt> {
+        self.path_prompt
+    }
+
+    /// Submits the inline path prompt: opens or saves-as depending on its kind.
+    pub fn submit_path_prompt(&mut self, path_str: &str) {
+        let Some(kind) = self.path_prompt.take() else {
+            return;
+        };
+        let path = Path::new(path_str);
+        match kind {
+            PathPrompt::Open => {
+                let _ = self.open(path);
+            }
+            PathPrompt::SaveAs => {
+                let _ = self.save_as(path);
+            }
+        }
+    }
+
+    /// Cancels the inline path prompt.
+    pub fn cancel_path_prompt(&mut self) {
+        self.path_prompt = None;
     }
 
     /// The WYSIWYG canvas frame: the exact text bytes of the resolved grid (AC2) plus
@@ -372,10 +552,91 @@ fn draw_overlays(
 
 impl eframe::App for DrawingApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Status bar.
+        // Toolbar + status bar (S-014): file actions on the left, last-action text on
+        // the right. Ctrl+S saves without touching the mouse (read before the panel —
+        // `ui.ctx()` is a borrow that must not live across `Panel::show`).
+        let ctrl_s = ui
+            .ctx()
+            .input(|i| i.key_pressed(Key::S) && i.modifiers.ctrl);
         egui::Panel::top("statusbar").show(ui, |ui| {
-            ui.label(RichText::new(format!("ascii-diagram-drawer — {}", self.status)).weak());
+            ui.horizontal(|ui| {
+                if ui.button("Open…").clicked() {
+                    self.begin_path_prompt(PathPrompt::Open);
+                }
+                if ui.button("Save").clicked() || ctrl_s {
+                    let _ = self.save_requested();
+                }
+                if ui.button("Save As…").clicked() {
+                    self.begin_path_prompt(PathPrompt::SaveAs);
+                }
+                // AC3 — copy the exact canvas bytes to the clipboard (WYSIWYG).
+                if ui.button("Copy").clicked() {
+                    match self.text_output() {
+                        Ok(text) => {
+                            let chars = text.chars().count();
+                            ui.ctx().copy_text(text);
+                            self.status = format!("Copied {chars} character(s) to clipboard");
+                        }
+                        Err(e) => self.status = e,
+                    }
+                }
+                if ui.button("Text .txt").clicked() {
+                    match self.save_text() {
+                        Ok(_) => {}
+                        Err(e) => self.status = e,
+                    }
+                }
+                ui.separator();
+                let file = self
+                    .current_file()
+                    .map(|p| format!("[{}] ", p.display()))
+                    .unwrap_or_default();
+                ui.label(RichText::new(format!("{file}{}", self.status)).weak());
+            });
+
+            // Inline path prompt (v1: no native file dialog).
+            if let Some(kind) = self.path_prompt() {
+                ui.horizontal(|ui| {
+                    let label = match kind {
+                        PathPrompt::Open => "Open file:",
+                        PathPrompt::SaveAs => "Save as:",
+                    };
+                    ui.label(label);
+                    let mut path_str = String::new();
+                    if ui.text_edit_singleline(&mut path_str).lost_focus() && !path_str.is_empty() {
+                        self.submit_path_prompt(&path_str);
+                    }
+                    if ui.button("OK").clicked() && !path_str.is_empty() {
+                        self.submit_path_prompt(&path_str);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.cancel_path_prompt();
+                    }
+                });
+            }
         });
+
+        // AC4 — the lossy-save confirmation dialog: explicit Confirm/Cancel, no silent
+        // data loss (ADR 009 v4).
+        if self.confirming_save() {
+            let count = self.skipped_unknowns;
+            egui::Window::new("Confirm save")
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.label(RichText::new(format!(
+                        "This document was loaded with {count} newer-version statement(s) skipped. Saving will drop them permanently."
+                    )));
+                    ui.horizontal(|ui| {
+                        if ui.button("Confirm save").clicked() {
+                            let _ = self.confirm_save();
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.cancel_confirmation();
+                        }
+                    });
+                });
+        }
 
         // Shape template sidebar (FR3 read model from the catalog).
         let templates = self.services.catalog.list();
@@ -635,7 +896,7 @@ mod tests {
     }
 
     #[test]
-    fn load_replaces_the_diagram_from_the_store() {
+    fn open_replaces_the_diagram_and_remembers_the_file() {
         let mut diagram = Diagram::new();
         let id = diagram.new_object_id();
         diagram
@@ -656,11 +917,26 @@ mod tests {
             store: Arc::new(FakeStore::default().with_document("t.ad", diagram)),
             ..services
         });
-        app.load(std::path::Path::new("t.ad")).expect("loads");
+        assert!(matches!(
+            app.open(std::path::Path::new("t.ad")),
+            crate::fileio::OpenOutcome::Loaded {
+                skipped_unknowns: 0,
+                ..
+            }
+        ));
         assert_eq!(app.diagram.len(), 1);
+        assert_eq!(
+            app.current_file().map(|p| p.as_path()),
+            Some(Path::new("t.ad"))
+        );
 
-        let err = app.load(std::path::Path::new("missing.ad"));
-        assert!(err.is_err());
+        // A missing file is reported in the status bar; the model is kept.
+        let outcome = app.open(std::path::Path::new("missing.ad"));
+        assert!(matches!(
+            outcome,
+            crate::fileio::OpenOutcome::IoError { .. }
+        ));
+        assert_eq!(app.diagram.len(), 1);
     }
 
     #[test]

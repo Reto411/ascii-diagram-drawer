@@ -19,8 +19,10 @@ Interaction logic lives in plain Rust inside `gui-app` and is tested without a w
 
 ```sh
 cargo test -p gui-app
-cargo tarpaulin --engine Llvm -p gui-app   # ≥80% line coverage gate (AGENTS.md)
+cargo tarpaulin --engine Llvm --workspace  # ≥80% line coverage gate (AGENTS.md, canonical)
 ```
+
+> **Coverage-gate gotcha (S-014):** `tarpaulin -p gui-app` runs *only* gui-app's tests but reports every compiled crate — workspace deps show up untested and drag the total to ~40–50%, so the 80% floor is unreachable with that flag. Gate on `--workspace`, and cite per-module numbers (e.g. `fileio.rs: 57/57`) for the story's new logic — the egui draw glue + `main` bootstrap are window-bound and never covered.
 
 Covers: gesture handlers (pointer down/move/up → model mutation sequences), grid→screen mapping, cell hit-testing, snap-to-cell math, selection/resize rules. If an AC is phrased in terms of *model state after a user action*, it belongs here — write the unit test, do not reach for a screenshot.
 

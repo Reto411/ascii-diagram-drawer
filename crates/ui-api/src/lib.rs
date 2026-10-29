@@ -16,17 +16,19 @@ pub mod error;
 pub mod types;
 
 pub use error::{ExportError, StoreError};
-pub use types::{AnchorInfo, ShapeInfo};
+pub use types::{AnchorInfo, LoadedDocument, ShapeInfo};
 
 /// Loads and saves `.ad` documents (FR4). The native backend uses the filesystem;
 /// targets without one (wasm) get an in-memory store behind this same trait.
 ///
-/// Save serializes the current [`Diagram`] canonically (`ad-format`); statements a
-/// newer file version preserved verbatim are part of the parser-level round trip,
-/// not of the post-edit GUI save flow.
+/// `load` reports forward-compat losses ([`LoadedDocument::skipped_unknowns`], ADR 009 v4)
+/// so the GUI can warn instead of silently dropping newer-version statements (RS2).
+/// Save serializes the current [`Diagram`] canonically (`ad-format`); unknown statements
+/// skipped at load are gone by then, which is exactly what the warning protects against.
 pub trait DiagramStore {
-    /// Reads and parses the `.ad` document at `path`.
-    fn load(&self, path: &Path) -> Result<Diagram, StoreError>;
+    /// Reads and parses the `.ad` document at `path`, including how many unknown
+    /// statements (newer minor version) were skipped — RS2: nothing silently dropped.
+    fn load(&self, path: &Path) -> Result<LoadedDocument, StoreError>;
 
     /// Serializes `diagram` canonically and writes it to `path`.
     fn save(&self, path: &Path, diagram: &Diagram) -> Result<(), StoreError>;

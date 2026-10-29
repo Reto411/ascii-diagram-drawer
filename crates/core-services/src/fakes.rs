@@ -11,17 +11,21 @@ use std::sync::Mutex;
 
 use diagram_model::Diagram;
 use render_pipeline::{RenderError, ResolvedGrid};
-use ui_api::{AnchorInfo, DiagramStore, Exporter, Renderer, ShapeCatalog, ShapeInfo, StoreError};
+use ui_api::{
+    AnchorInfo, DiagramStore, Exporter, LoadedDocument, Renderer, ShapeCatalog, ShapeInfo,
+    StoreError,
+};
 
 /// In-memory store: seed documents, load/save against the map. The same semantics as
 /// the production `MemoryStore` (unknown path → IO error), but with a public seed API.
 #[derive(Debug, Default)]
 pub struct FakeStore {
     documents: Mutex<HashMap<PathBuf, Diagram>>,
+    skipped_unknowns: Mutex<HashMap<PathBuf, usize>>,
 }
 
 impl FakeStore {
-    /// Seeds `diagram` under `path`.
+    /// Seeds `diagram` under `path` (lossless load).
     #[must_use]
     pub fn with_document(self, path: impl Into<PathBuf>, diagram: Diagram) -> Self {
         self.documents
@@ -30,15 +34,38 @@ impl FakeStore {
             .insert(path.into(), diagram);
         self
     }
+
+    /// Seeds `path` so that loading it reports `count` skipped unknown statements
+    /// (ADR 009 v4 / RS2 — the GUI's warning path, S-014 AC4).
+    #[must_use]
+    pub fn with_skipped_unknowns(self, path: impl Into<PathBuf>, count: usize) -> Self {
+        self.skipped_unknowns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(path.into(), count);
+        self
+    }
 }
 
 impl DiagramStore for FakeStore {
-    fn load(&self, path: &std::path::Path) -> Result<Diagram, StoreError> {
+    fn load(&self, path: &std::path::Path) -> Result<LoadedDocument, StoreError> {
+        // Both lookups are infallible map reads — holding the two guards together is fine.
+        let skipped = self
+            .skipped_unknowns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(path)
+            .copied()
+            .unwrap_or(0);
         self.documents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(path)
             .cloned()
+            .map(|diagram| LoadedDocument {
+                diagram,
+                skipped_unknowns: skipped,
+            })
             .ok_or_else(|| StoreError::Io {
                 message: format!("no such document: {}", path.display()),
             })
@@ -151,16 +178,13 @@ mod tests {
         store
             .save(std::path::Path::new("saved.ad"), &diagram)
             .expect("fake save");
-        assert_eq!(
-            store
-                .load(std::path::Path::new("seeded.ad"))
-                .expect("seeded"),
-            diagram
-        );
-        assert_eq!(
-            store.load(std::path::Path::new("saved.ad")).expect("saved"),
-            diagram
-        );
+        let seeded = store
+            .load(std::path::Path::new("seeded.ad"))
+            .expect("seeded");
+        assert_eq!(seeded.diagram, diagram);
+        assert_eq!(seeded.skipped_unknowns, 0);
+        let saved = store.load(std::path::Path::new("saved.ad")).expect("saved");
+        assert_eq!(saved.diagram, diagram);
         assert!(matches!(
             store.load(std::path::Path::new("missing.ad")),
             Err(StoreError::Io { .. })
