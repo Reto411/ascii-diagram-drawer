@@ -58,9 +58,10 @@ case "$cmd" in
     set +e
     # App must still be alive at capture time — a crashed app fails loudly
     # instead of producing a black-frame "pass". The inner shell receives the
-    # binary as $1 and the pass-through args after it; idle/out ride in env.
+    # binary as $0 (sh -c convention) and the pass-through args after it;
+    # idle/out ride in env.
     SMOKE_IDLE="$idle" SMOKE_OUT="$out" xvfb-run -a sh -c '
-      "$@" & pid=$!
+      "$0" "$@" & pid=$!
       sleep "$SMOKE_IDLE"
       if kill -0 "$pid" 2>/dev/null; then
         import -window root "$SMOKE_OUT"

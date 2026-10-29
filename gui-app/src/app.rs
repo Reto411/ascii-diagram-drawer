@@ -11,10 +11,7 @@ use std::path::{Path, PathBuf};
 
 use core_services::Services;
 use diagram_model::geometry::CellSize;
-use diagram_model::{
-    Diagram,
-    objects::{Object, ObjectId},
-};
+use diagram_model::{Diagram, objects::Object};
 use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense};
 
 use crate::canvas::{HitTarget, Viewport, hit_target};
@@ -54,6 +51,19 @@ pub(crate) enum PathPrompt {
     ExportPng,
 }
 
+/// The inline path prompt's state (v1: no native file dialog).
+///
+/// The typed path lives in **app state**, not in a per-frame local: egui's `TextEdit`
+/// does not store text — it only edits the string bound to it. Re-creating the string
+/// every frame discarded every typed character (the "nothing happens when I type" bug).
+#[derive(Debug, Clone)]
+pub(crate) struct PathPromptState {
+    /// What the prompt submits to.
+    pub kind: PathPrompt,
+    /// The path being typed — prefilled for exports, empty otherwise.
+    pub path: String,
+}
+
 pub struct DrawingApp {
     services: Services,
     /// `pub` like `status`: this is a binary crate — the file-IO tests in
@@ -71,8 +81,8 @@ pub struct DrawingApp {
     skipped_unknowns: usize,
     /// The AC4 lossy-save confirmation dialog is open.
     confirming_save: bool,
-    /// An inline Open/Save-As path prompt is showing (and its kind).
-    path_prompt: Option<PathPrompt>,
+    /// An inline Open/Save-As path prompt is showing — its kind and the typed path.
+    path_prompt: Option<PathPromptState>,
     /// Collection files skipped at startup (S-016 AC2) — shown in the sidebar, never
     /// fatal: startup always succeeds with at least the built-ins.
     collection_warnings: Vec<String>,
@@ -83,10 +93,6 @@ pub struct DrawingApp {
     png_export: Option<PngExport>,
     /// Sink for the in-flight PNG job — where the bytes are written on completion.
     pending_png_path: Option<PathBuf>,
-    /// The text object being edited inline on the previous frame (S-018): the editor
-    /// requests keyboard focus exactly once, when editing starts (it appears without a
-    /// click — right after placement or a double click).
-    last_editing: Option<ObjectId>,
 }
 
 /// Builds the app from services, an optional startup fixture (the visual test tiers
@@ -132,7 +138,6 @@ impl DrawingApp {
             template_editor: None,
             png_export: None,
             pending_png_path: None,
-            last_editing: None,
         }
     }
 
@@ -142,6 +147,14 @@ impl DrawingApp {
     #[must_use]
     pub fn current_file(&self) -> Option<&PathBuf> {
         self.current_file.as_ref()
+    }
+
+    /// The service seam (catalog, renderer, exporter, stores). Read-only view for the
+    /// GUI tests that assert on registered templates.
+    #[cfg(test)]
+    #[must_use]
+    pub fn services(&self) -> &Services {
+        &self.services
     }
 
     /// AC4 state: is the lossy-save confirmation dialog open?
@@ -262,20 +275,35 @@ impl DrawingApp {
 
     /// Starts an inline Open/Save-As path prompt (v1: no native file dialog).
     pub fn begin_path_prompt(&mut self, kind: PathPrompt) {
-        self.path_prompt = Some(kind);
+        let path = match kind {
+            // Exports default to the document's sibling path (S-015); open/save start empty.
+            PathPrompt::ExportSvg => self.default_export_path("svg"),
+            PathPrompt::ExportPng => self.default_export_path("png"),
+            PathPrompt::Open | PathPrompt::SaveAs => String::new(),
+        };
+        self.path_prompt = Some(PathPromptState { kind, path });
     }
 
-    /// The active path prompt, if any (the top bar renders it when `Some`).
+    /// The active path prompt's kind, if any (test support; the top bar reads the
+    /// field directly).
+    #[cfg(test)]
     #[must_use]
     pub fn path_prompt(&self) -> Option<PathPrompt> {
-        self.path_prompt
+        self.path_prompt.as_ref().map(|p| p.kind)
+    }
+
+    /// True while a text object is being edited inline (S-018; test support).
+    #[cfg(test)]
+    pub fn is_editing(&self) -> bool {
+        self.editor.editing.is_some()
     }
 
     /// Submits the inline path prompt: opens or saves-as depending on its kind.
     pub fn submit_path_prompt(&mut self, path_str: &str) {
-        let Some(kind) = self.path_prompt.take() else {
+        let Some(prompt) = self.path_prompt.take() else {
             return;
         };
+        let kind = prompt.kind;
         let path = Path::new(path_str);
         match kind {
             PathPrompt::Open => {
@@ -456,6 +484,47 @@ impl DrawingApp {
         outcome
     }
 
+    /// Keyboard edges for one frame, with dialog priority: while an inline text edit
+    /// is open only Escape applies (it cancels the edit); while a path prompt is open
+    /// Delete/Backspace belong to the field and Escape closes it; while the template
+    /// editor window is open Escape closes it and a focused text field swallows the
+    /// rest. Only with no dialog open do Delete/Backspace remove the selection and
+    /// Escape cancel canvas gestures. Returns a status message on change.
+    pub fn handle_global_keys(
+        &mut self,
+        delete: bool,
+        escape: bool,
+        text_focused: bool,
+    ) -> Option<String> {
+        if self.editor.editing.is_some() {
+            // The draft field owns every other key (typing, backspacing the text).
+            return if escape {
+                status_for(self.editor.on_escape())
+            } else {
+                None
+            };
+        }
+        if self.path_prompt.is_some() {
+            return if escape {
+                self.cancel_path_prompt();
+                Some("Cancelled".to_owned())
+            } else {
+                // Delete/Backspace edit the path, not the diagram.
+                None
+            };
+        }
+        if self.template_editor.is_some() && escape {
+            self.close_template_editor();
+            return Some("Template editor closed".to_owned());
+        }
+        if text_focused {
+            // A dialog's text field is focused (template editor name/collection/cell
+            // input): its keys are its own.
+            return None;
+        }
+        self.handle_key_frame(delete, escape)
+    }
+
     /// Keyboard edge for one frame: Delete/Backspace removes the selection, Escape
     /// cancels placement/gestures/selection. Returns a status message on change.
     /// The booleans are parsed from egui input in `ui()` so this seam stays testable
@@ -493,33 +562,47 @@ impl DrawingApp {
             Color32::TRANSPARENT,
             f32::INFINITY,
         );
-        let cell_px = (sample.size().x / 10.0).max(4.0);
-        // The viewport maps MODEL space to pixels; the trimmed grid text starts at
-        // the content origin within it, so rendered cells and model cells coincide.
-        let vp = Viewport::new(MARGIN_PX, cell_px);
+        // The cell must be as wide as the glyph advance AND as tall as the font's
+        // *line height* — not just the advance. Square (advance-sized) cells make
+        // adjacent text rows overlap by ~half their height and the canvas text is
+        // unreadable (the "invisible text" bug).
+        let cell_w = (sample.size().x / 10.0).max(4.0);
+        let cell_h = sample.size().y.max(cell_w);
+        // The viewport maps MODEL space to canvas-RELATIVE pixels; the trimmed grid
+        // text starts at the content origin within it, so rendered cells and model
+        // cells coincide (the same mapping hit-testing uses).
+        let vp = Viewport::new(MARGIN_PX, cell_w, cell_h);
         let (origin_x, origin_y) = self.content_origin();
 
         let rect = ui.max_rect();
         let response = ui.interact(rect, egui::Id::unique("canvas"), Sense::click());
-        let painter = ui.painter();
+        // ALL canvas painting goes through a painter clipped to the canvas rect.
+        // egui 0.37 painters draw in SCREEN coordinates — `painter_at` only clips,
+        // it does NOT offset — so every canvas-relative point below is shifted by
+        // the canvas origin (`off`) before being handed to the painter. Drawing
+        // raw local coordinates would put content near the model origin outside
+        // the clip and make it invisible (the "invisible text" bug).
+        let painter = ui.painter_at(rect);
+        let off = |p: Pos2| p + rect.min.to_vec2();
+        let off_rect = |r: egui::Rect| r.translate(rect.min.to_vec2());
 
         // Subtle background grid lines over the content extent.
         for col in origin_x..=origin_x + width {
-            let x = vp.origin_x + col as f32 * cell_px;
+            let x = vp.cell_origin(col, 0).0;
             painter.line_segment(
                 [
-                    Pos2::new(x, vp.origin_y + origin_y as f32 * cell_px),
-                    Pos2::new(x, vp.origin_y + (origin_y + height) as f32 * cell_px),
+                    off(Pos2::new(x, vp.cell_origin(0, origin_y).1)),
+                    off(Pos2::new(x, vp.cell_origin(0, origin_y + height).1)),
                 ],
                 egui::epaint::Stroke::new(1.0, GRID_LINE_COLOR),
             );
         }
         for row in origin_y..=origin_y + height {
-            let y = vp.origin_y + row as f32 * cell_px;
+            let y = vp.cell_origin(0, row).1;
             painter.line_segment(
                 [
-                    Pos2::new(vp.origin_x + origin_x as f32 * cell_px, y),
-                    Pos2::new(vp.origin_x + (origin_x + width) as f32 * cell_px, y),
+                    off(Pos2::new(vp.cell_origin(origin_x, 0).0, y)),
+                    off(Pos2::new(vp.cell_origin(origin_x + width, 0).0, y)),
                 ],
                 egui::epaint::Stroke::new(1.0, GRID_LINE_COLOR),
             );
@@ -532,10 +615,10 @@ impl DrawingApp {
             if line.is_empty() {
                 continue;
             }
-            let pos = Pos2::new(
-                vp.origin_x + origin_x as f32 * cell_px,
-                vp.origin_y + (origin_y + row as u32) as f32 * cell_px,
-            );
+            let pos = off(Pos2::new(
+                vp.cell_origin(origin_x, 0).0,
+                vp.cell_origin(0, origin_y + row as u32).1,
+            ));
             painter.text(pos, Align2::LEFT_TOP, line, font_id.clone(), TEXT_COLOR);
         }
 
@@ -559,18 +642,39 @@ impl DrawingApp {
         if let Some((pos, size)) = selected_extent {
             let (x, y, w, h) = vp.cell_block(pos.x, pos.y, size.width, size.height);
             painter.rect_stroke(
-                egui::Rect::from_min_max(Pos2::new(x, y), Pos2::new(x + w, y + h)),
+                off_rect(egui::Rect::from_min_max(
+                    Pos2::new(x, y),
+                    Pos2::new(x + w, y + h),
+                )),
                 0.0,
                 egui::epaint::Stroke::new(1.5, SELECTION_COLOR),
                 egui::epaint::StrokeKind::Middle,
             );
         }
 
-        // Hover: the model cell under the pointer plus the interactive target there
-        // (anchors / resize handle of the selection, or connect targets while dragging).
-        let hover_cell = response
+        // Pointer over the canvas: canvas-relative position → model cell plus the
+        // interactive target there (anchors / resize handle of the selection, or
+        // connect targets while dragging).
+        //
+        // Primary source is `response.hover_pos()`, but egui suppresses hover on move
+        // frames while a button is held — which would freeze body-drag / resize /
+        // connect gestures mid-drag (the "handle drawn where it does not work" bug).
+        // While we are already in a gesture (`pointer_held`) we therefore fall back to
+        // the raw pointer position, gated to the canvas rect so covering widgets
+        // (inline editor, dialogs) cannot feed the canvas outside of a running gesture.
+        let held = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        let cursor = response
             .hover_pos()
-            .and_then(|p| vp.screen_to_model_cell(p.x - rect.min.x, p.y - rect.min.y));
+            .or_else(|| {
+                if held && self.pointer_held {
+                    ctx.input(|i| i.pointer.interact_pos())
+                        .filter(|&p| rect.contains(p))
+                } else {
+                    None
+                }
+            })
+            .map(|p| (p - rect.min).to_pos2());
+        let hover_cell = cursor.and_then(|p| vp.screen_to_model_cell(p.x, p.y));
         let hit: Option<((u32, u32), HitTarget)> = hover_cell.map(|(col, row)| {
             (
                 (col, row),
@@ -593,7 +697,10 @@ impl DrawingApp {
             };
             let (x, y, w, h) = vp.cell_block(col, row, extent.width, extent.height);
             painter.rect_stroke(
-                egui::Rect::from_min_max(Pos2::new(x, y), Pos2::new(x + w, y + h)),
+                off_rect(egui::Rect::from_min_max(
+                    Pos2::new(x, y),
+                    Pos2::new(x + w, y + h),
+                )),
                 0.0,
                 egui::epaint::Stroke::new(1.0, GHOST_COLOR),
                 egui::epaint::StrokeKind::Middle,
@@ -601,7 +708,7 @@ impl DrawingApp {
         }
 
         // Anchor dots, resize handle and the connect drag line (S-013).
-        draw_overlays(painter, self, &vp, cell_px, response.hover_pos());
+        draw_overlays(&painter, self, &vp, cursor, rect.min);
 
         // Pointer edges → editor events (AC3/AC4); report the outcome in the status bar.
         // Right-click cancels placement/gestures/selection.
@@ -610,7 +717,6 @@ impl DrawingApp {
             self.status = "Action cancelled".to_owned();
         }
 
-        let held = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
         if let Some(message) = status_for(self.handle_pointer_frame(held, hit.clone())) {
             self.status = message;
         }
@@ -645,7 +751,6 @@ impl DrawingApp {
                 let (x, y, cw, ch) = vp.cell_block(text.pos.x, text.pos.y, w.max(8), h.max(1));
                 // Canvas-relative → screen coordinates for the floating area.
                 let pos = Pos2::new(x + rect.min.x, y + rect.min.y);
-                let focus_once = self.last_editing.as_ref() != Some(&id);
                 egui::Area::new(egui::Id::unique("inline-text-edit"))
                     .fixed_pos(pos)
                     .order(egui::Order::Foreground)
@@ -656,17 +761,24 @@ impl DrawingApp {
                         );
                         // The field must own the keyboard while editing — it appears
                         // without a click (right after placement or a double click).
-                        if focus_once {
-                            response.request_focus();
-                        }
-                        // Blur without a pointer press (e.g. tabbing away): commit.
-                        if response.lost_focus() && self.editor.editing.is_some() {
+                        // Request focus every frame, not just once: egui attributes
+                        // the opening click to the canvas (installed before this area
+                        // exists) and surrenders the field's focus on the release
+                        // frame — without re-requesting, the editor would commit the
+                        // placeholder and close immediately after placement.
+                        response.request_focus();
+                        // Blur without pointer activity (e.g. tabbing away): commit.
+                        // Guarded against pointer frames: during the opening click's
+                        // release egui also reports `lost_focus` spuriously.
+                        if response.lost_focus()
+                            && self.editor.editing.is_some()
+                            && !ctx.input(|i| i.pointer.any_down() || i.pointer.any_click())
+                        {
                             let _ = self.editor.commit_edit(&mut self.diagram);
                         }
                     });
             }
         }
-        self.last_editing = self.editor.editing.clone();
     }
 
     /// Double-click edge (S-018 AC1): opens inline editing of the text object under the
@@ -898,17 +1010,22 @@ impl DrawingApp {
 
 /// Draws the interactive overlays (S-013): anchor dots on the selected shape — and on
 /// every other shape while a connection is in flight — the resize handle on the
-/// selection's bottom-right corner, and the connect drag line from the source anchor.
+/// selection's bottom-right cell, and the connect drag line from the source anchor.
+///
+/// `painter` is already offset by the canvas rect (see [`DrawingApp::draw_canvas`]),
+/// so all positions here — including `cursor` — are canvas-relative.
 fn draw_overlays(
     painter: &egui::Painter,
     app: &DrawingApp,
     vp: &Viewport,
-    cell_px: f32,
     cursor: Option<Pos2>,
+    origin: Pos2,
 ) {
+    // Canvas-relative → screen coordinates (the painter draws in screen space).
+    let off = |p: Pos2| p + origin.to_vec2();
     let center_of = |col: u32, row: u32| -> Pos2 {
-        let (x, y) = vp.cell_origin(col, row);
-        Pos2::new(x + cell_px / 2.0, y + cell_px / 2.0)
+        let (x, y) = vp.center_of(col, row);
+        off(Pos2::new(x, y))
     };
 
     // Anchor dots + resize handle: the *which cells* decisions live in `canvas.rs`
@@ -924,11 +1041,13 @@ fn draw_overlays(
                 painter.circle_filled(center_of(col, row), 3.0, ANCHOR_COLOR);
             }
             crate::canvas::Overlay::ResizeHandle((col, row)) => {
-                let (x, y) = vp.cell_origin(col, row);
+                // The marker sits on the handle cell's CENTER — exactly the cell
+                // `hit_target` answers with a resize gesture for.
+                let c = center_of(col, row); // already in screen coordinates
                 painter.rect_filled(
                     egui::Rect::from_min_max(
-                        Pos2::new(x - 3.0, y - 3.0),
-                        Pos2::new(x + 3.0, y + 3.0),
+                        Pos2::new(c.x - 3.0, c.y - 3.0),
+                        Pos2::new(c.x + 3.0, c.y + 3.0),
                     ),
                     0.0,
                     ANCHOR_COLOR,
@@ -952,7 +1071,7 @@ fn draw_overlays(
         });
         if let (Some((col, row)), Some(cursor)) = (source_cell, cursor) {
             painter.line_segment(
-                [center_of(col, row), cursor],
+                [center_of(col, row), off(cursor)],
                 egui::epaint::Stroke::new(1.5, CONNECT_LINE_COLOR),
             );
             painter.circle_filled(center_of(col, row), 3.0, ANCHOR_COLOR);
@@ -972,6 +1091,15 @@ fn services_preview(services: &Services, rows: &[String]) -> Result<String, Stri
 
 impl eframe::App for DrawingApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(ui);
+    }
+}
+
+impl DrawingApp {
+    /// The full UI frame without the eframe wrapper — the same code path as
+    /// [`eframe::App::ui`], exposed so the GUI can be driven headlessly in tests
+    /// (`tests/gui_tests.rs`) without a window or GPU.
+    pub fn show(&mut self, ui: &mut egui::Ui) {
         // AC2/RS4 — poll the in-flight PNG job once per frame (non-blocking); on
         // completion the exact bytes are written and the "exporting" state clears.
         self.tick_png_export();
@@ -979,9 +1107,14 @@ impl eframe::App for DrawingApp {
         // Toolbar + status bar (S-014): file actions on the left, last-action text on
         // the right. Ctrl+S saves without touching the mouse (read before the panel —
         // `ui.ctx()` is a borrow that must not live across `Panel::show`).
+        // Global shortcuts are suppressed while a text input owns the keyboard (an
+        // inline edit or an open path prompt), so Ctrl+S never surprises a user who
+        // is typing.
         let ctrl_s = ui
             .ctx()
-            .input(|i| i.key_pressed(Key::S) && i.modifiers.ctrl);
+            .input(|i| i.key_pressed(Key::S) && i.modifiers.ctrl)
+            && self.path_prompt.is_none()
+            && self.editor.editing.is_none();
         egui::Panel::top("statusbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open…").clicked() {
@@ -1043,40 +1176,46 @@ impl eframe::App for DrawingApp {
                 });
             });
 
-            // Inline path prompt (v1: no native file dialog).
-            if let Some(kind) = self.path_prompt() {
-                ui.horizontal(|ui| {
-                    let label = match kind {
-                        PathPrompt::Open => "Open file:",
-                        PathPrompt::SaveAs => "Save as:",
-                        PathPrompt::ExportSvg => "Export SVG as:",
-                        PathPrompt::ExportPng => "Export PNG as:",
-                    };
-                    ui.label(label);
-                    // Prefill: exports default to the document's sibling path
-                    // (`diagram.ad` → `diagram.svg`/`.png`, S-015); open/save start empty.
-                    let mut path_str = match kind {
-                        PathPrompt::ExportSvg => self.default_export_path("svg"),
-                        PathPrompt::ExportPng => self.default_export_path("png"),
-                        _ => String::new(),
-                    };
-                    // Per-kind widget id: egui persists text-edit state by id, so
-                    // without this a cancelled prompt would leak its typed text into
-                    // the next prompt of a different kind (S-015; latent since S-014).
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut path_str)
-                            .id_source(egui::Id::unique(("path_prompt", kind as u8))),
-                    );
-                    if response.lost_focus() && !path_str.is_empty() {
-                        self.submit_path_prompt(&path_str);
-                    }
-                    if ui.button("OK").clicked() && !path_str.is_empty() {
-                        self.submit_path_prompt(&path_str);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.cancel_path_prompt();
-                    }
-                });
+            // Inline path prompt (v1: no native file dialog). The typed path lives in
+            // `self.path_prompt` — egui's TextEdit does not store text, it only edits
+            // the string bound to it, so a per-frame local would discard every
+            // keystroke. Committing happens on Enter/OK (blur deliberately does NOT
+            // commit: clicking away keeps the half-typed path for another look).
+            if self.path_prompt.is_some() {
+                let (submit, cancel, path) = ui
+                    .horizontal(|ui| {
+                        let prompt = self.path_prompt.as_mut().expect("checked above");
+                        let label = match prompt.kind {
+                            PathPrompt::Open => "Open file:",
+                            PathPrompt::SaveAs => "Save as:",
+                            PathPrompt::ExportSvg => "Export SVG as:",
+                            PathPrompt::ExportPng => "Export PNG as:",
+                        };
+                        ui.label(label);
+                        // Per-kind widget id: egui persists text-edit state (cursor,
+                        // selection) by id, so without this a cancelled prompt would leak
+                        // them into the next prompt of a different kind (S-015).
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut prompt.path)
+                                .id_source(egui::Id::unique(("path_prompt", prompt.kind as u8)))
+                                .desired_width(240.0),
+                        );
+                        // The field owns the keyboard as soon as it appears — no click
+                        // needed before typing.
+                        if !response.has_focus() {
+                            response.request_focus();
+                        }
+                        let enter = ui.input(|i| i.key_pressed(Key::Enter)) && response.has_focus();
+                        let ok = ui.button("OK").clicked();
+                        let cancel = ui.button("Cancel").clicked();
+                        (enter || ok, cancel, prompt.path.clone())
+                    })
+                    .inner;
+                if submit && !path.is_empty() {
+                    self.submit_path_prompt(&path);
+                } else if cancel {
+                    self.cancel_path_prompt();
+                }
             }
         });
 
@@ -1179,12 +1318,16 @@ impl eframe::App for DrawingApp {
             }
         }
 
-        // Keyboard edges (S-013 AC3): Delete/Backspace removes the selection, Escape
-        // cancels placement/gestures/selection.
+        // Keyboard edges: open dialogs own the keyboard first (a text field must be
+        // able to receive Delete/Backspace; Escape closes the innermost dialog), only
+        // then do they reach the canvas gestures (S-013 AC3).
         let ctx = ui.ctx();
         let delete = ctx.input(|i| i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace));
         let escape = ctx.input(|i| i.key_pressed(Key::Escape));
-        if let Some(message) = self.handle_key_frame(delete, escape) {
+        // A text field with focus (path prompt, template editor, inline edit) — its
+        // keys must not reach the canvas. Read after the dialogs were drawn this frame.
+        let text_focused = ctx.text_edit_focused();
+        if let Some(message) = self.handle_global_keys(delete, escape, text_focused) {
             self.status = message;
         }
 

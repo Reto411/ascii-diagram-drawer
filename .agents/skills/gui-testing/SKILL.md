@@ -1,10 +1,10 @@
 ---
 name: gui-testing
-description: How to test the eframe GUI headlessly in the isolated devcontainer — tier 0 headless unit tests for interaction logic, then three visual tiers (launch-alive, golden-screenshot diff, perceptual check with the local vision model), plus evidence rules for story Verification sections. Use when verifying any GUI story AC (S-012…S-019), running a GUI smoke or screenshot, generating/diffing goldens, or deciding whether a visual check is machine-verifiable.
+description: How to test the eframe GUI headlessly in the isolated devcontainer — tier 0 headless unit tests for interaction logic, tier 0b full-app egui frame pumping (no window), then three visual tiers (launch-alive, golden-screenshot diff, perceptual check with the local vision model), plus evidence rules for story Verification sections. Use when verifying any GUI story AC (S-012…S-019), running a GUI smoke or screenshot, generating/diffing goldens, or deciding whether a visual check is machine-verifiable.
 metadata:
   scope: gui-app + devcontainer GUI tooling (xvfb/ImageMagick)
   status: stable
-  updated: 2026-10-28
+  updated: 2026-10-29
 ---
 
 # GUI Testing
@@ -25,6 +25,25 @@ cargo tarpaulin --engine Llvm --workspace  # ≥80% line coverage gate (AGENTS.m
 > **Coverage-gate gotcha (S-014):** `tarpaulin -p gui-app` runs *only* gui-app's tests but reports every compiled crate — workspace deps show up untested and drag the total to ~40–50%, so the 80% floor is unreachable with that flag. Gate on `--workspace`, and cite per-module numbers (e.g. `fileio.rs: 57/57`) for the story's new logic — the egui draw glue + `main` bootstrap are window-bound and never covered.
 
 Covers: gesture handlers (pointer down/move/up → model mutation sequences), grid→screen mapping, cell hit-testing, snap-to-cell math, selection/resize rules. If an AC is phrased in terms of *model state after a user action*, it belongs here — write the unit test, do not reach for a screenshot.
+
+### Tier 0b — headless full-app frame pumping (egui without a window)
+
+`gui-app/src/gui_tests.rs` drives the **real `DrawingApp` through real egui frames** with no window: a `Gui` harness feeds `RawInput` (pointer events, keys, text) into `Context::run` and asserts on `FullOutput` (galleys, lines, rects, circles) plus model state. This closes the gap between tier 0 (pure gesture machine, fake services) and tier 1 (a live process under xvfb): it exercises the *egui glue itself* — sidebar/topbar button hit areas, prompt TextEdits, the floating inline editor, clipboard commands, per-frame PNG worker ticks.
+
+```sh
+cargo test -p gui-app gui_tests   # the full suite; part of `cargo test --workspace`
+```
+
+Harness rules learned the hard way (do not re-derive):
+
+- **One event batch per frame.** A click = press frame + release frame (+1 settle frame for rendering to catch up). egui drains its command list into the *release* frame's `FullOutput` — read clipboard/commands from that frame, not the idle one after.
+- **egui 0.37 ignores `Event::Key.modifiers`.** Modifiers only change via `Event::ModifiersChanged` frames around the key press (see `key_with_mods`) — Ctrl+S sent as a plain `Key{modifiers: ctrl}` does nothing.
+- **`response.hover_pos()` is suppressed on button-held frames** (egui stops hovering widgets while interacting with another). The canvas therefore falls back to the raw pointer position *only while a gesture is already running* (`app.rs`, cursor logic) — without it, drag/resize/connect freeze mid-drag.
+- **The inline text editor must `request_focus()` every frame**, not once: egui attributes the opening click to the canvas (installed before the editor's `Area` exists) and surrenders the field's focus on the release frame; one-shot focus made placement commit the placeholder immediately. The blur-commit path is guarded against pointer frames for the same reason.
+- **Canvas text is drawn row-by-row** (one galley per grid line), so a placed text object's content appears as an exact-match galley of its stamped row — and while editing, the draft adds a *second* identical galley (canvas row + editor field). Locate widgets by position, not just text.
+- **Cells are rectangular** (`cell_w` = glyph advance, `cell_h` = line height) — see `Viewport::new(margin, cell_w, cell_h)`; square cells make adjacent text rows overlap.
+
+Use tier 0b when an AC is about *what the GUI does with real egui input* (a button works, a prompt survives frames, an overlay lands on the right cell) — cheaper and more precise than screenshots, and it runs in any environment (no xvfb, no X11 libs).
 
 ### Tier 1 — launch-alive (does it start and stay up?)
 
@@ -66,6 +85,7 @@ Only when tiers 0–2 **genuinely cannot answer the AC** — a semantic property
 | AC kind | Tier |
 |---|---|
 | Model state after a user action (move/resize/connect/delete) | 0 |
+| GUI behavior through real egui input (buttons, prompts, inline editor, overlays) | 0b |
 | App starts, stays up, no panic on open | 1 |
 | "Looks like before" — visual regression of a known screen | 2 |
 | Semantic visual property (legibility, correct position in pixels) | 3 |

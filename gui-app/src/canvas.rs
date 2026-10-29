@@ -166,8 +166,10 @@ pub enum Overlay {
     /// shape while a connection is in flight (the source's own dot is excluded; the
     /// canvas draws it together with the drag line).
     AnchorDot((u32, u32)),
-    /// Small square on the grid intersection at the bottom-right corner of the
-    /// selection (its `pos + size` cell).
+    /// Small square on the selection's bottom-right **cell** — the same cell
+    /// [`hit_target`] answers with [`HitTarget::ResizeHandle`], so the marker and the
+    /// gesture target coincide (the outer corner cell is reserved for the `s`/`e`
+    /// anchor dots of many shapes).
     ResizeHandle((u32, u32)),
 }
 
@@ -202,12 +204,13 @@ pub fn overlays(
             }
         }
 
-        // One resize handle: the selection's bottom-right corner (v1, built-ins only —
-        // custom shapes are fixed-size per ADR 007 v3).
+        // One resize handle: the selection's bottom-right cell (v1, built-ins only —
+        // custom shapes are fixed-size per ADR 007 v3). The drawn marker and the
+        // hit-test must agree on this exact cell.
         if selected && connecting_from.is_none() && !shape.type_id.contains('/') {
             out.push(Overlay::ResizeHandle((
-                shape.pos.x + shape.size.width,
-                shape.pos.y + shape.size.height,
+                shape.pos.x + shape.size.width - 1,
+                shape.pos.y + shape.size.height - 1,
             )));
         }
     }
@@ -215,33 +218,50 @@ pub fn overlays(
 }
 
 /// The canvas viewport: where cell `(0, 0)` starts on screen and how big one cell is.
+///
+/// Cells are **rectangular** (`cell_w` × `cell_h`), not square: a monospace glyph's
+/// line height is taller than its advance, so a cell must be exactly as wide as the
+/// glyph advance and as tall as the font's line height for the rendered rows to match
+/// the terminal layout (WYSIWYG). Square cells would make adjacent text rows overlap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
     /// Pixel position of the top-left corner of cell `(0, 0)`, relative to the canvas area.
     pub origin_x: f32,
     /// Pixel position (vertical) of the top-left corner of cell `(0, 0)`.
     pub origin_y: f32,
-    /// Pixels per grid cell (square).
-    pub cell_px: f32,
+    /// Pixels per grid column (the monospace glyph advance).
+    pub cell_w: f32,
+    /// Pixels per grid row (the font's line height at the canvas font size).
+    pub cell_h: f32,
 }
 
 impl Viewport {
-    /// A viewport with a uniform margin around the grid and the given pixel size per cell.
+    /// A viewport with a uniform margin around the grid and the given pixel size per
+    /// cell axis.
     #[must_use]
-    pub fn new(margin_px: f32, cell_px: f32) -> Self {
+    pub fn new(margin_px: f32, cell_w: f32, cell_h: f32) -> Self {
         Self {
             origin_x: margin_px,
             origin_y: margin_px,
-            cell_px,
+            cell_w,
+            cell_h,
         }
+    }
+
+    /// The pixel center of the cell at `(col, row)` — where anchor dots and the
+    /// resize-handle marker are drawn.
+    #[must_use]
+    pub fn center_of(&self, col: u32, row: u32) -> (f32, f32) {
+        let (x, y) = self.cell_origin(col, row);
+        (x + self.cell_w / 2.0, y + self.cell_h / 2.0)
     }
 
     /// The top-left pixel of the cell at `(col, row)`.
     #[must_use]
     pub fn cell_origin(&self, col: u32, row: u32) -> (f32, f32) {
         (
-            self.origin_x + col as f32 * self.cell_px,
-            self.origin_y + row as f32 * self.cell_px,
+            self.origin_x + col as f32 * self.cell_w,
+            self.origin_y + row as f32 * self.cell_h,
         )
     }
 
@@ -252,8 +272,8 @@ impl Viewport {
         (
             x,
             y,
-            width as f32 * self.cell_px,
-            height as f32 * self.cell_px,
+            width as f32 * self.cell_w,
+            height as f32 * self.cell_h,
         )
     }
 
@@ -263,8 +283,8 @@ impl Viewport {
     /// extent argument.
     #[must_use]
     pub fn screen_to_model_cell(&self, x: f32, y: f32) -> Option<(u32, u32)> {
-        let col = ((x - self.origin_x) / self.cell_px).floor();
-        let row = ((y - self.origin_y) / self.cell_px).floor();
+        let col = ((x - self.origin_x) / self.cell_w).floor();
+        let row = ((y - self.origin_y) / self.cell_h).floor();
         if col < 0.0 || row < 0.0 {
             return None;
         }
@@ -321,7 +341,13 @@ mod tests {
 
     fn vp() -> Viewport {
         // 8 px margin, 16 px cells.
-        Viewport::new(8.0, 16.0)
+        Viewport::new(8.0, 16.0, 16.0)
+    }
+
+    /// A rectangular viewport (8 px margin, 8×16 px cells) — the real canvas shape:
+    /// monospace glyphs are taller than they are wide.
+    fn vp_rect() -> Viewport {
+        Viewport::new(8.0, 8.0, 16.0)
     }
 
     #[test]
@@ -329,6 +355,29 @@ mod tests {
         let vp = vp();
         assert_eq!(vp.cell_origin(0, 0), (8.0, 8.0));
         assert_eq!(vp.cell_origin(3, 2), (8.0 + 48.0, 8.0 + 32.0));
+    }
+
+    #[test]
+    fn rectangular_cells_scale_each_axis_independently() {
+        let vp = vp_rect(); // 8 px wide, 16 px tall cells
+        assert_eq!(vp.cell_origin(5, 3), (8.0 + 40.0, 8.0 + 48.0));
+        assert_eq!(vp.cell_block(1, 2, 9, 5), (16.0, 40.0, 72.0, 80.0));
+    }
+
+    #[test]
+    fn rectangular_hit_test_round_trips_every_cell() {
+        let vp = vp_rect();
+        for col in 0..12u32 {
+            for row in 0..7u32 {
+                // Probe the middle of each cell.
+                let (x, y) = vp.cell_origin(col, row);
+                assert_eq!(
+                    vp.screen_to_model_cell(x + 4.0, y + 8.0),
+                    Some((col, row)),
+                    "cell ({col}, {row})"
+                );
+            }
+        }
     }
 
     #[test]
@@ -416,7 +465,8 @@ mod tests {
             hit_target(&diagram, &catalog, Some(&s1), None, (8, 2)),
             HitTarget::Anchor(ObjectId::new("s1").expect("valid"), "e".to_owned())
         );
-        // Bottom-right cell of s1 = the resize handle.
+        // Bottom-right cell of s1 = the resize handle (the same cell the overlay
+        // draws its marker on).
         assert_eq!(
             hit_target(&diagram, &catalog, Some(&s1), None, (8, 4)),
             HitTarget::ResizeHandle(s1.clone())
@@ -550,7 +600,9 @@ mod tests {
             4,
             "the selected shape's four anchors"
         );
-        assert!(sel.contains(&Overlay::ResizeHandle((9, 5))));
+        // The handle marker sits on the bottom-right *cell* (8,4) — exactly where
+        // `hit_target` answers with a resize gesture.
+        assert!(sel.contains(&Overlay::ResizeHandle((8, 4))));
         // s2 (not selected) contributes nothing.
         assert!(
             !sel.iter()

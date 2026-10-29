@@ -15,6 +15,8 @@ mod canvas;
 mod editor;
 mod exportio;
 mod fileio;
+#[cfg(test)]
+mod gui_tests;
 mod sidebar;
 mod template_editor;
 
