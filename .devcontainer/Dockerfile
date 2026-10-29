@@ -58,8 +58,11 @@ RUN apt-get update \
 # Headless GUI smoke testing: virtual X display + screenshot capture/compare.
 # GUI stories verify launch-alive checks and golden-screenshot pixel diffs
 # under xvfb-run (the in-container model has no vision — see README).
+# winit's X11 backend dlopens these client libraries at runtime (x11-dl);
+# libgl1/libxrandr2 come in as xvfb dependencies, the rest must be listed here.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends xvfb xauth imagemagick \
+    libxcursor1 libxi6 libxkbcommon0 \
  && rm -rf /var/lib/apt/lists/*
 
 # libcap2-bin (capsh): the entrypoint drops CAP_NET_ADMIN after applying the

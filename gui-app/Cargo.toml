@@ -8,6 +8,13 @@ license.workspace = true
 # Allowed edges per §8.3: { ui-api, core-services, diagram-model } only — never the
 # other context crates directly (ADR 009). eframe/egui land in S-012.
 [dependencies]
+core-services = { path = "../crates/core-services" }
+diagram-model = { path = "../crates/diagram-model" }
+ui-api = { path = "../crates/ui-api" }
+
+# Pinned per ADR 008 (egui/eframe APIs are in flux — keep the GUI layer thin so churn
+# never reaches the core). 0.37 is the version S-012 was built and tested against.
+eframe = "0.37"
 
 [lints]
 workspace = true

@@ -2,9 +2,9 @@ a---
 title: 008 - gui-framework-choice
 description: which GUI framework targets native desktop AND web/WASM from one Rust codebase — decided egui/eframe via weighted decision matrix (status proposed); read before any GUI code
 scope: GUI / tech stack
-status: proposed
-updated: 2026-10-18
-version: 2
+status: accepted
+updated: 2026-10-29
+version: 3
 ---
 
 # ADR 008: GUI framework choice
@@ -15,7 +15,7 @@ The GUI must run on **Windows, macOS, Linux (native desktop) and in the browser 
 
 Fixed by earlier ADRs: the platform-independent core (model, `.ad` format, render pipeline, svgbob SVG) is already framework-agnostic Rust; whatever GUI we pick only has to (a) draw the canvas, (b) translate user gestures into model mutations, (c) call the core — natively on desktop and via WASM in the browser.
 
-**Decision status: decided 2026-10-18** (joint evaluation; weights and scores agreed as drafted). Status stays `proposed` until the first GUI milestone is implemented.
+**Decision status: decided 2026-10-18, accepted 2026-10-29** (joint evaluation; weights and scores agreed as drafted). First GUI milestone (S-012) implemented on eframe 0.37 — see version history v3.
 
 ## Candidates & Evaluation
 
@@ -82,5 +82,6 @@ Remaining verification happens *inside* the first GUI milestone, not before it: 
 
 ## Version history
 
+- **v3 (2026-10-29):** status `proposed` → `accepted`. First GUI milestone (S-012) implemented: eframe/egui 0.37 app with WYSIWYG canvas, template sidebar, click-to-place and drag with live re-render; native build + wasm compile check pass, interaction logic covered by headless unit tests. API churn was manageable (0.36+ moved to a scene-based `App::ui(&mut Ui)` API; `NativeOptions` is now native-only) — no fallback to Slint needed. Browser runtime verification (real web bundle) remains S-019.
 - **v2 (2026-10-18):** joint evaluation completed — weights and scores agreed as drafted; **egui/eframe selected** (48/50), Slint recorded as fallback (46). Verification of trailing candidates deprioritized. Decision pending implementation (status `proposed`).
 - **v1 (2026-10-18):** opened for joint evaluation — candidate evidence gathered, weighted matrix drafted (provisional). No decision yet.
