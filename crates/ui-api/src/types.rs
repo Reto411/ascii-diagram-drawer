@@ -47,6 +47,22 @@ pub struct AnchorInfo {
     pub position: CellPos,
 }
 
+/// A new or edited user-defined template, as the GUI submits it (S-017, FR3/FR11).
+///
+/// Plain seam-safe data — the backend validates it into a registry `ShapeType`
+/// (printable-ASCII cells, in-bounds unique anchors) and persists it to the
+/// collection's `.adc` file. `rows` may be ragged; the backend right-pads them to
+/// the longest row (the parser's rule), so the editor only ever tracks typed chars.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewTemplate {
+    /// The template name — a single token, unique within its collection.
+    pub name: String,
+    /// The glyph grid rows, top to bottom; cells are printable ASCII (space = empty).
+    pub rows: Vec<String>,
+    /// Declared anchors; at least one is required for saving (S-017 AC2).
+    pub anchors: Vec<AnchorInfo>,
+}
+
 /// A loaded `.ad` document plus forward-compat metadata (ADR 009 v4, RS2):
 /// how many unknown statements of a newer minor version the reader skipped.
 #[derive(Debug, Clone, PartialEq, Eq)]

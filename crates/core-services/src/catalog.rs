@@ -1,8 +1,11 @@
 //! Catalog backend (ADR 009): wraps `shape-registry` and presents its data as the
-//! seam's read models — registry types never cross into the GUI.
+//! seam's read models — registry types never cross into the GUI. Registration
+//! (S-017) mutates the shared state that the renderer reads from the same handle.
 
 use shape_registry::{ShapeRegistry, ShapeType};
-use ui_api::{AnchorInfo, ShapeCatalog, ShapeInfo};
+use ui_api::{AnchorInfo, CatalogError, NewTemplate, ShapeCatalog, ShapeInfo};
+
+use crate::registry_state::SharedRegistry;
 
 /// The collection a shape belongs to (via its qualified `collection/name` id), if any.
 /// Bare ids are built-ins and never belong to a collection — even when a user
@@ -30,26 +33,35 @@ fn to_info(shape: &shape_registry::ShapeType, collection: Option<&str>) -> Shape
     }
 }
 
-/// Presents the bound registry — built-ins plus every loaded collection, in order.
+/// Presents the shared registry — built-ins plus every loaded collection, in order.
 #[derive(Debug)]
 pub struct RegistryCatalog {
-    registry: ShapeRegistry,
+    state: SharedRegistry,
 }
 
 impl RegistryCatalog {
-    /// Binds `registry` as this catalog's source.
+    /// Binds `registry` as this catalog's source (standalone state — no sharing with
+    /// a renderer; for tests and simple compositions).
     #[must_use]
     pub fn new(registry: ShapeRegistry) -> Self {
-        Self { registry }
+        Self::with_shared(SharedRegistry::standalone(registry))
+    }
+
+    /// Binds the shared state composed with a [`PipelineRenderer`](crate::PipelineRenderer)
+    /// — registration is visible to both services at once (S-017).
+    #[must_use]
+    pub fn with_shared(state: SharedRegistry) -> Self {
+        Self { state }
     }
 }
 
 impl ShapeCatalog for RegistryCatalog {
     fn list(&self) -> Vec<ShapeInfo> {
-        self.registry
+        let registry = self.state.snapshot();
+        registry
             .builtins()
             .map(|s| to_info(s, None))
-            .chain(self.registry.collections().flat_map(|c| {
+            .chain(registry.collections().flat_map(|c| {
                 let label = c.name.clone();
                 c.types
                     .iter()
@@ -59,15 +71,17 @@ impl ShapeCatalog for RegistryCatalog {
     }
 
     fn get(&self, type_id: &str) -> Option<ShapeInfo> {
-        self.registry
+        let registry = self.state.snapshot();
+        registry
             .lookup(type_id)
             .ok()
-            .map(|s| to_info(s, collection_of(&self.registry, s).as_deref()))
+            .map(|s| to_info(s, collection_of(&registry, s).as_deref()))
     }
 
     fn anchors(&self, type_id: &str) -> Option<Vec<AnchorInfo>> {
+        let registry = self.state.snapshot();
         Some(
-            self.registry
+            registry
                 .lookup(type_id)
                 .ok()?
                 .anchor_set
@@ -78,6 +92,10 @@ impl ShapeCatalog for RegistryCatalog {
                 })
                 .collect(),
         )
+    }
+
+    fn register(&self, collection: &str, template: NewTemplate) -> Result<(), CatalogError> {
+        self.state.register(collection, template)
     }
 }
 

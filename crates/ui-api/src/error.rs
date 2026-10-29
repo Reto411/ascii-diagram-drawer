@@ -81,6 +81,34 @@ impl std::fmt::Display for ExportError {
 
 impl std::error::Error for ExportError {}
 
+/// Failure of a shape-catalog operation (template registration, S-017).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogError {
+    /// Platform IO failed while persisting the collection file — unwritable path,
+    /// missing collections directory, ….
+    Io {
+        /// What went wrong, suitable for display to the user.
+        message: String,
+    },
+    /// The submitted template is not valid catalog data (bad name or grid
+    /// characters, out-of-bounds or duplicate anchors, no anchors at all).
+    Invalid {
+        /// Human-readable description of the problem.
+        message: String,
+    },
+}
+
+impl std::fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io { message } => write!(f, "collection file operation failed: {message}"),
+            Self::Invalid { message } => write!(f, "invalid template: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for CatalogError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +141,18 @@ mod tests {
             ExportError::Unsupported,
         ];
         for err in export_errors {
+            assert!(!err.to_string().is_empty());
+        }
+
+        let catalog_errors = [
+            CatalogError::Io {
+                message: "read-only fs".into(),
+            },
+            CatalogError::Invalid {
+                message: "no anchors".into(),
+            },
+        ];
+        for err in catalog_errors {
             assert!(!err.to_string().is_empty());
         }
     }

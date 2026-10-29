@@ -3,7 +3,7 @@ title: collection
 description: a named plain-text file (.adc) grouping shape templates; the manifest + resolution rule for collection/name type-ids; read before implementing collection loading (S-005)
 scope: format / domain model
 status: stable
-updated: 2026-10-29
+updated: 2026-10-29 (S-017: editor save path)
 ---
 
 # Concept: Collection
@@ -46,7 +46,7 @@ The **search path** (where `.adc` files are looked up — e.g. project directory
 
 - Collections are loaded on demand when a diagram references them (S-005), and — separately, as an application concern — the native GUI discovers `*.adc` files from a configured directory at startup (`--collections <dir>`, S-016); invalid files become warnings, never startup failures. Template definitions are immutable once parsed.
 - A collection never references other collections (no includes in v1).
-- Editing: text mode is the source of truth; the graphical editor (FR11, S-017) reads and writes the same file — it must re-serialize canonically so hand edits survive a round trip through the GUI.
+- Editing: text mode is the source of truth; the graphical editor (FR11, S-017) reads and writes the same file — it re-serializes canonically (`shape-registry serializer.rs`), so hand edits to known statements survive a round trip through the GUI. v1 note: a GUI save rewrites the whole file from parsed data, so unknown statements of a *newer minor version* would not be preserved across such a save — no 1.x files exist yet (1.0 rejects them at parse), so nothing is lost today; preservation on collection saves is a follow-up when/if newer minors ship (same precedent as ADR 009 v4 for `.ad` documents).
 
 ## Relations
 
@@ -56,4 +56,4 @@ The **search path** (where `.adc` files are looked up — e.g. project directory
 
 ## Implementation
 
-`crates/shape-registry` (landed with S-005): `templates.rs::parse_collection(name, text)` parses a `.adc` file — identity passed in from the filename stem per this spec — into a `Collection` plus ordered statement slots and the source header version, so unknown statements from higher minor versions are preserved verbatim and re-emitted legally on save; `registry.rs::ShapeRegistry` implements the resolution rule above (disjoint bare/qualified namespaces, typed errors). Startup discovery + the grouped sidebar with glyph previews landed with S-016: `core-services collections.rs` (directory scan → registry + warnings) and `gui-app sidebar.rs` (pure view model over the `ShapeCatalog` seam); the graphical editor is S-017.
+`crates/shape-registry` (landed with S-005): `templates.rs::parse_collection(name, text)` parses a `.adc` file — identity passed in from the filename stem per this spec — into a `Collection` plus ordered statement slots and the source header version, so unknown statements from higher minor versions are preserved verbatim and re-emitted legally on save; `registry.rs::ShapeRegistry` implements the resolution rule above (disjoint bare/qualified namespaces, typed errors). Startup discovery + the grouped sidebar with glyph previews landed with S-016: `core-services collections.rs` (directory scan → registry + warnings) and `gui-app sidebar.rs` (pure view model over the `ShapeCatalog` seam). The graphical editor's save path landed with S-017: `gui-app template_editor.rs` (draft state) → seam `ShapeCatalog::register` ([ADR 009](../../adr/009-ui-api-service-layer.md) v6) → `core-services registry_state.rs` (shared registry + canonical `.adc` persistence via `shape-registry serializer.rs`) — a saved template is listed by the sidebar and resolvable by the renderer immediately, no re-composition.

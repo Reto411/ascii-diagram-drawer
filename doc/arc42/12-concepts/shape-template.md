@@ -3,7 +3,7 @@ title: shape-template
 description: a user-defined diagram object — named fixed-size grid of svgbob-alphabet characters with declared anchor cells; read before implementing template parsing or the template editor
 scope: format / domain model
 status: stable
-updated: 2026-10-25
+updated: 2026-10-29
 ---
 
 # Concept: Shape Template
@@ -58,5 +58,6 @@ anchor-stmt    = "anchor", name, "at", int, int
 - **Standard default anchor set (FR11):** every built-in declares the four edge midpoints — `n`, `s`, `w`, `e`. For both built-ins (both 9×5): `n` at (4,0), `s` at (4,4), `w` at (0,2), `e` at (8,2). Anchor cells sit on the shape border.
 - `templates.rs` — `.adc` parser per the file syntax above (`parse_collection`): 1-based line/column errors, versioning + unknown-statement tolerance identical to [`.ad`](diagram-file-format.md), short grid rows right-padded, statement order kept for canonical re-save.
 - `registry.rs` — `ShapeRegistry::lookup`: bare type-id → built-ins only, `collection/name` → user collections only (disjoint namespaces, typed `LookupError`).
+- `serializer.rs` (S-017) — `serialize_collection(&Collection) -> String`, the inverse of the parser for files this reader understands: canonical bytes (templates in declaration order, trailing spaces trimmed from rows, anchors in name order), golden-pinned; `parse(serialize(c)) == c` for every well-formed collection.
 
-Rendering of stamps + anchor joins is S-006/S-007 territory; the graphical template editor (FR11, same underlying data) is S-017.
+Rendering of stamps + anchor joins landed with S-006/S-007 (`render-pipeline place.rs`: custom templates stamp verbatim as `GeometryKind::Pattern` with live anchor cells). The graphical template editor (FR11, same underlying data) landed with S-017: `gui-app/src/template_editor.rs` (pure draft state — cell edits validated against the svgbob alphabet, click-to-toggle anchors with standard edge names on odd grids, at-least-one-anchor validation) over the seam's `ShapeCatalog::register` + `Renderer::preview_pattern` ([ADR 009](../../adr/009-ui-api-service-layer.md) v6); saves persist through `core-services/src/registry_state.rs` into `<collection>.adc` via `serialize_collection`. Both authoring modes write the same canonical bytes — the file remains the source of truth.

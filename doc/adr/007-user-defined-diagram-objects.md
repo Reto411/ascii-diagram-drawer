@@ -2,9 +2,9 @@
 title: 007 - user-defined-diagram-objects
 description: users define their own diagram objects as named shape templates (plain-text ASCII art with anchor points) stored in shareable collections
 scope: domain model / file format
-status: proposed
-updated: 2026-10-23
-version: 4
+status: accepted
+updated: 2026-10-29
+version: 5
 ---
 
 # ADR 007: User-defined diagram objects and collections
@@ -40,10 +40,11 @@ A **shape template** is the unit of user-defined content; a **collection** group
 
 - **Positive:** trivially authorable (plain text, no DSL), shareable (plain files), deterministic; connectors still bind cleanly via anchors; no new rendering machinery beyond stamping + anchor resolution.
 - **Negative / costs:** custom objects are fixed-size in v1 (visible limitation vs built-in shapes); templates with dense art cannot merge borders with neighbours (by design — opaque stamps); collection naming and collision rules need a spec.
-- **Follow-ups:** ~~spec template + collection file syntax and anchor marker character(s)~~ done in S-003 — syntax is normative in [shape-template](../arc42/12-concepts/shape-template.md) (C7) and [collection](../arc42/12-concepts/collection.md) (C8); the anchor-marker question was settled by *coordinate-based* `anchor` declarations, so no marker character exists to collide with the svgbob alphabet. Remaining: implement collection loading (S-005), graphical anchor-definition mode in the template editor (FR11, S-017). Still open for v1+: spec the resize-rule declaration (format + re-rasterization algorithm) when scoping FR12.
+- **Follow-ups:** ~~spec template + collection file syntax and anchor marker character(s)~~ done in S-003 — syntax is normative in [shape-template](../arc42/12-concepts/shape-template.md) (C7) and [collection](../arc42/12-concepts/collection.md) (C8); the anchor-marker question was settled by *coordinate-based* `anchor` declarations, so no marker character exists to collide with the svgbob alphabet. ~~implement collection loading~~ done in S-005 (parser/resolution) and S-016 (GUI discovery). ~~graphical anchor-definition mode in the template editor (FR11)~~ done in S-017 — `gui-app template_editor.rs` + `core-services registry_state.rs`, both authoring modes (textual file, graphical editor) write the same canonical `.adc` bytes. Still open for v1+: spec the resize-rule declaration (format + re-rasterization algorithm) when scoping FR12; preserve unknown statements of newer minor versions across GUI collection saves (v1 files are 1.0 and reject them, so nothing is lost today).
 
 ## Version history
 
+- **v5 (2026-10-29):** status `proposed` → `accepted`. All v1-scope pieces are implemented: templates + collections as data (S-005), stamping with live anchors in the pipeline (S-006/S-007), GUI collection discovery + placement (S-016), and the template editor with graphical anchor definition (S-017 — `gui-app template_editor.rs` over the seam's new `ShapeCatalog::register`/`Renderer::preview_pattern`, ADR 009 v6). Decision unchanged.
 - **v4 (2026-10-23):** open spec points settled by S-003 — template/collection file syntax and the `collection/name` resolution rule are now normative in concept docs C7/C8; anchors are declared by coordinates (`anchor <name> at <x> <y>`), eliminating the marker-character collision concern. Decision unchanged; status stays `proposed` until S-005 implements it.
 - **v3 (2026-10-18):** point 4 reworked — resizing is important: a custom object is resizable once its definition declares resize behavior; unknown imported shapes stay fixed-size until defined/registered (resolves the v2 conflict with FR12). Rule support scoped to v1+.
 - **v2 (2026-10-18):** anchor sets are per type and definable both textually and graphically from v1 (product interview, recorded as FR11); flagged the resize-rule conflict with FR12's registration flow (open, v1+).

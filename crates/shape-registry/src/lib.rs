@@ -14,16 +14,20 @@
 //!   [collection](../../../doc/arc42/12-concepts/collection.md).
 //! - [`registry`]: type-id resolution — bare token → built-ins only, `collection/name`
 //!   → user collections only; disjoint namespaces, no silent fallback (C8).
+//! - [`serializer`]: canonical `.adc` serialization (`Collection` → text), the inverse
+//!   of parsing for well-formed files (S-017).
 
 pub mod builtin;
 pub mod error;
 pub mod geometry;
 pub mod registry;
+pub mod serializer;
 pub mod templates;
 pub mod types;
 
 pub use error::{AnchorSetError, GridError, LookupError, ParseError};
 pub use geometry::{CellPos, CellSize};
 pub use registry::ShapeRegistry;
+pub use serializer::serialize_collection;
 pub use templates::{CollectionFile, parse_collection};
 pub use types::{AnchorSet, Collection, GeometryKind, ResizeRules, ShapeType, TemplateGrid};

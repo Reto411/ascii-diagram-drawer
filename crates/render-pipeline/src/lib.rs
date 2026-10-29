@@ -54,6 +54,12 @@ pub enum RenderError {
         /// The template extent the position falls outside of.
         extent: CellSize,
     },
+    /// A pattern submitted for preview is not valid grid data — empty rows or
+    /// characters outside printable ASCII (template editor, S-017).
+    InvalidPattern {
+        /// Human-readable description of the problem.
+        message: String,
+    },
 }
 
 impl std::fmt::Display for RenderError {
@@ -75,6 +81,9 @@ impl std::fmt::Display for RenderError {
                 "anchor `{anchor}` of object `{object}` is at ({}, {}), outside the {}x{} template extent",
                 pos.x, pos.y, extent.width, extent.height
             ),
+            Self::InvalidPattern { message } => {
+                write!(f, "invalid pattern: {message}")
+            }
         }
     }
 }

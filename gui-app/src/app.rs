@@ -15,6 +15,7 @@ use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichTex
 
 use crate::canvas::{HitTarget, Viewport, hit_target};
 use crate::editor::{EditOutcome, EditorState, PointerEvent};
+use crate::template_editor::TemplateEditorSession;
 
 /// Monospace font size for the canvas; the actual cell size is measured from it at
 /// runtime so glyphs land exactly on cells regardless of font metrics.
@@ -66,6 +67,8 @@ pub struct DrawingApp {
     /// Collection files skipped at startup (S-016 AC2) — shown in the sidebar, never
     /// fatal: startup always succeeds with at least the built-ins.
     collection_warnings: Vec<String>,
+    /// The open template editor session (S-017); `None` when the window is closed.
+    template_editor: Option<TemplateEditorSession>,
 }
 
 /// Builds the app from services, an optional startup fixture (the visual test tiers
@@ -108,6 +111,7 @@ impl DrawingApp {
             confirming_save: false,
             path_prompt: None,
             collection_warnings: Vec::new(),
+            template_editor: None,
         }
     }
 
@@ -494,6 +498,217 @@ impl DrawingApp {
             self.status = message;
         }
     }
+
+    // ── Template editor (S-017) — state in [`crate::template_editor`], glue here ──
+
+    /// AC3 entry point: opens the editor for a new template. The collection defaults
+    /// to the first loaded one (or `myshapes` when none is loaded) and can be changed
+    /// in the window.
+    pub fn open_new_template(&mut self) {
+        let groups = crate::sidebar::group_templates(&self.services.catalog.list());
+        let collection = groups
+            .iter()
+            .find(|g| !g.builtins)
+            .map(|g| g.label.clone())
+            .unwrap_or_else(|| "myshapes".to_owned());
+        self.template_editor = Some(TemplateEditorSession::new_blank(collection, "new"));
+    }
+
+    /// AC3 entry point: opens the editor for an existing collection template (editing
+    /// reuses the same flow as creating). Built-ins are not editable (ADR 007 — the
+    /// built-in registry is code, not a file).
+    pub fn open_template_editor(&mut self, type_id: &str) {
+        let Some(info) = self.services.catalog.get(type_id) else {
+            return;
+        };
+        if info.collection.is_none() {
+            return; // built-in — nothing to write back
+        }
+        let anchors = self.services.catalog.anchors(type_id).unwrap_or_default();
+        self.template_editor = Some(TemplateEditorSession::from_existing(&info, anchors));
+    }
+
+    /// AC2/AC3 — validates the draft and registers it through the seam. On success
+    /// the window closes and the template is immediately placeable (the sidebar
+    /// re-reads the catalog every frame). On validation failure the inline hint is
+    /// set and nothing is registered.
+    pub fn save_template(&mut self) -> Result<String, String> {
+        let Some(session) = self.template_editor.as_mut() else {
+            return Err("no template editor open".to_owned());
+        };
+        let errors = session.draft.validation_errors();
+        if !errors.is_empty() {
+            session.draft.rejection = Some(errors.join("; "));
+            return Err(errors.join("; "));
+        }
+        let collection = session.draft.collection.clone();
+        let template = session.draft.to_new_template();
+        let name = template.name.clone();
+        self.services
+            .catalog
+            .register(&collection, template)
+            .map_err(|e| e.to_string())?;
+        self.template_editor = None;
+        Ok(format!("Template {name} saved to collection {collection}"))
+    }
+
+    /// Closes the editor without saving (Cancel / window X).
+    pub fn close_template_editor(&mut self) {
+        self.template_editor = None;
+    }
+
+    /// Draws the template editor window (S-017 AC1): name/collection fields, the cell
+    /// grid (click = select a cell, or toggle an anchor in anchor mode), live commit
+    /// of the single-character input, the anchor list, and a live preview — the exact
+    /// bytes [`Renderer::preview_pattern`] resolves for the current grid.
+    fn draw_template_editor(&mut self, ui: &mut egui::Ui) {
+        let Some(session) = self.template_editor.as_mut() else {
+            return;
+        };
+        let draft = &mut session.draft;
+
+        ui.horizontal(|ui| {
+            ui.label("Collection:");
+            ui.text_edit_singleline(&mut draft.collection);
+            ui.label("Name:");
+            ui.text_edit_singleline(&mut draft.name);
+        });
+        if let Some(rejection) = &draft.rejection {
+            // AC1/AC2 — inline hint for rejected input / blocked save.
+            ui.label(RichText::new(rejection.clone()).color(ERROR_COLOR));
+        }
+
+        ui.horizontal(|ui| {
+            ui.checkbox(
+                &mut session.anchor_mode,
+                "Anchor mode (click cells to add/remove anchors)",
+            );
+            if ui.button("Clear cell").clicked()
+                && let Some((x, y)) = session.selected_cell
+            {
+                draft.clear_cell(x, y);
+                session.cell_input.clear();
+            }
+        });
+
+        // The grid: one row of cells per template row. Empty cells show a faint dot;
+        // anchored cells are tinted; the selected cell is highlighted.
+        egui::ScrollArea::both().max_height(200.0).show(ui, |ui| {
+            for y in 0..draft.height() {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("{y:>2}")).monospace().weak());
+                    for x in 0..draft.width() {
+                        let ch = draft
+                            .rows
+                            .get(y as usize)
+                            .and_then(|row| row.chars().nth(x as usize))
+                            .unwrap_or(' ');
+                        let anchored = draft
+                            .anchors
+                            .iter()
+                            .any(|a| a.position.x == x && a.position.y == y);
+                        let selected = session.selected_cell == Some((x, y));
+                        let fill = if anchored {
+                            ANCHOR_COLOR.gamma_multiply(0.45)
+                        } else if selected {
+                            SELECTION_COLOR.gamma_multiply(0.35)
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+                        let glyph = if ch == ' ' {
+                            RichText::new("·")
+                                .monospace()
+                                .color(Color32::from_gray(100))
+                        } else {
+                            RichText::new(ch.to_string()).monospace().color(TEXT_COLOR)
+                        };
+                        if ui
+                            .add_sized([16.0, 18.0], egui::Button::new(glyph).fill(fill))
+                            .clicked()
+                        {
+                            if session.anchor_mode {
+                                draft.toggle_anchor(x, y);
+                            } else {
+                                session.selected_cell = Some((x, y));
+                                session.cell_input = if ch == ' ' {
+                                    String::new()
+                                } else {
+                                    ch.to_string()
+                                };
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        // Character input for the selected cell — live commit on every change.
+        ui.horizontal(|ui| {
+            let hint = session
+                .selected_cell
+                .map_or("select a cell to edit".to_owned(), |(x, y)| {
+                    format!("cell ({x}, {y})")
+                });
+            ui.label(RichText::new(hint).weak());
+            if ui
+                .add_sized(
+                    [24.0, 24.0],
+                    egui::TextEdit::singleline(&mut session.cell_input),
+                )
+                .changed()
+                && let Some((x, y)) = session.selected_cell
+            {
+                match session.cell_input.chars().next() {
+                    Some(c) => {
+                        // `false` = rejected input; the inline hint is shown.
+                        let _ = draft.set_cell(x, y, c);
+                    }
+                    None => draft.clear_cell(x, y),
+                }
+            }
+        });
+
+        // The anchor list (names with positions).
+        let anchors = if draft.anchors.is_empty() {
+            "none".to_owned()
+        } else {
+            draft
+                .anchors
+                .iter()
+                .map(|a| format!("{}@({},{})", a.name, a.position.x, a.position.y))
+                .collect::<Vec<_>>()
+                .join("  ")
+        };
+        ui.label(RichText::new(format!("Anchors: {anchors}")).weak());
+
+        // AC1 — live preview: the exact bytes the renderer would stamp.
+        match services_preview(&self.services, &draft.rows) {
+            Ok(text) => ui.label(
+                RichText::new(if text.is_empty() {
+                    "(blank)".to_owned()
+                } else {
+                    text
+                })
+                .monospace()
+                .color(TEXT_COLOR),
+            ),
+            Err(e) => ui.label(RichText::new(format!("preview error: {e}")).color(ERROR_COLOR)),
+        };
+
+        // The last use of `session` is above, so the borrow of
+        // `self.template_editor` has ended (NLL) and the buttons may use `self`.
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() {
+                match self.save_template() {
+                    Ok(message) => self.status = message,
+                    Err(e) => self.status = e, // inline hint is set in the window
+                }
+            }
+            if ui.button("Cancel").clicked() {
+                self.close_template_editor();
+            }
+        });
+    }
 }
 
 /// Draws the interactive overlays (S-013): anchor dots on the selected shape — and on
@@ -558,6 +773,16 @@ fn draw_overlays(
             painter.circle_filled(center_of(col, row), 3.0, ANCHOR_COLOR);
         }
     }
+}
+
+/// The editor's live preview (S-017 AC1): the resolved pattern of the draft grid as
+/// text — `Err` when the grid cannot be resolved.
+fn services_preview(services: &Services, rows: &[String]) -> Result<String, String> {
+    let pattern = services
+        .renderer
+        .preview_pattern(rows)
+        .map_err(|e| e.to_string())?;
+    Ok(services.exporter.to_text(&pattern))
 }
 
 impl eframe::App for DrawingApp {
@@ -659,6 +884,10 @@ impl eframe::App for DrawingApp {
                 // Scrollable: a few loaded collections easily exceed one screen.
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading("Shapes");
+                    // S-017 AC3 — entry point: create a new template.
+                    if ui.button("＋ New template…").clicked() {
+                        self.open_new_template();
+                    }
                     for warning in &self.collection_warnings {
                         ui.label(RichText::new(warning.clone()).color(ERROR_COLOR).weak());
                     }
@@ -681,10 +910,34 @@ impl eframe::App for DrawingApp {
                                         .color(TEXT_COLOR),
                                 );
                             }
+                            // S-017 AC3 — entry point: edit this collection template
+                            // (built-ins are code, not files — ADR 007).
+                            if !group.builtins
+                                && ui
+                                    .add_sized([24.0, 18.0], egui::Button::new("✎"))
+                                    .on_hover_text(format!("Edit {}", info.name))
+                                    .clicked()
+                            {
+                                self.open_template_editor(&info.type_id);
+                            }
                         }
                     }
                 });
             });
+
+        // Template editor window (S-017 AC1) — open while a session is active; the X
+        // button or Cancel closes it without saving.
+        if self.template_editor.is_some() {
+            let mut open = true;
+            egui::Window::new("Template editor")
+                .open(&mut open)
+                .collapsible(false)
+                .default_size([480.0, 430.0])
+                .show(ui.ctx(), |ui| self.draw_template_editor(ui));
+            if !open {
+                self.close_template_editor();
+            }
+        }
 
         // Keyboard edges (S-013 AC3): Delete/Backspace removes the selection, Escape
         // cancels placement/gestures/selection.
@@ -1049,5 +1302,161 @@ mod tests {
             .unwrap()
             .contains("(1, 2)")
         );
+    }
+
+    /// An app whose catalog can persist templates into a throwaway directory (S-017
+    /// tests must never touch the real user state).
+    fn editor_app(dir: &std::path::Path) -> DrawingApp {
+        let (services, _warnings) = Services::native_with_collections(Some(dir));
+        DrawingApp::new(services)
+    }
+
+    /// S-017 AC3 — saving a valid draft registers it through the seam; the new
+    /// template is immediately visible in the catalog (the sidebar re-reads `list()`
+    /// every frame, so it becomes placeable without any reload).
+    #[test]
+    fn save_template_registers_through_the_seam() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = editor_app(dir.path());
+        app.open_new_template();
+        let Some(session) = app.template_editor.as_mut() else {
+            panic!("editor is open")
+        };
+        session.draft.collection = "testcol".to_owned();
+        session.draft.name = "star".to_owned();
+        // A 3×3 star in the top-left corner.
+        for (x, y, c) in [
+            (0u32, 0u32, '#'),
+            (1, 0, '.'),
+            (2, 0, '#'),
+            (0, 1, '#'),
+            (1, 1, 'X'),
+            (2, 1, '#'),
+            (0, 2, '#'),
+            (1, 2, '.'),
+            (2, 2, '#'),
+        ] {
+            assert!(session.draft.set_cell(x, y, c));
+        }
+        session.draft.toggle_anchor(1, 0); // edge midpoint → "n"
+
+        let message = app.save_template().expect("saves");
+        assert!(message.contains("testcol"), "{message}");
+        assert!(app.template_editor.is_none(), "window closes on success");
+
+        // Immediately listed under its qualified id (C8) and resolvable.
+        let listed = app.services.catalog.list();
+        assert!(listed.iter().any(|i| i.type_id == "testcol/star"));
+        assert!(app.services.catalog.get("testcol/star").is_some());
+    }
+
+    /// S-017 AC3 — end-to-end through the seam: edit → save → place on the canvas →
+    /// the rendered grid carries the template's pattern bytes at the placement cell.
+    #[test]
+    fn saved_template_places_and_renders_its_pattern() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = editor_app(dir.path());
+        app.open_new_template();
+        {
+            let session = app.template_editor.as_mut().expect("editor is open");
+            session.draft.collection = "stars".to_owned();
+            session.draft.name = "star".to_owned();
+            for (x, y, c) in [
+                (0u32, 0u32, '#'),
+                (1, 0, '.'),
+                (2, 0, '#'),
+                (0, 1, '#'),
+                (1, 1, 'X'),
+                (2, 1, '#'),
+                (0, 2, '#'),
+                (1, 2, '.'),
+                (2, 2, '#'),
+            ] {
+                assert!(session.draft.set_cell(x, y, c));
+            }
+            session.draft.toggle_anchor(1, 0);
+        }
+        app.save_template().expect("saves");
+
+        // Place the freshly saved template at (5, 7) through the same gesture path
+        // the canvas uses.
+        let info = app
+            .services
+            .catalog
+            .get("stars/star")
+            .expect("listed after save");
+        app.editor.select_template(info);
+        assert!(matches!(
+            app.handle_pointer_frame(true, Some(((5, 7), HitTarget::Empty))),
+            EditOutcome::Placed { .. }
+        ));
+        app.handle_pointer_frame(false, None);
+
+        // The rendered grid carries the pattern bytes verbatim (trimmed to the star).
+        let (text, width, height) = app.canvas_frame().expect("renders");
+        assert_eq!((width, height), (3, 3), "star is 3×3:\n{text}");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "#.#", "{text}");
+        assert_eq!(lines[1], "#X#", "{text}");
+        assert_eq!(lines[2], "#.#", "{text}");
+    }
+
+    /// S-017 AC2 — saving is blocked without anchors: the error is reported, the
+    /// inline hint is set, the editor stays open, and nothing is registered.
+    #[test]
+    fn save_template_is_blocked_without_anchors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = editor_app(dir.path());
+        app.open_new_template();
+        {
+            let session = app.template_editor.as_mut().expect("editor is open");
+            session.draft.set_cell(0, 0, '#'); // a grid, but no anchor
+        }
+
+        let err = app.save_template().expect_err("no anchors — must not save");
+        assert!(err.contains("anchor"), "{err}");
+        // The inline hint is set and the editor stays open.
+        let session = app.template_editor.as_mut().expect("editor stays open");
+        assert!(
+            session
+                .draft
+                .rejection
+                .as_deref()
+                .unwrap_or("")
+                .contains("anchor")
+        );
+        // Nothing was registered.
+        assert!(
+            app.services
+                .catalog
+                .list()
+                .iter()
+                .all(|i| i.collection.is_none())
+        );
+    }
+
+    /// S-017 AC3 — the edit entry point loads an existing template's grid and anchors
+    /// into a draft; built-ins have no entry point (they are code, not files).
+    #[test]
+    fn open_template_editor_loads_an_existing_template() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("stars.adc"),
+            "adc 1.0\ntemplate star 3 x 3\n###\n#.#\n###\nanchor n at 1 0\n",
+        )
+        .expect("seed file");
+        let mut app = editor_app(dir.path());
+
+        // Built-ins are not editable: the entry point is a no-op for them.
+        app.open_template_editor("box");
+        assert!(app.template_editor.is_none());
+
+        app.open_template_editor("stars/star");
+        let session = app.template_editor.as_mut().expect("editor is open");
+        assert_eq!(session.draft.collection, "stars");
+        assert_eq!(session.draft.name, "star");
+        assert_eq!(session.draft.rows, vec!["###", "#.#", "###"]);
+        assert_eq!(session.draft.anchors.len(), 1);
+        assert_eq!(session.draft.anchors[0].name, "n");
     }
 }

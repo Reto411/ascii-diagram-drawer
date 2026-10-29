@@ -15,6 +15,7 @@ mod canvas;
 mod editor;
 mod fileio;
 mod sidebar;
+mod template_editor;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {

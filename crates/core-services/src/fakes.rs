@@ -12,8 +12,8 @@ use std::sync::Mutex;
 use diagram_model::Diagram;
 use render_pipeline::{RenderError, ResolvedGrid};
 use ui_api::{
-    AnchorInfo, DiagramStore, Exporter, LoadedDocument, Renderer, ShapeCatalog, ShapeInfo,
-    StoreError,
+    AnchorInfo, CatalogError, DiagramStore, Exporter, LoadedDocument, NewTemplate, Renderer,
+    ShapeCatalog, ShapeInfo, StoreError,
 };
 
 /// In-memory store: seed documents, load/save against the map. The same semantics as
@@ -108,6 +108,21 @@ impl Renderer for FakeRenderer {
     fn render(&self, _diagram: &Diagram) -> Result<ResolvedGrid, RenderError> {
         self.outcome.clone()
     }
+
+    /// The fake preview is the configured grid's text with the pattern rows
+    /// prepended — GUI tests can assert on both halves.
+    fn preview_pattern(&self, rows: &[String]) -> Result<ResolvedGrid, RenderError> {
+        let mut all: Vec<String> = rows.to_vec();
+        if let Ok(grid) = &self.outcome {
+            for line in grid.to_text().lines() {
+                all.push(line.to_owned());
+            }
+        }
+        let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+        ResolvedGrid::from_rows(&refs).map_err(|e| RenderError::InvalidPattern {
+            message: e.to_string(),
+        })
+    }
 }
 
 /// Exporter that returns fixed media — deterministic bytes for GUI assertions.
@@ -128,17 +143,22 @@ impl Exporter for FakeExporter {
     }
 }
 
-/// Catalog seeded with explicit read models — no registry involved.
+/// Catalog seeded with explicit read models — no registry involved. Registration
+/// inserts a synthetic read model under `collection/name` (in-memory only, like the
+/// rest of the fake).
 #[derive(Debug, Default)]
 pub struct FakeCatalog {
-    entries: BTreeMap<String, (ShapeInfo, Vec<AnchorInfo>)>,
+    entries: Mutex<BTreeMap<String, (ShapeInfo, Vec<AnchorInfo>)>>,
 }
 
 impl FakeCatalog {
     /// Adds a shape with its anchors under `info.type_id`.
     #[must_use]
-    pub fn add(mut self, info: ShapeInfo, anchors: Vec<AnchorInfo>) -> Self {
-        self.entries.insert(info.type_id.clone(), (info, anchors));
+    pub fn add(self, info: ShapeInfo, anchors: Vec<AnchorInfo>) -> Self {
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(info.type_id.clone(), (info, anchors));
         self
     }
 }
@@ -146,19 +166,54 @@ impl FakeCatalog {
 impl ShapeCatalog for FakeCatalog {
     fn list(&self) -> Vec<ShapeInfo> {
         self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .values()
             .map(|(info, _)| info.clone())
             .collect()
     }
 
     fn get(&self, type_id: &str) -> Option<ShapeInfo> {
-        self.entries.get(type_id).map(|(info, _)| info.clone())
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(type_id)
+            .map(|(info, _)| info.clone())
     }
 
     fn anchors(&self, type_id: &str) -> Option<Vec<AnchorInfo>> {
         self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(type_id)
             .map(|(_, anchors)| anchors.clone())
+    }
+
+    fn register(&self, collection: &str, template: NewTemplate) -> Result<(), CatalogError> {
+        let size = diagram_model::geometry::CellSize::new(
+            template
+                .rows
+                .iter()
+                .map(|r| r.chars().count())
+                .max()
+                .unwrap_or(0) as u32,
+            template.rows.len() as u32,
+        )
+        .map_err(|e| CatalogError::Invalid {
+            message: e.to_string(),
+        })?;
+        let info = ShapeInfo {
+            type_id: format!("{collection}/{}", template.name),
+            name: template.name.clone(),
+            size,
+            collection: Some(collection.to_owned()),
+            preview: template.rows.clone(),
+        };
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(info.type_id.clone(), (info, template.anchors.clone()));
+        Ok(())
     }
 }
 

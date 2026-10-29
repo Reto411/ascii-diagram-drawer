@@ -15,8 +15,8 @@ use render_pipeline::{RenderError, ResolvedGrid};
 pub mod error;
 pub mod types;
 
-pub use error::{ExportError, StoreError};
-pub use types::{AnchorInfo, LoadedDocument, ShapeInfo};
+pub use error::{CatalogError, ExportError, StoreError};
+pub use types::{AnchorInfo, LoadedDocument, NewTemplate, ShapeInfo};
 
 /// Loads and saves `.ad` documents (FR4). The native backend uses the filesystem;
 /// targets without one (wasm) get an in-memory store behind this same trait.
@@ -40,6 +40,12 @@ pub trait DiagramStore {
 pub trait Renderer {
     /// Places and resolves `diagram` against the bound catalog.
     fn render(&self, diagram: &Diagram) -> Result<ResolvedGrid, RenderError>;
+
+    /// Renders an as-yet-unregistered template pattern through the full pipeline —
+    /// the live preview of the template editor (S-017 AC1). The pattern is placed at
+    /// the origin of an otherwise empty diagram and resolved by the same place/resolve
+    /// stages a saved template would use, so the preview equals the render output.
+    fn preview_pattern(&self, rows: &[String]) -> Result<ResolvedGrid, RenderError>;
 }
 
 /// Emits the resolved grid as user-facing media (FR2/FR5). Text is infallible; SVG
@@ -56,8 +62,9 @@ pub trait Exporter {
     fn to_png(&self, grid: &ResolvedGrid) -> Result<Vec<u8>, ExportError>;
 }
 
-/// Lists and looks up shape types (FR3; registration is v1+). Data crosses the seam
-/// as read models ([`ShapeInfo`], [`AnchorInfo`]) — never registry types.
+/// Lists and looks up shape types (FR3) and registers user-defined templates
+/// (S-017, FR11). Data crosses the seam as read models ([`ShapeInfo`],
+/// [`AnchorInfo`]) — never registry types.
 pub trait ShapeCatalog {
     /// Every available shape type: built-ins plus all loaded collections, in order.
     fn list(&self) -> Vec<ShapeInfo>;
@@ -67,4 +74,9 @@ pub trait ShapeCatalog {
 
     /// The named anchors of a shape type, in name order — `None` for unknown ids.
     fn anchors(&self, type_id: &str) -> Option<Vec<AnchorInfo>>;
+
+    /// Registers (or replaces) `template` in `collection`, persisting the collection
+    /// to its `.adc` file and updating every service that reads the catalog — the
+    /// sidebar lists it immediately and the renderer resolves it (S-017 AC3).
+    fn register(&self, collection: &str, template: NewTemplate) -> Result<(), CatalogError>;
 }

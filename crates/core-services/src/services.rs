@@ -10,6 +10,7 @@ use ui_api::{DiagramStore, Exporter, Renderer, ShapeCatalog};
 use crate::catalog::RegistryCatalog;
 use crate::collections::{CollectionLoadWarning, load_from_dir};
 use crate::exporter::GridExporter;
+use crate::registry_state::SharedRegistry;
 use crate::renderer::PipelineRenderer;
 use crate::store::{FsStore, MemoryStore};
 
@@ -23,20 +24,22 @@ pub struct Services {
     pub renderer: Arc<dyn Renderer>,
     /// Grid → text/SVG/PNG (FR2/FR5); PNG degrades to `Unsupported` without a backend.
     pub exporter: Arc<dyn Exporter>,
-    /// Shape type listing/lookup (FR3; registration is v1+).
+    /// Shape type listing/lookup + template registration (FR3/FR11, S-017).
     pub catalog: Arc<dyn ShapeCatalog>,
 }
 
 impl Services {
     /// Native composition: filesystem store + built-in catalog + full exporters.
+    /// No collections directory — template registration reports a clear IO error
+    /// (use [`native_with_collections`](Self::native_with_collections) to enable it).
     #[must_use]
     pub fn native() -> Self {
-        let registry = ShapeRegistry::builtin();
+        let state = SharedRegistry::standalone(ShapeRegistry::builtin());
         Self {
             store: Arc::new(FsStore),
-            renderer: Arc::new(PipelineRenderer::new(registry.clone())),
+            renderer: Arc::new(PipelineRenderer::with_shared(state.clone())),
             exporter: Arc::new(GridExporter),
-            catalog: Arc::new(RegistryCatalog::new(registry)),
+            catalog: Arc::new(RegistryCatalog::with_shared(state)),
         }
     }
 
@@ -50,27 +53,34 @@ impl Services {
             Some(d) => load_from_dir(&mut registry, d),
             None => Vec::new(),
         };
+        // One shared state for renderer + catalog: templates registered through the
+        // catalog (S-017) render immediately; `dir` is where they persist.
+        let state = match dir {
+            Some(d) => SharedRegistry::with_collections_dir(registry, d.to_path_buf()),
+            None => SharedRegistry::standalone(registry),
+        };
         (
             Self {
                 store: Arc::new(FsStore),
-                renderer: Arc::new(PipelineRenderer::new(registry.clone())),
+                renderer: Arc::new(PipelineRenderer::with_shared(state.clone())),
                 exporter: Arc::new(GridExporter),
-                catalog: Arc::new(RegistryCatalog::new(registry)),
+                catalog: Arc::new(RegistryCatalog::with_shared(state)),
             },
             warnings,
         )
     }
 
     /// Web (wasm) composition: in-memory store; everything else identical — the seam
-    /// does not change shape per target, only the store backend.
+    /// does not change shape per target, only the store backend. No collections
+    /// directory (no filesystem on wasm) → registration reports a clear IO error.
     #[must_use]
     pub fn web() -> Self {
-        let registry = ShapeRegistry::builtin();
+        let state = SharedRegistry::standalone(ShapeRegistry::builtin());
         Self {
             store: Arc::new(MemoryStore::default()),
-            renderer: Arc::new(PipelineRenderer::new(registry.clone())),
+            renderer: Arc::new(PipelineRenderer::with_shared(state.clone())),
             exporter: Arc::new(GridExporter),
-            catalog: Arc::new(RegistryCatalog::new(registry)),
+            catalog: Arc::new(RegistryCatalog::with_shared(state)),
         }
     }
 }
@@ -207,6 +217,53 @@ mod tests {
             list.iter()
                 .all(|s| s.collection.as_deref() != Some("broken"))
         );
+    }
+
+    /// S-017 AC3 — registration through the catalog is visible to the renderer in
+    /// the same composition: one shared registry behind both seam services.
+    #[test]
+    fn registered_templates_render_immediately() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (services, _) = Services::native_with_collections(Some(dir.path()));
+
+        services
+            .catalog
+            .register(
+                "stars",
+                ui_api::NewTemplate {
+                    name: "star".into(),
+                    rows: vec!["#.#".into(), "###".into(), "#.#".into()],
+                    anchors: vec![ui_api::AnchorInfo {
+                        name: "n".into(),
+                        position: diagram_model::geometry::CellPos { x: 1, y: 0 },
+                    }],
+                },
+            )
+            .expect("valid template");
+
+        // The sidebar lists it…
+        let star = services.catalog.get("stars/star").expect("listed");
+        assert_eq!(star.size.width, 3);
+
+        // …and a diagram using it renders through the same composition.
+        let mut d = diagram_model::Diagram::new();
+        let id = d.new_object_id();
+        let instance = ShapeInstance::new(
+            id,
+            "stars/star",
+            "",
+            CellPos::origin(),
+            diagram_model::geometry::CellSize::new(3, 3).expect("valid size"),
+        )
+        .expect("valid instance");
+        d.place_shape(instance).expect("places");
+        let text = services
+            .exporter
+            .to_text(&services.renderer.render(&d).expect("renders"));
+        assert!(text.contains("###"), "pattern must be stamped in:\n{text}");
+
+        // The file was persisted next to the discovered collections.
+        assert!(dir.path().join("stars.adc").exists());
     }
 
     /// S-016 AC2 — `None` keeps the built-in-only composition (no discovery).
