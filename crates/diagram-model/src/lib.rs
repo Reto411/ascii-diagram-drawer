@@ -24,6 +24,7 @@
 
 pub mod anchors;
 pub mod geometry;
+pub mod glyphs;
 pub mod invariants;
 pub mod objects;
 
@@ -148,6 +149,25 @@ impl Diagram {
     pub fn place_shape(&mut self, instance: ShapeInstance) -> Result<(), ModelError> {
         self.ensure_unique_id(&instance.id)?;
         self.objects.push(Object::Shape(instance));
+        Ok(())
+    }
+
+    /// Replaces the content of a free text object (FR10). The rendered extent follows the
+    /// content at render time; empty content is rejected.
+    ///
+    /// # Errors
+    /// [`ModelError::EmptyText`], [`ModelError::UnknownObject`] or [`ModelError::NotAText`].
+    pub fn set_text(&mut self, id: &ObjectId, text: &str) -> Result<(), ModelError> {
+        if text.is_empty() {
+            return Err(ModelError::EmptyText);
+        }
+        let object = self
+            .get_mut(id)
+            .ok_or_else(|| ModelError::UnknownObject(id.clone()))?;
+        match object {
+            Object::Text(instance) => instance.text = text.to_owned(),
+            _ => return Err(ModelError::NotAText(id.clone())),
+        }
         Ok(())
     }
 
@@ -305,6 +325,31 @@ mod tests {
         assert_eq!(
             diagram.move_object(&oid("ghost"), CellPos::origin()),
             Err(ModelError::UnknownObject(oid("ghost")))
+        );
+    }
+
+    /// `set_text` replaces the content of a text object and rejects empty content,
+    /// unknown ids, and non-text targets (FR10).
+    #[test]
+    fn set_text_edits_content_and_validates() {
+        let mut diagram = Diagram::new();
+        diagram.place_shape(shape("s1", "box")).expect("places");
+        diagram.place_text(text("t1")).expect("places");
+
+        assert_eq!(diagram.set_text(&oid("t1"), "hello\nworld"), Ok(()));
+        let Object::Text(instance) = diagram.get(&oid("t1")).expect("present") else {
+            panic!("expected text")
+        };
+        assert_eq!(instance.text, "hello\nworld");
+
+        assert_eq!(diagram.set_text(&oid("t1"), ""), Err(ModelError::EmptyText));
+        assert_eq!(
+            diagram.set_text(&oid("ghost"), "x"),
+            Err(ModelError::UnknownObject(oid("ghost")))
+        );
+        assert_eq!(
+            diagram.set_text(&oid("s1"), "x"),
+            Err(ModelError::NotAText(oid("s1")))
         );
     }
 

@@ -53,6 +53,8 @@ pub enum ModelError {
     IdContainsWhitespace(String),
     /// An operation requires a shape, but the object is another kind.
     NotAShape(ObjectId),
+    /// An operation requires a free text object, but the object is another kind.
+    NotAText(ObjectId),
     /// The diagram scale factor must be at least one.
     ScaleTooSmall {
         /// The rejected scale value.
@@ -92,6 +94,9 @@ impl fmt::Display for ModelError {
             ),
             Self::NotAShape(id) => {
                 write!(f, "expected a shape but found another object kind: {id}")
+            }
+            Self::NotAText(id) => {
+                write!(f, "expected free text but found another object kind: {id}")
             }
             Self::ScaleTooSmall { scale } => {
                 write!(f, "scale factor must be at least 1 (got {scale})")

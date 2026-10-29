@@ -136,6 +136,24 @@ impl TextInstance {
             text: text.to_owned(),
         })
     }
+
+    /// The lines exactly as the render pipeline stamps them (C1 F4): each line verbatim,
+    /// wrapped in double quotes when it contains any svgbob-alphabet character so it reads
+    /// as literal text. Shared with the GUI, which derives hit-testing extents from these
+    /// same lines (S-018) — one definition, no drift.
+    #[must_use]
+    pub fn stamped_lines(&self) -> Vec<String> {
+        self.text
+            .split('\n')
+            .map(|line| {
+                if line.chars().any(crate::glyphs::is_svgbob_glyph) {
+                    format!("\"{line}\"")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect()
+    }
 }
 
 /// A line/arrow between two shape anchors (FR9).
@@ -286,6 +304,28 @@ mod tests {
         let multi =
             TextInstance::new(id("t2"), CellPos::new(0, 3), "line one\nline two").expect("valid");
         assert_eq!(multi.text, "line one\nline two");
+    }
+
+    /// `stamped_lines` applies the C1 F4 quote fallback per line: lines containing any
+    /// svgbob-alphabet character are wrapped in double quotes, plain lines stay verbatim.
+    #[test]
+    fn stamped_lines_quote_only_lines_with_reserved_glyphs() {
+        let plain = TextInstance::new(id("t1"), CellPos::origin(), "hello").expect("valid");
+        assert_eq!(plain.stamped_lines(), vec!["hello"]);
+
+        let quoted = TextInstance::new(id("t2"), CellPos::origin(), "a-b | c").expect("valid");
+        assert_eq!(quoted.stamped_lines(), vec!["\"a-b | c\""]);
+
+        let mixed = TextInstance::new(
+            id("t3"),
+            CellPos::origin(),
+            "plain\nwith \"quote\"\nV upper",
+        )
+        .expect("valid");
+        assert_eq!(
+            mixed.stamped_lines(),
+            vec!["plain", "\"with \"quote\"\"", "\"V upper\""]
+        );
     }
 
     /// Connectors hold their id, endpoints and style.

@@ -1,0 +1,4 @@
+ad 1.0
+shape box "Server" as s1 at 3 4 w 9 h 5
+text as t1 "hello world" at 16 5
+text as t2 "line one\nline two" at 3 12

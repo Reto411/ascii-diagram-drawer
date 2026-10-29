@@ -286,12 +286,11 @@ fn anchor_base_edges(glyph: &TemplateGrid, pos: CellPos) -> EdgeSet {
     edges
 }
 
-/// Stamps a free-text object: each line verbatim at `pos + (column, row)`; lines
-/// containing svgbob-alphabet characters are wrapped in quotes (C1).
+/// Stamps a free-text object: each stamped line (C1 F4 quoting applied —
+/// [`TextInstance::stamped_lines`]) at `pos + (column, row)`.
 fn place_text_object(grid: &mut PlacedGrid, text: &TextInstance) {
-    for (i, line) in text.text.split('\n').enumerate() {
-        let effective = quoted_if_needed(line);
-        for (j, c) in effective.chars().enumerate() {
+    for (i, line) in text.stamped_lines().iter().enumerate() {
+        for (j, c) in line.chars().enumerate() {
             if c != ' ' {
                 grid.with_cell(text.pos.x + j as u32, text.pos.y + i as u32, |s| {
                     s.stamp_content(c)

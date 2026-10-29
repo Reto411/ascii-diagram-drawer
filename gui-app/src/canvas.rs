@@ -5,18 +5,18 @@
 
 use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
-use diagram_model::objects::{Object, ObjectId, ShapeInstance};
+use diagram_model::objects::{Object, ObjectId, ShapeInstance, TextInstance};
 use ui_api::{AnchorInfo, ShapeCatalog};
 
 /// What the pointer is over (S-013). Computed by [`hit_target`] and consumed by the
 /// gesture machine in `editor.rs` — anchors and the resize handle take priority over
-/// the plain shape body.
+/// plain object bodies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HitTarget {
     /// Nothing interactive at this cell.
     Empty,
-    /// The body of a shape (topmost on overlap).
-    Shape(ObjectId),
+    /// The body of a shape or free-text object (topmost on overlap).
+    Body(ObjectId),
     /// A named anchor of a shape — starts/finishes a connection.
     Anchor(ObjectId, String),
     /// The resize handle of the selected shape (its bottom-right cell, v1).
@@ -127,11 +127,34 @@ pub fn hit_target(
                     && col.saturating_sub(shape.pos.x) < shape.size.width
                     && row >= shape.pos.y
                     && row.saturating_sub(shape.pos.y) < shape.size.height;
-                within.then(|| HitTarget::Shape(shape.id.clone()))
+                within.then(|| HitTarget::Body(shape.id.clone()))
             }
-            Object::Connector(_) | Object::Text(_) => None,
+            // Free text is hit-tested over its stamped extent (S-018).
+            Object::Text(text) => {
+                let (width, height) = text_hit_extent(text);
+                let within = col >= text.pos.x
+                    && col.saturating_sub(text.pos.x) < width
+                    && row >= text.pos.y
+                    && row.saturating_sub(text.pos.y) < height;
+                within.then(|| HitTarget::Body(text.id.clone()))
+            }
+            Object::Connector(_) => None,
         })
         .unwrap_or(HitTarget::Empty)
+}
+
+/// The rendered extent of a free-text object in cells (S-018 hit-testing): the bounding
+/// box of its stamped lines — C1 F4 quoting included, so clicks on the quote characters
+/// land on the text. Width is the longest line, height the line count.
+#[must_use]
+pub fn text_hit_extent(text: &TextInstance) -> (u32, u32) {
+    let lines = text.stamped_lines();
+    let width = lines
+        .iter()
+        .map(|line| line.chars().count() as u32)
+        .max()
+        .unwrap_or(0);
+    (width, lines.len() as u32)
 }
 
 /// One primitive of the interactive overlay layer (S-013), in model space — the
@@ -401,7 +424,7 @@ mod tests {
         // Interior body cell → the shape itself.
         assert_eq!(
             hit_target(&diagram, &catalog, Some(&s1), None, (3, 2)),
-            HitTarget::Shape(s1.clone())
+            HitTarget::Body(s1.clone())
         );
         // Empty space.
         assert_eq!(
@@ -413,7 +436,7 @@ mod tests {
         let s2 = ObjectId::new("s2").expect("valid id");
         assert_eq!(
             hit_target(&diagram, &catalog, Some(&s1), None, (13, 2)),
-            HitTarget::Shape(s2.clone())
+            HitTarget::Body(s2.clone())
         );
     }
 
@@ -425,7 +448,7 @@ mod tests {
         let diagram = diagram_with(&[("s1", 0, 0), ("s2", 5, 0)]);
         assert_eq!(
             hit_target(&diagram, &catalog, None, None, (6, 2)),
-            HitTarget::Shape(ObjectId::new("s2").expect("valid id"))
+            HitTarget::Body(ObjectId::new("s2").expect("valid id"))
         );
     }
 
@@ -495,7 +518,7 @@ mod tests {
         // Its bottom-right cell (4,2) selects the body — not a resize handle…
         assert_eq!(
             hit_target(&diagram, &catalog, Some(&a1), None, (4, 2)),
-            HitTarget::Shape(a1.clone())
+            HitTarget::Body(a1.clone())
         );
         // …and the overlay has dots but no handle.
         let overlays = overlays(&diagram, &catalog, Some(&a1), None);

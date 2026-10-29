@@ -101,29 +101,9 @@ pub fn render(d: &Diagram, registry: &ShapeRegistry) -> Result<ResolvedGrid, Ren
     Ok(expand(&resolved, d.scale()))
 }
 
-/// Whether `c` is a structural line glyph of the svgbob alphabet: it connects to its
-/// neighbors and fills its whole scale block when the grid is expanded (FR8). The quote
-/// character is content, not structure.
-pub const fn is_line_glyph(c: char) -> bool {
-    matches!(
-        c,
-        '+' | '-' | '|' | '.' | ',' | ':' | ';' | '/' | '\\' | '_' | '`' | '\'' | '(' | ')'
-    )
-}
-
-/// Whether `c` is an arrowhead glyph produced by connector routing (ADR 013): solid
-/// `< > ^ v`, stamped as content at the target end of a route.
-pub const fn is_arrowhead(c: char) -> bool {
-    matches!(c, '<' | '>' | '^' | 'v')
-}
-
-/// Whether `c` belongs to svgbob's ASCII input alphabet (ADR 001 v2): the structural line
-/// glyphs, double quotes, and the arrow vocabulary `< > ^ v V`. (The pipeline only ever
-/// emits the lowercase arrows as connector heads; uppercase `V` appears in user text,
-/// where it must still count for quote-escaping per C1 F4.)
-pub const fn is_svgbob_glyph(c: char) -> bool {
-    c == '"' || c == 'V' || is_line_glyph(c) || is_arrowhead(c)
-}
+// The svgbob-alphabet predicates live in `diagram-model` (shared with the GUI's text
+// hit-testing, S-018); re-exported here for existing consumers and property tests.
+pub use diagram_model::glyphs::{is_arrowhead, is_line_glyph, is_svgbob_glyph};
 
 #[cfg(test)]
 mod tests {

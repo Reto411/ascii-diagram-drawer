@@ -10,11 +10,15 @@
 use std::path::{Path, PathBuf};
 
 use core_services::Services;
-use diagram_model::{Diagram, objects::Object};
+use diagram_model::geometry::CellSize;
+use diagram_model::{
+    Diagram,
+    objects::{Object, ObjectId},
+};
 use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense};
 
 use crate::canvas::{HitTarget, Viewport, hit_target};
-use crate::editor::{EditOutcome, EditorState, PointerEvent};
+use crate::editor::{EditOutcome, EditorState, Placing, PointerEvent};
 use crate::exportio::{self, PngExport};
 use crate::template_editor::TemplateEditorSession;
 
@@ -79,6 +83,10 @@ pub struct DrawingApp {
     png_export: Option<PngExport>,
     /// Sink for the in-flight PNG job — where the bytes are written on completion.
     pending_png_path: Option<PathBuf>,
+    /// The text object being edited inline on the previous frame (S-018): the editor
+    /// requests keyboard focus exactly once, when editing starts (it appears without a
+    /// click — right after placement or a double click).
+    last_editing: Option<ObjectId>,
 }
 
 /// Builds the app from services, an optional startup fixture (the visual test tiers
@@ -124,6 +132,7 @@ impl DrawingApp {
             template_editor: None,
             png_export: None,
             pending_png_path: None,
+            last_editing: None,
         }
     }
 
@@ -452,6 +461,16 @@ impl DrawingApp {
     /// The booleans are parsed from egui input in `ui()` so this seam stays testable
     /// without a window.
     pub fn handle_key_frame(&mut self, delete: bool, escape: bool) -> Option<String> {
+        // While an inline text edit is open, Delete/Backspace belong to the text field
+        // (editing the draft), not to object deletion (S-018). Escape still cancels the
+        // edit — `on_escape` checks it before anything else.
+        if self.editor.editing.is_some() {
+            if escape {
+                // `on_escape` checks the inline edit first and cancels it.
+                return status_for(self.editor.on_escape());
+            }
+            return None; // Delete/Backspace belong to the text field, not object deletion
+        }
         if delete {
             return status_for(self.editor.delete_selection(&mut self.diagram));
         }
@@ -506,35 +525,39 @@ impl DrawingApp {
             );
         }
 
-        // The exact text bytes of the resolved grid — one line per row (AC2),
-        // offset by the content origin.
+        // The exact text bytes of the resolved grid — one line per row (AC2), offset by
+        // the content origin in BOTH axes: the trimmed text starts at the content origin,
+        // so rendered cells coincide with model cells (the same mapping hit-testing uses).
         for (row, line) in text.lines().enumerate() {
             if line.is_empty() {
                 continue;
             }
             let pos = Pos2::new(
-                vp.origin_x,
+                vp.origin_x + origin_x as f32 * cell_px,
                 vp.origin_y + (origin_y + row as u32) as f32 * cell_px,
             );
             painter.text(pos, Align2::LEFT_TOP, line, font_id.clone(), TEXT_COLOR);
         }
 
-        // Selection overlay around the selected shape's bounds.
-        let selected_shape =
+        // Selection overlay around the selected object's bounds — shapes and free text
+        // (S-018; text uses its hit extent).
+        let selected_extent =
             self.editor
                 .selection
                 .as_ref()
                 .and_then(|id| match self.diagram.get(id) {
-                    Some(Object::Shape(shape)) => Some(shape),
+                    Some(Object::Shape(shape)) => Some((shape.pos, shape.size)),
+                    Some(Object::Text(text)) => {
+                        let (w, h) = crate::canvas::text_hit_extent(text);
+                        Some((
+                            text.pos,
+                            CellSize::new(w, h).expect("hit extent is a valid size"),
+                        ))
+                    }
                     _ => None,
                 });
-        if let Some(shape) = selected_shape {
-            let (x, y, w, h) = vp.cell_block(
-                shape.pos.x,
-                shape.pos.y,
-                shape.size.width,
-                shape.size.height,
-            );
+        if let Some((pos, size)) = selected_extent {
+            let (x, y, w, h) = vp.cell_block(pos.x, pos.y, size.width, size.height);
             painter.rect_stroke(
                 egui::Rect::from_min_max(Pos2::new(x, y), Pos2::new(x + w, y + h)),
                 0.0,
@@ -561,9 +584,14 @@ impl DrawingApp {
             )
         });
 
-        // Placement ghost at the hovered cell (model space — unbounded).
-        if let (Some(info), Some((col, row))) = (&self.editor.placing, hover_cell) {
-            let (x, y, w, h) = vp.cell_block(col, row, info.size.width, info.size.height);
+        // Placement ghost at the hovered cell (model space — unbounded). The text tool
+        // ghosts a 1×1 anchor marker — the placed object grows with its content.
+        if let (Some(tool), Some((col, row))) = (&self.editor.placing, hover_cell) {
+            let extent = match tool {
+                Placing::Shape(info) => info.size,
+                Placing::Text => CellSize::new(1, 1).expect("1×1 is a valid size"),
+            };
+            let (x, y, w, h) = vp.cell_block(col, row, extent.width, extent.height);
             painter.rect_stroke(
                 egui::Rect::from_min_max(Pos2::new(x, y), Pos2::new(x + w, y + h)),
                 0.0,
@@ -583,8 +611,76 @@ impl DrawingApp {
         }
 
         let held = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-        if let Some(message) = status_for(self.handle_pointer_frame(held, hit)) {
+        if let Some(message) = status_for(self.handle_pointer_frame(held, hit.clone())) {
             self.status = message;
+        }
+
+        // Double click (S-018 AC1): open inline editing of a text object under the pointer.
+        if ctx.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        }) && let Some(message) = status_for(self.handle_pointer_double(hit))
+        {
+            self.status = message;
+        }
+
+        // Inline text editing (S-018 AC1): a TextEdit bound to the editor's draft,
+        // floating over the text object. Plain Enter or blur commits, Escape cancels
+        // (routed through `handle_key_frame` → `EditorState::on_escape`).
+        if let Some(id) = self.editor.editing.clone()
+            && let Some(Object::Text(text)) = self.diagram.get(&id)
+        {
+            let (enter, shift) =
+                ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.modifiers.shift));
+            // Check Enter BEFORE showing the field: egui's multiline TextEdit would
+            // otherwise insert a newline this frame and commit it. Shift+Enter is
+            // reserved for inserting line breaks inside the text.
+            if enter && !shift {
+                if let Some(message) = status_for(self.editor.commit_edit(&mut self.diagram)) {
+                    self.status = message;
+                }
+            } else {
+                let (w, h) = crate::canvas::text_hit_extent(text);
+                // A little breathing room so typing does not clip.
+                let (x, y, cw, ch) = vp.cell_block(text.pos.x, text.pos.y, w.max(8), h.max(1));
+                // Canvas-relative → screen coordinates for the floating area.
+                let pos = Pos2::new(x + rect.min.x, y + rect.min.y);
+                let focus_once = self.last_editing.as_ref() != Some(&id);
+                egui::Area::new(egui::Id::unique("inline-text-edit"))
+                    .fixed_pos(pos)
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        let response = ui.add_sized(
+                            [cw, ch.max(FONT_SIZE * 1.6)],
+                            egui::TextEdit::multiline(&mut self.editor.edit_draft),
+                        );
+                        // The field must own the keyboard while editing — it appears
+                        // without a click (right after placement or a double click).
+                        if focus_once {
+                            response.request_focus();
+                        }
+                        // Blur without a pointer press (e.g. tabbing away): commit.
+                        if response.lost_focus() && self.editor.editing.is_some() {
+                            let _ = self.editor.commit_edit(&mut self.diagram);
+                        }
+                    });
+            }
+        }
+        self.last_editing = self.editor.editing.clone();
+    }
+
+    /// Double-click edge (S-018 AC1): opens inline editing of the text object under the
+    /// pointer; shapes and empty space are not editable in v1.
+    pub fn handle_pointer_double(&mut self, hit: Option<((u32, u32), HitTarget)>) -> EditOutcome {
+        match hit {
+            Some(((col, row), target)) => self.editor.on_pointer(
+                PointerEvent::DoubleClick {
+                    cell: (col, row),
+                    target,
+                },
+                &mut self.diagram,
+            ),
+            None => EditOutcome::Nothing,
         }
     }
 
@@ -1010,12 +1106,23 @@ impl eframe::App for DrawingApp {
         // built-in group + one group per loaded collection, each shape with a
         // small preview of its glyph pattern.
         let groups = crate::sidebar::group_templates(&self.services.catalog.list());
-        let placing_id = self.editor.placing.as_ref().map(|p| p.type_id.clone());
+        let (placing_id, placing_text) = match self.editor.placing.as_ref() {
+            Some(Placing::Shape(info)) => (Some(info.type_id.clone()), false),
+            Some(Placing::Text) => (None, true),
+            None => (None, false),
+        };
         egui::Panel::left("templates")
             .size_range(SIDEBAR_PX..=SIDEBAR_PX)
             .show(ui, |ui| {
                 // Scrollable: a few loaded collections easily exceed one screen.
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    // S-018 — the free-text tool: one click places a text object and
+                    // opens inline editing of it immediately.
+                    if ui.selectable_label(placing_text, "T  Text").clicked() {
+                        self.editor.select_text_tool();
+                        self.status = "Placing text — click the canvas".to_owned();
+                    }
+                    ui.separator();
                     ui.heading("Shapes");
                     // S-017 AC3 — entry point: create a new template.
                     if ui.button("＋ New template…").clicked() {
@@ -1098,6 +1205,11 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
         EditOutcome::Deselected => Some("Selection cleared".to_owned()),
         EditOutcome::Selected(id) => Some(format!("Selected {id}")),
         EditOutcome::Placed { id, type_id } => Some(format!("Placed {type_id} as {id}")),
+        EditOutcome::PlacedText { id } => Some(format!(
+            "Text placed as {id} — type its content (Enter commits, Esc cancels)"
+        )),
+        EditOutcome::Editing { id } => Some(format!("Editing {id} — Enter commits, Esc cancels")),
+        EditOutcome::Edited { id } => Some(format!("Text updated [{id}]")),
         EditOutcome::Moved { id, to } => Some(format!("{id} moved to ({}, {})", to.x, to.y)),
         EditOutcome::Resized { id, to } => {
             Some(format!("{id} resized to {}×{}", to.width, to.height))
@@ -1223,7 +1335,7 @@ mod tests {
         assert_eq!(
             app.handle_pointer_frame(
                 true,
-                Some(((5, 5), HitTarget::Shape(ObjectId::generated(1))))
+                Some(((5, 5), HitTarget::Body(ObjectId::generated(1))))
             ),
             EditOutcome::Selected(ObjectId::generated(1))
         );
@@ -1262,7 +1374,7 @@ mod tests {
         // Drag the first box (press at its interior cell (2,1), drag right).
         app.handle_pointer_frame(
             true,
-            Some(((2, 1), HitTarget::Shape(ObjectId::generated(1)))),
+            Some(((2, 1), HitTarget::Body(ObjectId::generated(1)))),
         );
         let moved = app.handle_pointer_frame(true, Some(((30, 1), HitTarget::Empty)));
         assert!(
@@ -1317,6 +1429,81 @@ mod tests {
 
         // Escape with nothing to cancel is a no-op.
         assert_eq!(app.handle_key_frame(false, true), None);
+    }
+
+    /// The S-018 startup fixture loads through the real open flow (shape + single-line
+    /// and multi-line text) — it feeds the post-rebuild golden capture.
+    #[test]
+    fn the_text_sample_fixture_loads() {
+        let mut app = app();
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/text-sample.ad");
+        let outcome = app.open(&path);
+        match outcome {
+            crate::fileio::OpenOutcome::Loaded { .. } => {}
+            other => panic!(
+                "fixture failed to load: {}",
+                crate::fileio::open_message(&other)
+            ),
+        }
+        let (text, width, height) = app.canvas_frame().expect("renders");
+        assert_eq!(height, 10); // box rows 4..8 + text rows 12..13 → trimmed extent
+        assert!(text.contains("hello world"));
+        assert!(text.contains("line one"));
+        assert!(text.contains("line two"));
+        assert!(width >= 10);
+    }
+
+    /// AC3 — render parity: committed content appears in the canvas frame byte-exactly,
+    /// including the C1 F4 quote fallback (lines with svgbob-alphabet glyphs get wrapped
+    /// in double quotes) and long lines.
+    #[test]
+    fn canvas_frame_reflects_edited_text_bytes_exactly() {
+        let mut app = app();
+        // Place at (0,0) and commit an edit with plain, reserved-glyph and long lines.
+        app.editor.select_text_tool();
+        app.handle_pointer_frame(true, Some(((0, 0), HitTarget::Empty)));
+        app.handle_pointer_frame(false, None);
+        assert!(app.editor.editing.is_some());
+        // The user types (the egui TextEdit binds to the draft) and commits.
+        app.editor.edit_draft =
+            "hello\na | b\nthis is a rather long plain line for width".to_owned();
+        app.editor.commit_edit(&mut app.diagram);
+
+        let (canvas_text, width, height) = app.canvas_frame().expect("renders");
+        // F4: the `|` line is wrapped in quotes; plain lines stay verbatim. The exporter
+        // trims row ends, so rows are unpadded.
+        let rows: Vec<&str> = canvas_text.lines().collect();
+        assert_eq!(height, 3);
+        assert_eq!(width, 42); // the long line sets the extent
+        assert_eq!(rows[0], "hello");
+        assert_eq!(rows[1], "\"a | b\"");
+        assert_eq!(rows[2], "this is a rather long plain line for width");
+    }
+
+    /// Keyboard seam (S-018): while an inline edit is open, Delete/Backspace belong to
+    /// the text field (they must not delete the object); Escape cancels the edit.
+    #[test]
+    fn key_frames_during_inline_editing_protect_the_text_object() {
+        let mut app = app();
+        // Place a text object at (2,1) — placement opens inline editing at once.
+        app.editor.select_text_tool();
+        app.handle_pointer_frame(true, Some(((2, 1), HitTarget::Empty)));
+        app.handle_pointer_frame(false, None);
+        assert!(app.editor.editing.is_some());
+
+        // Backspace while typing does NOT delete the object.
+        assert_eq!(app.handle_key_frame(true, false), None);
+        assert_eq!(app.diagram.len(), 1);
+
+        // Escape cancels the edit; the object stays (selected).
+        assert!(
+            app.handle_key_frame(false, true)
+                .unwrap()
+                .contains("cancelled")
+        );
+        assert!(app.editor.editing.is_none());
+        assert_eq!(app.diagram.len(), 1);
     }
 
     #[test]
