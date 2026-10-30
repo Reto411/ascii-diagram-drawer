@@ -16,6 +16,7 @@ Filed via the **bug-report skill** (`.agents/skills/bug-report/SKILL.md`). One f
 |----|-------|----------|--------|------|
 | B-001 | Ellipse resizing does not work | major | reproduced | [B-001](B-001-ellipse-resizing-does-not-work.md) |
 | B-002 | Scale duplicates shape | major | open | [B-002](B-002-scale-duplicates-shape.md) |
+| B-003 | Selection outline ignores diagram scale | major | reproduced | [B-003](B-003-selection-outline-ignores-diagram-scale.md) |
 
 ## Closed
 
