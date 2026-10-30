@@ -15,6 +15,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | ID | Title | Priority | Status | File |
 |----|-------|----------|--------|------|
 | CR-001 | Native file dialogs for Open, Save and Export | medium | proposed | [CR-001-native-file-dialogs.md](CR-001-native-file-dialogs.md) |
+| CR-002 | Grouped dropdown menus in the toolbar | low | proposed | [CR-002-grouped-dropdown-menus.md](CR-002-grouped-dropdown-menus.md) |
 
 ## Closed
 
