@@ -1007,6 +1007,126 @@ fn double_click_on_existing_text_reopens_editing() {
     assert_eq!(content, "hello!");
 }
 
+/// Places a text object (opening the inline editor).
+fn place_text_object(gui: &mut Gui, min: Pos2) {
+    let out = gui.frame();
+    let label = find_text_exact(&out, "T  Text").expect("sidebar lists the text tool");
+    let _ = gui.click_at(label.center());
+    let _ = gui.click_at(gui.cell_center(min, 5, 3));
+    assert_eq!(gui.object_count(), 1, "clicking placed a text object");
+    assert!(gui.app.is_editing(), "placing opens the inline editor");
+}
+
+/// The content of the first (only) text object in the diagram.
+fn text_content(gui: &Gui) -> Option<String> {
+    gui.app.diagram.objects().iter().find_map(|o| match o {
+        Object::Text(t) => Some(t.text.clone()),
+        _ => None,
+    })
+}
+
+/// Regression: while an inline text edit is open, the path prompt must take the
+/// keyboard when it appears — the canvas field used to re-request focus every frame
+/// (drawn last, so its request won), and typed characters landed in the draft.
+/// Taking the keyboard blurs the edit, which commits it (S-018 AC1).
+#[test]
+fn path_prompt_keeps_the_keyboard_over_an_open_inline_edit() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    place_text_object(&mut gui, min);
+
+    // Opening the prompt takes the keyboard; that blur commits the inline edit.
+    let _ = gui.open_prompt("Open…");
+    assert!(!gui.app.is_editing(), "blur committed the inline edit");
+    assert_eq!(
+        text_content(&gui).as_deref(),
+        Some("text"),
+        "the untouched draft was committed"
+    );
+
+    // Typing must land in the prompt field, not a (now closed) canvas draft.
+    let _ = gui.type_text("ab");
+    assert_eq!(gui.app.path_prompt_value().as_deref(), Some("ab"));
+
+    // Escape closes the prompt.
+    let _ = gui.key(Key::Escape);
+    assert!(gui.app.path_prompt().is_none(), "Escape closed the prompt");
+}
+
+/// Regression: for one frame after clicking a file action, both the path prompt and
+/// an inline edit are open (the blur commit happens on the settle frame). Escape in
+/// that window must close the innermost thing — the prompt — not cancel the edit.
+#[test]
+fn escape_while_prompt_opens_closes_the_prompt_not_the_edit() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    place_text_object(&mut gui, min);
+
+    // Click Open…, but press Escape before the settle frame: both are open now.
+    let out = gui.frame();
+    let rect = find_text_exact(&out, "Open…").expect("top bar has Open…");
+    let _ = gui.pump(Gui::press_at(rect.center()));
+    let _ = gui.pump(Gui::release_at(rect.center()));
+    assert!(gui.app.path_prompt().is_some(), "the prompt opened");
+    assert!(
+        gui.app.is_editing(),
+        "the edit is still open in the transient window"
+    );
+
+    let _ = gui.pump(vec![Event::Key {
+        key: Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::default(),
+    }]);
+    assert!(gui.app.path_prompt().is_none(), "Escape closed the prompt");
+    assert!(gui.app.is_editing(), "…not the inline edit");
+
+    // Settle: the edit is still open; a later Escape cancels it.
+    let _ = gui.frame();
+    assert!(gui.app.is_editing(), "the edit survives the settle frame");
+    let _ = gui.key(Key::Escape);
+    assert!(
+        !gui.app.is_editing(),
+        "a later Escape cancels the surviving edit"
+    );
+}
+
+/// Regression: while an inline text edit is open, clicking a template-editor field
+/// must keep the keyboard in that field — the canvas draft used to steal it back
+/// every frame (same root cause as the path-prompt case). The blur commits the edit.
+#[test]
+fn template_editor_field_keeps_the_keyboard_over_an_open_inline_edit() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    place_text_object(&mut gui, min);
+
+    // Open the template editor window.
+    let out = gui.frame();
+    let new_btn = find_text(&out, "New template").expect("sidebar has '＋ New template…'");
+    let _ = gui.click_at(new_btn.center());
+    assert!(
+        gui.app.template_editor_name().is_some(),
+        "the editor opened"
+    );
+
+    // Click the Name field: it takes the keyboard, blurring (committing) the edit.
+    let out = gui.frame();
+    let name_label = find_text_exact(&out, "Name:").expect("the editor shows a Name field");
+    let _ = gui.click_at(Pos2::new(name_label.max.x + 10.0, name_label.center().y));
+    assert!(!gui.app.is_editing(), "blur committed the inline edit");
+
+    // Typing must land in the Name field (the click places the cursor at an
+    // arbitrary offset inside "new", so assert on containment).
+    let _ = gui.type_text("xy");
+    let name = gui.app.template_editor_name().expect("the editor is open");
+    assert!(
+        name.contains("xy"),
+        "typing reached the Name field: {name:?}"
+    );
+}
+
 #[test]
 fn scale_buttons_change_the_diagram_scale() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));

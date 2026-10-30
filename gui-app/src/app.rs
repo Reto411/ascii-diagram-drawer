@@ -292,6 +292,20 @@ impl DrawingApp {
         self.path_prompt.as_ref().map(|p| p.kind)
     }
 
+    /// The active path prompt's typed value (test support).
+    #[cfg(test)]
+    #[must_use]
+    pub fn path_prompt_value(&self) -> Option<String> {
+        self.path_prompt.as_ref().map(|p| p.path.clone())
+    }
+
+    /// The open template editor's draft name (test support).
+    #[cfg(test)]
+    #[must_use]
+    pub fn template_editor_name(&self) -> Option<String> {
+        self.template_editor.as_ref().map(|s| s.draft.name.clone())
+    }
+
     /// True while a text object is being edited inline (S-018; test support).
     #[cfg(test)]
     pub fn is_editing(&self) -> bool {
@@ -496,20 +510,23 @@ impl DrawingApp {
         escape: bool,
         text_focused: bool,
     ) -> Option<String> {
-        if self.editor.editing.is_some() {
-            // The draft field owns every other key (typing, backspacing the text).
-            return if escape {
-                status_for(self.editor.on_escape())
-            } else {
-                None
-            };
-        }
+        // Escape closes the innermost open thing first: a prompt opened after an
+        // inline edit started yields to Escape before the edit does (cancelling the
+        // edit would discard its draft while the user is still looking at the prompt).
         if self.path_prompt.is_some() {
             return if escape {
                 self.cancel_path_prompt();
                 Some("Cancelled".to_owned())
             } else {
                 // Delete/Backspace edit the path, not the diagram.
+                None
+            };
+        }
+        if self.editor.editing.is_some() {
+            // The draft field owns every other key (typing, backspacing the text).
+            return if escape {
+                status_for(self.editor.on_escape())
+            } else {
                 None
             };
         }
@@ -766,12 +783,37 @@ impl DrawingApp {
                         // exists) and surrenders the field's focus on the release
                         // frame — without re-requesting, the editor would commit the
                         // placeholder and close immediately after placement.
-                        response.request_focus();
+                        // Two exceptions:
+                        // * Yield when another text field holds focus: `request_focus`
+                        //   writes immediately and this area draws last in the frame,
+                        //   so an unconditional re-request would steal the keyboard
+                        //   back every frame — typing in the path prompt or a
+                        //   template-editor field while an edit is open landed in the
+                        //   canvas draft. egui's dead-man's switch drops focus on
+                        //   fields that stop being drawn, so yielding cannot stick.
+                        // * Skip the re-request on the frame the user clicked away:
+                        //   `interact` (inside the TextEdit call above) already ran
+                        //   egui's surrender-on-outside-click, and re-requesting right
+                        //   after would undo it — a click on the path prompt or a
+                        //   dialog field would never take the keyboard.
+                        let other_text_focused = ctx
+                            .memory(|m| m.focused())
+                            .is_some_and(|id| id != response.id)
+                            && ctx.text_edit_focused();
+                        let clicked_away =
+                            ctx.input(|i| i.pointer.any_click()) && !response.hovered();
+                        if !other_text_focused && !clicked_away {
+                            response.request_focus();
+                        }
                         // Blur without pointer activity (e.g. tabbing away): commit.
                         // Guarded against pointer frames: during the opening click's
-                        // release egui also reports `lost_focus` spuriously.
+                        // release egui also reports `lost_focus` spuriously. Also skip
+                        // while another text edit holds the keyboard — that is a yield,
+                        // not a blur; the field that took focus commits this edit via
+                        // its own gained-focus hook (below and in the template editor).
                         if response.lost_focus()
                             && self.editor.editing.is_some()
+                            && !other_text_focused
                             && !ctx.input(|i| i.pointer.any_down() || i.pointer.any_click())
                         {
                             let _ = self.editor.commit_edit(&mut self.diagram);
@@ -864,12 +906,29 @@ impl DrawingApp {
         };
         let draft = &mut session.draft;
 
+        let mut field_gained_focus = false;
         ui.horizontal(|ui| {
             ui.label("Collection:");
-            ui.text_edit_singleline(&mut draft.collection);
+            if ui
+                .text_edit_singleline(&mut draft.collection)
+                .gained_focus()
+            {
+                field_gained_focus = true;
+            }
             ui.label("Name:");
-            ui.text_edit_singleline(&mut draft.name);
+            if ui.text_edit_singleline(&mut draft.name).gained_focus() {
+                field_gained_focus = true;
+            }
         });
+        // A field taking the keyboard blurs an open inline edit → commit it (S-018 AC1).
+        // Gated on Escape so a fast Escape that closes this window does not commit as
+        // a side effect — that frame's Escape is meant for the window.
+        if field_gained_focus
+            && self.editor.editing.is_some()
+            && !ui.input(|i| i.key_pressed(Key::Escape))
+        {
+            let _ = self.editor.commit_edit(&mut self.diagram);
+        }
         if let Some(rejection) = &draft.rejection {
             // AC1/AC2 — inline hint for rejected input / blocked save.
             ui.label(RichText::new(rejection.clone()).color(ERROR_COLOR));
@@ -1201,9 +1260,26 @@ impl DrawingApp {
                                 .desired_width(240.0),
                         );
                         // The field owns the keyboard as soon as it appears — no click
-                        // needed before typing.
-                        if !response.has_focus() {
+                        // needed before typing. Yield when another text field holds
+                        // focus (the user clicked one deliberately): re-requesting
+                        // whenever we lack focus would fight it back on every frame,
+                        // because a later-drawn field's request overwrites ours.
+                        let other_text_focused = ui
+                            .ctx()
+                            .memory(|m| m.focused())
+                            .is_some_and(|id| id != response.id)
+                            && ui.ctx().text_edit_focused();
+                        if !response.has_focus() && !other_text_focused {
                             response.request_focus();
+                            // Taking the keyboard blurs an open inline edit → commit it
+                            // (S-018 AC1: Enter/blur commits). Gated on Escape so a fast
+                            // Escape that closes this prompt does not commit as a side
+                            // effect — that frame's Escape is meant for the prompt.
+                            if self.editor.editing.is_some()
+                                && !ui.input(|i| i.key_pressed(Key::Escape))
+                            {
+                                let _ = self.editor.commit_edit(&mut self.diagram);
+                            }
                         }
                         let enter = ui.input(|i| i.key_pressed(Key::Enter)) && response.has_focus();
                         let ok = ui.button("OK").clicked();
