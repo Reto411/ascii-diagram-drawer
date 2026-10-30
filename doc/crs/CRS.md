@@ -21,6 +21,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | CR-005 | Options menu with theme selection and config persistence | low | proposed | [CR-005-options-menu-theme-config.md](CR-005-options-menu-theme-config.md) |
 | CR-006 | Material Design GUI with custom title bar | medium | proposed | [CR-006-material-design-title-bar.md](CR-006-material-design-title-bar.md) |
 | CR-007 | User-modifiable arrow shapes (manual bends) | medium | proposed | [CR-007-manual-arrow-bends.md](CR-007-manual-arrow-bends.md) |
+| CR-008 | Selectable arrow tips on both ends + arrow-shaped anchor markers | medium | proposed | [CR-008-selectable-arrow-tips.md](CR-008-selectable-arrow-tips.md) |
 
 ## Closed
 
