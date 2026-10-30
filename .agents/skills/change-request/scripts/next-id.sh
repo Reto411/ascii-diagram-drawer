@@ -8,11 +8,10 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 n=0
 for f in doc/crs/CR-*.md; do
   [ -e "$f" ] || continue
-  num=$(basename "$f")
-  num=${num#CR-}
-  num=${num%.md}
+  # File names are CR-NNN-<slug>.md — extract the numeric prefix only.
+  num=$(basename "$f" .md | sed -n 's/^CR-\([0-9][0-9]*\).*/\1/p')
   num=$(printf '%s' "$num" | sed 's/^0*//')
-  [ -n "$num" ] || num=0
+  [ -n "$num" ] || continue
   if [ "$num" -gt "$n" ]; then n=$num; fi
 done
 printf 'CR-%03d\n' $((n + 1))
