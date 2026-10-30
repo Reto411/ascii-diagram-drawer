@@ -34,6 +34,8 @@ const GHOST_COLOR: Color32 = Color32::from_rgb(140, 200, 140);
 const ERROR_COLOR: Color32 = Color32::from_rgb(255, 96, 96);
 const ANCHOR_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
 const CONNECT_LINE_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
+/// Muted hint text on an empty canvas (first-run affordance).
+const HINT_COLOR: Color32 = Color32::from_rgb(96, 102, 114);
 
 /// The eframe app state. Everything user-visible is derived from `diagram` (the model)
 /// plus transient view state in `editor` — ADR 009.
@@ -603,24 +605,27 @@ impl DrawingApp {
         let off = |p: Pos2| p + rect.min.to_vec2();
         let off_rect = |r: egui::Rect| r.translate(rect.min.to_vec2());
 
-        // Subtle background grid lines over the content extent.
-        for col in origin_x..=origin_x + width {
-            let x = vp.cell_origin(col, 0).0;
+        // Subtle full-canvas grid aligned to cell boundaries (graph paper): empty
+        // space reads as intentional placement surface instead of a dead void, and
+        // content always sits on the same grid the user sees. Only lines that
+        // intersect the canvas rect are emitted (no off-canvas geometry in output),
+        // including margin-region columns/rows before cell 0 — visual only; hit-
+        // testing still starts at cell 0.
+        let first_col = ((-MARGIN_PX) / cell_w).ceil() as i64;
+        let last_col = ((rect.width() - MARGIN_PX) / cell_w).floor() as i64;
+        for col in first_col..=last_col {
+            let x = MARGIN_PX + col as f32 * cell_w;
             painter.line_segment(
-                [
-                    off(Pos2::new(x, vp.cell_origin(0, origin_y).1)),
-                    off(Pos2::new(x, vp.cell_origin(0, origin_y + height).1)),
-                ],
+                [off(Pos2::new(x, 0.0)), off(Pos2::new(x, rect.height()))],
                 egui::epaint::Stroke::new(1.0, GRID_LINE_COLOR),
             );
         }
-        for row in origin_y..=origin_y + height {
-            let y = vp.cell_origin(0, row).1;
+        let first_row = ((-MARGIN_PX) / cell_h).ceil() as i64;
+        let last_row = ((rect.height() - MARGIN_PX) / cell_h).floor() as i64;
+        for row in first_row..=last_row {
+            let y = MARGIN_PX + row as f32 * cell_h;
             painter.line_segment(
-                [
-                    off(Pos2::new(vp.cell_origin(origin_x, 0).0, y)),
-                    off(Pos2::new(vp.cell_origin(origin_x + width, 0).0, y)),
-                ],
+                [off(Pos2::new(0.0, y)), off(Pos2::new(rect.width(), y))],
                 egui::epaint::Stroke::new(1.0, GRID_LINE_COLOR),
             );
         }
@@ -637,6 +642,18 @@ impl DrawingApp {
                 vp.cell_origin(0, origin_y + row as u32).1,
             ));
             painter.text(pos, Align2::LEFT_TOP, line, font_id.clone(), TEXT_COLOR);
+        }
+
+        // Empty state: a centered hint instead of a silent void — the first thing a
+        // new user should understand is what to do.
+        if width == 0 && height == 0 {
+            painter.text(
+                off(rect.center()),
+                egui::Align2::new(egui::Align::Center, egui::Align::Center),
+                "Pick a shape from the palette to start",
+                font_id.clone(),
+                HINT_COLOR,
+            );
         }
 
         // Selection overlay around the selected object's bounds — shapes and free text
@@ -1163,9 +1180,10 @@ impl DrawingApp {
         // completion the exact bytes are written and the "exporting" state clears.
         self.tick_png_export();
 
-        // Toolbar + status bar (S-014): file actions on the left, last-action text on
-        // the right. Ctrl+S saves without touching the mouse (read before the panel —
-        // `ui.ctx()` is a borrow that must not live across `Panel::show`).
+        // Toolbar: file actions on the left, scale control on the right; the last-
+        // action message lives in the bottom status bar. Ctrl+S saves without touching
+        // the mouse (read before the panel — `ui.ctx()` is a borrow that must not live
+        // across `Panel::show`).
         // Global shortcuts are suppressed while a text input owns the keyboard (an
         // inline edit or an open path prompt), so Ctrl+S never surprises a user who
         // is typing.
@@ -1174,7 +1192,7 @@ impl DrawingApp {
             .input(|i| i.key_pressed(Key::S) && i.modifiers.ctrl)
             && self.path_prompt.is_none()
             && self.editor.editing.is_none();
-        egui::Panel::top("statusbar").show(ui, |ui| {
+        egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open…").clicked() {
                     self.begin_path_prompt(PathPrompt::Open);
@@ -1215,22 +1233,17 @@ impl DrawingApp {
                 {
                     self.begin_path_prompt(PathPrompt::ExportPng);
                 }
-                ui.separator();
-                let file = self
-                    .current_file()
-                    .map(|p| format!("[{}] ", p.display()))
-                    .unwrap_or_default();
-                ui.label(RichText::new(format!("{file}{}", self.status)).weak());
-
                 // AC3/FR8 — whole-diagram scale control, top-right: the canvas and
-                // every export follow it; the model enforces ≥ 1.
+                // every export follow it; the model enforces ≥ 1. Screen order is
+                // “− Scale ×N +” (the familiar zoom pattern): in a right-to-left scope
+                // the first widget lands rightmost, so code order is reversed.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("+").clicked() {
+                        self.change_scale(1);
+                    }
                     ui.label(format!("Scale ×{}", self.diagram.scale()));
                     if ui.button("−").clicked() {
                         self.change_scale(-1);
-                    }
-                    if ui.button("+").clicked() {
-                        self.change_scale(1);
                     }
                 });
             });
@@ -1316,6 +1329,19 @@ impl DrawingApp {
                     });
                 });
         }
+
+        // Status bar (bottom): current file on the left, last-action message beside it
+        // (S-014). A dedicated bar keeps the toolbar clean and gives long messages room
+        // instead of squeezing them between the buttons and the zoom control.
+        egui::Panel::bottom("statusbar").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if let Some(p) = self.current_file() {
+                    ui.label(RichText::new(format!("[{}]", p.display())).weak());
+                    ui.separator();
+                }
+                ui.label(RichText::new(self.status.clone()).weak());
+            });
+        });
 
         // Shape template sidebar (FR3 read model from the catalog, S-016 AC1):
         // built-in group + one group per loaded collection, each shape with a

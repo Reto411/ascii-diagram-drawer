@@ -484,6 +484,129 @@ fn grid_lines_stay_inside_the_canvas_area() {
 }
 
 #[test]
+fn empty_canvas_shows_a_centered_hint_and_full_grid() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    let out = gui.frame();
+
+    // The hint sits in the canvas, not under the chrome.
+    let hint = find_text(&out, "Pick a shape").expect("empty canvas shows the hint");
+    assert!(
+        hint.min.x > min.x && hint.max.y < WIN_H - 20.0,
+        "hint {hint:?} is inside the canvas area ({min:?})"
+    );
+
+    // The grid covers the whole canvas, not just a content extent: with nothing on
+    // the diagram there are still many lines in every direction.
+    let (cw, ch) = gui.cell_metrics();
+    let mut verticals = 0;
+    let mut horizontals = 0;
+    for (a, b) in line_points(&out) {
+        if a.x < SIDEBAR || a.y < min.y - 0.5 {
+            continue; // chrome
+        }
+        if (a.x - b.x).abs() < 0.5 && (a.y - b.y).abs() > 100.0 {
+            verticals += 1;
+        } else if (a.y - b.y).abs() < 0.5 && (a.x - b.x).abs() > 100.0 {
+            horizontals += 1;
+        }
+    }
+    // Canvas is ~830×700 px at ~8.4×16 cells → dozens of lines each way.
+    assert!(
+        verticals >= (830.0 / cw) as usize - 2,
+        "full-width vertical grid: {verticals}"
+    );
+    assert!(
+        horizontals >= (700.0 / ch) as usize - 2,
+        "full-height horizontal grid: {horizontals}"
+    );
+
+    // Placing anything makes the hint go away.
+    gui.place_box_via_ui(min, 5, 3);
+    let out = gui.frame();
+    assert!(
+        find_text(&out, "Pick a shape").is_none(),
+        "hint hides once content exists"
+    );
+}
+
+#[test]
+fn grid_extends_beyond_a_small_content_extent() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 2, 1);
+    let out = gui.frame();
+
+    // The box occupies model columns 2..11 / rows 1..6. Grid lines must exist well
+    // past its right and bottom edges (the old grid stopped at the content extent).
+    let (cw, ch) = gui.cell_metrics();
+    let beyond_right = min.x + MARGIN + 20.0 * cw;
+    let beyond_bottom = min.y + MARGIN + 15.0 * ch;
+    let mut right_line = false;
+    let mut bottom_line = false;
+    for (a, b) in line_points(&out) {
+        if a.x < SIDEBAR || a.y < min.y - 0.5 {
+            continue; // chrome
+        }
+        if (a.x - b.x).abs() < 0.5 && a.x > beyond_right {
+            right_line = true;
+        }
+        if (a.y - b.y).abs() < 0.5 && a.y > beyond_bottom {
+            bottom_line = true;
+        }
+    }
+    assert!(right_line, "grid continues past the box's right edge");
+    assert!(bottom_line, "grid continues past the box's bottom edge");
+}
+
+#[test]
+fn status_message_lives_in_the_bottom_bar_not_the_toolbar() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 4, 2); // sets a status message ("Placed box as s1")
+    let out = gui.frame();
+
+    let status = find_text(&out, "Placed box as").expect("placement status is shown");
+    let scale = find_text_exact(&out, "Scale ×1").expect("scale label in toolbar");
+    // The bottom bar sits below the canvas; the scale label lives in the top
+    // toolbar. Different rows, unambiguously.
+    assert!(
+        status.min.y > scale.max.y,
+        "status {status:?} is in the bottom bar, below the toolbar's {scale:?}"
+    );
+    assert!(
+        status.max.y < WIN_H,
+        "status {status:?} stays inside the window"
+    );
+}
+
+#[test]
+fn zoom_control_reads_minus_label_plus_left_to_right() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.frame();
+    let out = gui.frame();
+
+    let minus = find_text_exact(&out, "−").expect("minus button label");
+    let plus = find_text_exact(&out, "+").expect("plus button label");
+    // Both are single-glyph button labels laid out the same way, so their rects
+    // compare fairly: minus must sit left of plus (screen order “− Scale ×N +”).
+    assert!(
+        minus.min.x < plus.min.x,
+        "zoom reads − … + left to right: minus {minus:?}, plus {plus:?}"
+    );
+    // The scale label sits between them. Its galley anchor is not guaranteed, so
+    // accept either hypothesis for its horizontal span.
+    let scale = find_text_exact(&out, "Scale ×1").expect("scale label");
+    let left_anchored = (scale.min.x, scale.max.x);
+    let right_anchored = (scale.min.x - scale.width(), scale.min.x);
+    let between = |&(l, r): &(f32, f32)| minus.max.x < l && r < plus.min.x;
+    assert!(
+        between(&left_anchored) || between(&right_anchored),
+        "scale label {scale:?} sits between the zoom buttons (minus {minus:?}, plus {plus:?})"
+    );
+}
+
+#[test]
 fn selection_outline_covers_exactly_the_selected_cells() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let min = gui.canvas_min();
@@ -1457,4 +1580,44 @@ fn visual_dump() {
     }
 
     eprintln!("visual dump written to {dir:?}");
+}
+
+#[test]
+fn dbg_layout_dump() {
+    if std::env::var("GUI_DEBUG_LAYOUT").is_err() {
+        return;
+    }
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    if std::env::var("GUI_DEBUG_LAYOUT_PROMPT").is_ok() {
+        gui.click_topbar_button("Save As…");
+    }
+    let out = gui.frame();
+    println!(
+        "=== galleys ({} state) ===",
+        if std::env::var("GUI_DEBUG_LAYOUT_PROMPT").is_ok() {
+            "prompt"
+        } else {
+            "empty"
+        }
+    );
+    for (t, r) in texts(&out) {
+        println!(
+            "text {:?} rect=({:.0},{:.0})-({:.0},{:.0})",
+            t, r.min.x, r.min.y, r.max.x, r.max.y
+        );
+    }
+    println!("=== filled rects ===");
+    for (r, c) in filled_rects(&out) {
+        println!(
+            "fill ({:.0},{:.0})-({:.0},{:.0}) color={c:?}",
+            r.min.x, r.min.y, r.max.x, r.max.y
+        );
+    }
+    println!("=== stroked rects ===");
+    for (r, c) in stroked_rects(&out) {
+        println!(
+            "stroke ({:.0},{:.0})-({:.0},{:.0}) color={c:?}",
+            r.min.x, r.min.y, r.max.x, r.max.y
+        );
+    }
 }
