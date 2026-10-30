@@ -66,7 +66,7 @@ If the user says "just file it", file with what you have — mark missing fields
 ### After filing (handoff, tell the user this)
 
 - **Reproduced bug** → belongs on the story board as a story whose scope is the fix (or a direct `fix(B-NNN): …` commit if trivial); when it lands, flip the report to `fixed`, fill Resolution, update the board, commit.
-- **As-designed** → ask whether the user wants the *decision* changed; that path is an ADR version bump + story, not a bug fix.
+- **As-designed** → ask whether the user wants the *decision* changed; if so, that path is a **change request** (change-request skill) — the CR carries the ADR version bump + story on acceptance. The bug itself stays closed as `as-designed`.
 
 ## Question etiquette
 

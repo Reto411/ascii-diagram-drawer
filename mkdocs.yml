@@ -32,6 +32,7 @@ nav:
       - "16. Glossary": arc42/16-glossary.md
   - Stories: stories/BOARD.md
   - Bugs: bugs/BUGS.md
+  - Change requests: crs/CRS.md
   - ADRs:
       - "001 Glyph resolution & canonical alphabet": adr/001-glyph-resolution-alphabet.md
       - "002 MkDocs documentation site": adr/002-mkdocs-documentation-site.md
@@ -53,3 +54,4 @@ nav:
       - ADR template: templates/adr.md
       - Story template: templates/story.md
       - Bug template: templates/bug.md
+      - CR template: templates/cr.md
