@@ -12,6 +12,19 @@ Draw ASCII diagrams **visually**: place, move, and resize shapes on a grid canva
 
 *Real output of the render pipeline — what you see on the canvas is exactly the text you get.*
 
+## Screenshots
+
+*Rendered headlessly by the app's own test rasterizer — the exact egui scene, tessellated in software (no GPU, no window).*
+
+![The canvas: two shapes linked by an anchor-bound connector](doc/images/canvas.png)
+*The canvas — shapes and connectors are drawn as the exact text you will export. Sidebar holds the shape palette; the status bar tracks the current action.*
+
+![Selected shape with anchors and resize handle](doc/images/selection.png)
+*Selecting a shape shows its anchors (the connection points for connectors) and the resize handle.*
+
+![Custom template editor](doc/images/template-editor.png)
+*Custom shapes: paint your own glyph pattern from text art, mark its anchors, and reuse it across diagrams.*
+
 ## Why
 
 - **You control the layout.** Shapes snap to a grid and are placed by hand. Rendering is a pure, deterministic function of the model — the same diagram renders byte-identically everywhere, on every platform.
@@ -23,9 +36,8 @@ Draw ASCII diagrams **visually**: place, move, and resize shapes on a grid canva
 
 Early development, driven by user stories — see the [board](doc/stories/BOARD.md):
 
-- ✅ done: diagram model, plain-text `.ad` format (parse/serialize), shape catalog + custom templates/collections, deterministic render pipeline (model → text grid) — unit-tested incl. golden files
-- 🔨 in progress: anchor-bound connectors
-- ⏳ next: SVG/PNG export, then the canvas GUI (egui/eframe — desktop **and** browser via wasm), file I/O, scale control
+- ✅ done: headless core (diagram model, plain-text `.ad` format, shape catalog + custom templates/collections, deterministic render pipeline with anchor-bound connectors, text/SVG/PNG export) and the full native GUI — canvas, editing gestures, file I/O, export/scale control, collections, template editor, free text
+- ⏳ next: web/wasm milestone (S-019), performance benchmarks (S-020), documentation completion (S-021)
 
 ## Local LLMs only
 
@@ -51,6 +63,7 @@ A layered Rust workspace: headless core (model → format → shapes → render 
 ```sh
 cargo build --workspace
 cargo test --workspace
+cargo run -p gui-app   # open the editor window (native desktop)
 ```
 
 Rust is pinned in [rust-toolchain.toml](rust-toolchain.toml). The architecture, decisions, and progress all live in the repo:

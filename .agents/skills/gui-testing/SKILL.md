@@ -61,6 +61,7 @@ GUI_DUMP=1 cargo test -p gui-app visual_dump   # writes /tmp/gui-dump/01-empty.p
 `gui_tests::visual_dump` drives the real app through eight known states (empty, text sample, two boxes, selection, connect-drag, template editor, path prompt, inline edit) and rasterizes each frame with `gui-app/src/screenshot.rs`. Add new states to that test as stories land; keep names `<nn>-<state>.png`.
 
 - **Goldens live in `gui-app/tests/goldens/`** and are committed with the story that introduces them. Diff a fresh dump against a golden with any pixel-diff tool (`cmp` on raw RGBA, or ImageMagick's `compare -metric AE` if present).
+- **README screenshots live in `doc/images/`** (copied from a fresh dump: `canvas.png` ← 03, `selection.png` ← 04, `template-editor.png` ← 06). When a change alters the visuals, regenerate the dump and refresh any affected README image in the same commit.
 - The rasterizer is **deterministic pure Rust over epaint's tessellator output** — more stable than GPU captures: goldens survive as long as the egui/epaint version + fonts in the image don't change. If either changes (eframe bump, font packages), regenerate goldens and note it in the progress log.
 - The dump is opt-in (`GUI_DUMP=1`) so plain `cargo test` stays fast; coverage runs should set it (`GUI_DUMP=1 cargo tarpaulin --engine Llvm --workspace`).
 
