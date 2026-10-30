@@ -1,0 +1,5 @@
+ad 1.0
+scale 1
+shape ellipse "" as obj-1 at 28 12 w 9 h 5
+shape box "" as obj-2 at 47 14 w 9 h 5
+connect as obj-3 from obj-1.e to obj-2.w
