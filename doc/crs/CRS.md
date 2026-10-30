@@ -19,6 +19,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | CR-003 | Template creation via text box + resize-rule toolset | high | proposed | [CR-003-template-textbox-resize-rules.md](CR-003-template-textbox-resize-rules.md) |
 | CR-004 | Right-side SVG preview pane | medium | proposed | [CR-004-svg-preview-pane.md](CR-004-svg-preview-pane.md) |
 | CR-005 | Options menu with theme selection and config persistence | low | proposed | [CR-005-options-menu-theme-config.md](CR-005-options-menu-theme-config.md) |
+| CR-006 | Material Design GUI with custom title bar | medium | proposed | [CR-006-material-design-title-bar.md](CR-006-material-design-title-bar.md) |
 
 ## Closed
 
