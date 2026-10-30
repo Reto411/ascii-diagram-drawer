@@ -11,6 +11,8 @@ metadata:
 
 The devcontainer has **no display — and no working GPU path**: wgpu cannot create a surface (`FailedToCreateSurfaceForAnyBackend`, the image has no libEGL and apt egress is blocked by ADR 014), so `smoke.sh launch`/`capture` (xvfb) fail here. All GUI verification is headless: **GUI stories decompose interaction logic into unit tests** (tier 0/0b) — gesture handlers against fake `Services`, pure grid→screen mapping / hit-test helpers — and the visual tiers run on the **software screenshot rasterizer** (`gui-app/src/screenshot.rs`): it tessellates a pumped egui frame with epaint's own tessellator and rasterizes the triangles to PNG in pure Rust, no window/GL/X11. Verified pixel-exact against synthetic geometry (fills land on their exact pixel bounds).
 
+> **Desktop launch (outside the container):** `cargo run -p gui-app` opens the ~1024×768 dark-theme window; a shareable RustRover run configuration for it lives in `.run/gui-app.xml` (`cargo run -p gui-app`, workspace root).
+
 ## Tiers (cheapest first — stop as soon as a tier answers the AC)
 
 ### Tier 0 — headless unit tests (the default; most ACs end here)
