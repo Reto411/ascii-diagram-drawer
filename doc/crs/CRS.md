@@ -25,6 +25,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | CR-009 | Diagram colors (background/shape fill/line & text) via color picker, svgbob Settings | medium | proposed | [CR-009-diagram-colors-picker.md](CR-009-diagram-colors-picker.md) |
 | CR-010 | Standalone arrows with attachable/detachable ends | medium | proposed | [CR-010-standalone-arrows.md](CR-010-standalone-arrows.md) |
 | CR-011 | Collapsible groupings with subcategories (menus + sidebar) | low | proposed | [CR-011-collapsible-groupings-subcategories.md](CR-011-collapsible-groupings-subcategories.md) |
+| CR-012 | Shape filter in the template sidebar | low | proposed | [CR-012-shape-filter.md](CR-012-shape-filter.md) |
 
 ## Closed
 
