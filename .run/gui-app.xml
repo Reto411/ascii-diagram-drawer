@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="gui-app" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+    <method v="2">
+      <option name="BuildTask" enabled="true" option="BuildWithoutTests" />
+    </method>
+    <option name="command" value="run" />
+    <option name="working_directory" value="$PROJECT_DIR$" />
+    <option name="additional_args" value="-p gui-app" />
+  </configuration>
+</component>
