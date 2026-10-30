@@ -26,6 +26,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | CR-010 | Standalone arrows with attachable/detachable ends | medium | proposed | [CR-010-standalone-arrows.md](CR-010-standalone-arrows.md) |
 | CR-011 | Collapsible groupings with subcategories (menus + sidebar) | low | proposed | [CR-011-collapsible-groupings-subcategories.md](CR-011-collapsible-groupings-subcategories.md) |
 | CR-012 | Shape filter in the template sidebar | low | proposed | [CR-012-shape-filter.md](CR-012-shape-filter.md) |
+| CR-013 | Pre-rendered shape previews in the template sidebar (WYSIWYG picking) | medium | proposed | [CR-013-prerendered-shape-previews.md](CR-013-prerendered-shape-previews.md) |
 
 ## Closed
 
