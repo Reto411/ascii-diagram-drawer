@@ -31,6 +31,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | high | proposed | [CR-015-uml-shape-set.md](CR-015-uml-shape-set.md) |
 | CR-016 | Shape-owned text boxes — definable text regions on templates (format change, ADR 004) | high | proposed | [CR-016-shape-text-boxes.md](CR-016-shape-text-boxes.md) |
 | CR-017 | Multi-select (Ctrl/Shift+click) and group move | medium | proposed | [CR-017-multi-select-group-move.md](CR-017-multi-select-group-move.md) |
+| CR-018 | Resize symbol on the shape's resize hook | low | proposed | [CR-018-resize-handle-symbol.md](CR-018-resize-handle-symbol.md) |
 
 ## Closed
 
