@@ -1,6 +1,6 @@
 ---
 name: change-request
-description: Create change requests interactively with the user — request changes to or additions of requirements (arc42 §14). Ask in small batches, then investigate autonomously (map affected FR/NFRs verbatim, conflict check against ADRs/concepts, impact analysis on stories/crates/format compatibility), file the CR from the template into doc/crs/ and commit. The agent prepares but never applies: a CR stays "proposed" until the user explicitly accepts or rejects it. Use when the user wants different behavior than specified, requests a new feature/capability, or says "file a change request".
+description: Create change requests interactively with the user — request changes to or additions of requirements (arc42 §14). Ask in small batches, then clarify autonomously (map affected FR/NFRs verbatim, conflict check against ADRs/concepts, decision-relevant impact on stories/format compatibility), file the CR from the template into doc/crs/ and commit. Clarifies *what changes* — never *how it will be implemented*; implementation scoping is decided at handoff by the cr-implementation skill. The agent prepares but never applies: a CR stays "proposed" until the user explicitly accepts or rejects it. Use when the user wants different behavior than specified, requests a new feature/capability, or says "file a change request".
 metadata:
   scope: whole repository (files under doc/crs/, applies to doc/arc42/14 + ADRs on acceptance)
   status: stable
@@ -9,7 +9,7 @@ metadata:
 
 # Change Request (interactive)
 
-Mission: turn "I want X different / I need Y" into a filed, investigated change request — `doc/crs/CR-NNN-<slug>.md` + board row — prepared so far that **accepting is a one-word decision**. On acceptance the skill applies the full doc change in one commit (§14 + ADRs + story).
+Mission: turn "I want X different / I need Y" into a filed, clarified change request — `doc/crs/CR-NNN-<slug>.md` + board row — prepared so far that **accepting is a one-word decision**. The skill pins down *what changes* (desired behavior, motivation, affected requirements and recorded decisions) — never *how it will be implemented*; implementation scoping happens at handoff when the **cr-implementation skill** (`.agents/skills/cr-implementation/SKILL.md`) works the story. On acceptance the skill applies the full doc change in one commit (§14 + ADRs + skeleton story).
 
 ## Ground rules
 
@@ -44,12 +44,14 @@ One message, plain language, numbered:
 
 If the user says "just file it", file with what you have — mark missing fields `unknown`, never block on optional details.
 
-### Phase 3 — Investigation (autonomous, no questions)
+### Phase 3 — Clarification (autonomous, no questions)
+
+Goal: make the requested change precise and decidable. **Stop at clarifying what changes** — no implementation plan, no crate scoping, no effort estimates; those belong to the cr-implementation skill when the story is worked.
 
 1. **Requirement mapping**: every affected FR-n / NFR-n quoted verbatim from §14 into the CR. Pure addition → propose the next free ID (scan §14.1/§14.2).
 2. **Conflict check**: search ADRs, concepts (`doc/arc42/12-concepts/`), arc42 chapters for contradicting recorded decisions. A conflict does *not* block a CR — it is the core decision material — but it must be stated explicitly: which decision changes and how (ADR version bump + history entry).
-3. **Impact analysis**: affected stories (done → rework/regression risk, in-progress/backlog → scope change), crates/contexts per §8, **file-format compatibility** (anything touching ADR 004 / NFR2 / round-trip is high-stakes — call it out), rough effort: small | medium | large.
-4. **Decision plan**: the exact doc changes acceptance triggers in one commit — §14 edit(s), ADR bump(s)/new ADR (`status: proposed`), concept doc updates, new story S-NNN on the board whose Why references CR-NNN.
+3. **Decision-relevant impact**: affected stories (done → rework/regression risk, in-progress/backlog → scope change), and **file-format compatibility** — anything touching ADR 004 / NFR2 / round-trip is high-stakes; call it out.
+4. **Decision plan**: the exact doc changes acceptance triggers in one commit — §14 edit(s), ADR bump(s)/new ADR (`status: proposed`), concept doc updates, and a skeleton story S-NNN on the board whose Why references CR-NNN (acceptance criteria are written by the cr-implementation skill when it starts).
 
 ### Phase 4 — File and commit
 
@@ -65,13 +67,13 @@ If the user says "just file it", file with what you have — mark missing fields
 1. §14: replace/add the requirement rows exactly as proposed (new IDs appended, never renumber).
 2. ADRs: version bump + history entry for each contradicted decision, or new ADR (`status: proposed`) for genuinely new decisions.
 3. Concept docs / arc42 chapters touched by the change (same-commit rule), `overview.md` tracker if scope moves.
-4. Story board: new S-NNN whose Why cites CR-NNN; dependencies set from the impact analysis.
+4. Story board: skeleton S-NNN whose Why cites CR-NNN (title + Why + scope only — acceptance criteria are written by the cr-implementation skill when it starts); dependencies set from the conflict/impact check.
 5. CR file: Decision section filled (status `accepted`, date, user's words as reason if any); board row keeps Open until implemented.
 6. Commit: `cr(CR-NNN): accepted — <title>`.
 
 **Rejected** — record reason + date in the Decision section, status `rejected`, move the board row to Closed with a one-line resolution. No other doc changes. Commit: `cr(CR-NNN): rejected — <title>`.
 
-**Later, when the story lands**: the story's commit flips the CR to `implemented` (fill Implementation section with S-NNN + commit hash) and moves the board row to Closed.
+**Later, when the work lands** (cr-implementation skill): the story's commit flips the CR to `implemented` (fill Implementation section with S-NNN + commit hash) and moves the board row to Closed.
 
 ## Question etiquette
 

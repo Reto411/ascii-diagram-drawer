@@ -1,6 +1,6 @@
 ---
 name: bug-report
-description: Create bug reports interactively with the user — ask in small batches, then investigate autonomously (dedupe against open bugs, check whether the behavior is documented as intended, attempt a headless repro), file the report from the template into doc/bugs/, update the board, and commit. Use when the user reports a bug, says "file a bug", or describes broken behavior they want on record.
+description: Create bug reports interactively with the user — ask in small batches, then clarify the defect autonomously (dedupe against open bugs, check whether the behavior is documented as intended, attempt a headless repro), file the report from the template into doc/bugs/, update the board, and commit. Clarifies *what* is broken — never *why* (root cause) or *how to fix it*; that is the bug-fix skill's job at handoff. Use when the user reports a bug, says "file a bug", or describes broken behavior they want on record.
 metadata:
   scope: whole repository (files under doc/bugs/)
   status: stable
@@ -9,7 +9,7 @@ metadata:
 
 # Bug Report (interactive)
 
-Mission: turn "this is broken" into a filed, investigated, committed bug report — `doc/bugs/B-NNN-<slug>.md` + the board row. This skill **files and triages; it does not fix**. Fixing goes through the story board (confirmed bug → story S-NNN referencing B-NNN) or a direct `fix(B-NNN): …` commit made outside this skill.
+Mission: turn "this is broken" into a filed, clarified, committed bug report — `doc/bugs/B-NNN-<slug>.md` + the board row. This skill **files and clarifies; it does not diagnose or fix**. It pins down *what* is broken (behavior, where, when, expected vs actual, minimal repro) — never *why* it happens (root cause) and never *how to fix it*. Both belong to the **bug-fix skill** (`.agents/skills/bug-fix/SKILL.md`), which runs later at handoff: confirmed bug → story S-NNN referencing B-NNN, or a direct `fix(B-NNN): …` commit when trivial.
 
 ## Ground rules
 
@@ -48,11 +48,15 @@ Follow up only for gaps that matter:
 
 If the user says "just file it", file with what you have — mark missing fields `unknown`, never block on optional details.
 
-### Phase 3 — Investigation (autonomous, no questions)
+### Phase 3 — Clarification (autonomous, no questions)
 
-1. **Dedupe**: read `doc/bugs/BUGS.md` + grep existing reports for the symptom. Same root issue → do not create a new ID; append to the existing report's Evidence and stop (note it was re-reported).
-2. **Docs check**: search ADRs, concepts (`doc/arc42/12-concepts/`), arc42 chapters for the involved behavior. Record the outcome in the report: *not covered* / *contradicts <decision>* / *matches <decision> → as-designed*.
-3. **Repro attempt** (skip only if clearly impossible headlessly, e.g. pure visual): run the relevant checks — targeted `cargo test`, a fixture through the pipeline/exporters, or the GUI smoke per the **gui-testing skill** (`scripts/smoke.sh`). Record each attempt: command + trimmed result. Reproduced → status `reproduced`; not reproduced → stay `open` with what was tried.
+Goal: make the defect precise and provable. **Stop at demonstrating the defect** — no code archaeology for *why* it happens, no fix ideas, no effort estimates. Root cause + fix design are the bug-fix skill's job at handoff.
+
+1. **Dedupe**: read `doc/bugs/BUGS.md` + grep existing reports for the symptom. Same issue → do not create a new ID; append to the existing report's Evidence and stop (note it was re-reported).
+2. **Docs check** (as-designed detection only): search ADRs, concepts (`doc/arc42/12-concepts/`), arc42 chapters for the involved behavior. Record the outcome in the report: *not covered* / *contradicts <decision>* / *matches <decision> → as-designed*. Cite the decision; do not analyze it or reconcile the conflict here.
+3. **Repro attempt** (skip only if clearly impossible headlessly, e.g. pure visual): run the relevant checks — targeted `cargo test`, a fixture through the pipeline/exporters, or the GUI smoke per the **gui-testing skill** (`scripts/smoke.sh`). Record each attempt: command + trimmed result showing observed vs expected. Reproduced → status `reproduced`; not reproduced → stay `open` with what was tried.
+
+Out of scope here (bug-fix skill): why the defect happens, which code is at fault, candidate fixes.
 
 ### Phase 4 — File and commit
 
@@ -65,7 +69,7 @@ If the user says "just file it", file with what you have — mark missing fields
 
 ### After filing (handoff, tell the user this)
 
-- **Reproduced bug** → belongs on the story board as a story whose scope is the fix (or a direct `fix(B-NNN): …` commit if trivial); when it lands, flip the report to `fixed`, fill Resolution, update the board, commit.
+- **Reproduced/open bug** → fixing is the **bug-fix skill's** job (`.agents/skills/bug-fix/SKILL.md`): it does the root cause analysis and lands the fix — as a story S-NNN referencing B-NNN when non-trivial, or a direct `fix(B-NNN): …` commit when trivial. When it lands, the report flips to `fixed`, Resolution is filled, board updated.
 - **As-designed** → ask whether the user wants the *decision* changed; if so, that path is a **change request** (change-request skill) — the CR carries the ADR version bump + story on acceptance. The bug itself stays closed as `as-designed`.
 
 ## Question etiquette

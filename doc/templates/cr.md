@@ -33,16 +33,14 @@ updated: YYYY-MM-DD
 
 ## Impact analysis
 
-> Filled by the AI while preparing the CR (change-request skill): affected stories with IDs, crates/contexts per §8, format-compatibility risk, rough effort.
+> Filled by the AI while clarifying the CR (change-request skill): affected stories with IDs, file-format compatibility risk. Decision-relevant only — no implementation scoping (crates/effort are decided at handoff by the cr-implementation skill).
 
 - **Stories:** <S-xxx done/in-progress/backlog — what changes for each; "none">
-- **Crate/context:** <per §8>
 - **Format compatibility:** <yes/no — is ADR 004 round-trip / NFR2 at stake?>
-- **Effort:** small | medium | large
 
 ## Decision plan
 
-> What acceptance triggers, in one commit: §14 edit(s), ADR bump(s)/new ADR, concept/arc42 updates, new story S-NNN.
+> What acceptance triggers, in one commit: §14 edit(s), ADR bump(s)/new ADR, concept/arc42 updates, skeleton story S-NNN (ACs written at implementation).
 
 - 
 

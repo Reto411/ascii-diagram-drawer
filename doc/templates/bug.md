@@ -43,7 +43,7 @@ updated: YYYY-MM-DD
 
 ## Investigation
 
-> Filled by the AI while triaging (bug-report skill): dedupe result, docs check, repro attempts with commands + results. Speculation is labeled as speculation.
+> Filled by the AI while clarifying (bug-report skill): dedupe result, docs check (as-designed detection only), repro attempts with commands + results showing observed vs expected. Clarification only — no root cause analysis, no fix design (those belong to the bug-fix skill at handoff; its findings are appended here as a dated "Fix analysis" block).
 
 - **Duplicate:** none | B-xxx
 - **Docs check:** <not covered | contradicts <ADR/concept link> | matches <link> → as-designed>

@@ -78,7 +78,7 @@ Context budget: read only the story file + the arc42 chapters / ADRs / concepts 
    - **Security (AGENTS.md):** no secrets or credentials in the diff; no new external service calls beyond the normal build/test workflow; no weakened auth/validation/sandboxing. A leak found here stops the commit — record it in `ATTENTION.md` first.
    - *Sensitive stories* (anything touching credentials, network, export, or security behavior): run one short **separate** headless session (fresh context, via the devcontainer command in `.devcontainer/README.md`) whose only task is to review this diff against the ACs and write findings into the story's Verification section. Address them before committing.
 8. **Docs in the same commit**: flip implemented ADRs `proposed` → `accepted`; changed decisions get a version bump + history entry; update affected arc42 chapters + the `overview.md` tracker; create/update concept docs from the template (never duplicate an existing concept); any new decision → new ADR (`status: proposed`).
-9. **Commit**: `git add` everything, message `S-NNN: <title>` with a 1–3 line body. Update the board in that same commit: story → *Done* (date + commit), clear *In progress*, append a progress-log entry (what landed, gate results, follow-ups).
+9. **Commit**: `git add` everything, message `S-NNN: <title>` with a 1–3 line body. Update the board in that same commit: story → *Done* (date + commit), clear *In progress*, append a progress-log entry (what landed, gate results, follow-ups). If the story's Why cites a filed bug (B-NNN) or an accepted CR (CR-NNN), close it in this same commit per the bug-fix / cr-implementation skill's close step.
 
 ## Blocked stories
 
