@@ -1,15 +1,15 @@
 ---
 name: gui-testing
-description: How to test the eframe GUI headlessly in the isolated devcontainer — tier 0 headless unit tests for interaction logic, tier 0b full-app egui frame pumping (no window), then three visual tiers (launch-alive, golden-screenshot diff, perceptual check with the local vision model), plus evidence rules for story Verification sections. Use when verifying any GUI story AC (S-012…S-019), running a GUI smoke or screenshot, generating/diffing goldens, or deciding whether a visual check is machine-verifiable.
+description: How to test the eframe GUI headlessly in the isolated devcontainer — tier 0 headless unit tests for interaction logic, tier 0b full-app egui frame pumping (no window), then visual tiers via the software screenshot rasterizer (golden PNGs without a GPU; xvfb capture is unavailable in this image — no EGL), plus evidence rules for story Verification sections. Use when verifying any GUI story AC (S-012…S-019), running a GUI smoke or screenshot, generating/diffing goldens, or deciding whether a visual check is machine-verifiable.
 metadata:
-  scope: gui-app + devcontainer GUI tooling (xvfb/ImageMagick)
+  scope: gui-app + devcontainer GUI tooling (software rasterizer; xvfb path disabled — no EGL)
   status: stable
-  updated: 2026-10-29
+  updated: 2026-10-30
 ---
 
 # GUI Testing
 
-The devcontainer has **no display**. All GUI verification runs headless under `xvfb` inside the image (it ships `xvfb` + ImageMagick; see `.devcontainer/README.md`). The rule that makes this work: **GUI stories decompose interaction logic into headless unit tests** — gesture handlers against fake `Services`, pure grid→screen mapping / hit-test helpers — so nearly every AC is machine-verifiable without a single pixel. The visual tiers below exist only for what pixels actually answer.
+The devcontainer has **no display — and no working GPU path**: wgpu cannot create a surface (`FailedToCreateSurfaceForAnyBackend`, the image has no libEGL and apt egress is blocked by ADR 014), so `smoke.sh launch`/`capture` (xvfb) fail here. All GUI verification is headless: **GUI stories decompose interaction logic into unit tests** (tier 0/0b) — gesture handlers against fake `Services`, pure grid→screen mapping / hit-test helpers — and the visual tiers run on the **software screenshot rasterizer** (`gui-app/src/screenshot.rs`): it tessellates a pumped egui frame with epaint's own tessellator and rasterizes the triangles to PNG in pure Rust, no window/GL/X11. Verified pixel-exact against synthetic geometry (fills land on their exact pixel bounds).
 
 ## Tiers (cheapest first — stop as soon as a tier answers the AC)
 
@@ -28,7 +28,7 @@ Covers: gesture handlers (pointer down/move/up → model mutation sequences), gr
 
 ### Tier 0b — headless full-app frame pumping (egui without a window)
 
-`gui-app/src/gui_tests.rs` drives the **real `DrawingApp` through real egui frames** with no window: a `Gui` harness feeds `RawInput` (pointer events, keys, text) into `Context::run` and asserts on `FullOutput` (galleys, lines, rects, circles) plus model state. This closes the gap between tier 0 (pure gesture machine, fake services) and tier 1 (a live process under xvfb): it exercises the *egui glue itself* — sidebar/topbar button hit areas, prompt TextEdits, the floating inline editor, clipboard commands, per-frame PNG worker ticks.
+`gui-app/src/gui_tests.rs` drives the **real `DrawingApp` through real egui frames** with no window: a `Gui` harness feeds `RawInput` (pointer events, keys, text) into `Context::run` and asserts on `FullOutput` (galleys, lines, rects, circles) plus model state. This closes the gap between tier 0 (pure gesture machine, fake services) and the visual tiers: it exercises the *egui glue itself* — sidebar/topbar button hit areas, prompt TextEdits, the floating inline editor, clipboard commands, per-frame PNG worker ticks.
 
 ```sh
 cargo test -p gui-app gui_tests   # the full suite; part of `cargo test --workspace`
@@ -48,38 +48,35 @@ Use tier 0b when an AC is about *what the GUI does with real egui input* (a butt
 
 ### Tier 1 — launch-alive (does it start and stay up?)
 
-```sh
-sh .agents/skills/gui-testing/scripts/smoke.sh launch
-```
+> **Unavailable in this image** — wgpu cannot create a surface (no libEGL; apt egress blocked). `smoke.sh launch` exits with `Wgpu(CreateSurfaceError …)`; treat that as an environment limitation, not an app regression. The tier-0b harness is the substitute: pumping many real egui frames through the real `DrawingApp` without panicking *is* the "stays up" proof (the whole suite does this on every run).
 
-Builds `gui-app`, runs it under `xvfb` for 10 s. Exit 124 from `timeout` = the app started and stayed up → **PASS**. Any early exit is a crash — capture stderr before moving on. Answers ACs like "app starts", "opens without panic", "stays responsive to idle".
-
-### Tier 2 — golden-screenshot diff (pixel-exact regression guard)
+### Tier 2 — golden-screenshot diff (software rasterizer; pixel-exact regression guard)
 
 ```sh
-sh .agents/skills/gui-testing/scripts/smoke.sh capture shot.png 3   # build, run, screenshot after 3 s idle
-sh .agents/skills/gui-testing/scripts/smoke.sh diff shot.png gui-app/tests/goldens/<name>.png
+GUI_DUMP=1 cargo test -p gui-app visual_dump   # writes /tmp/gui-dump/01-empty.png … 08-inline-edit.png
 ```
 
-Args after the command's own are passed through to gui-app — capture with a startup fixture:
+`gui_tests::visual_dump` drives the real app through eight known states (empty, text sample, two boxes, selection, connect-drag, template editor, path prompt, inline edit) and rasterizes each frame with `gui-app/src/screenshot.rs`. Add new states to that test as stories land; keep names `<nn>-<state>.png`.
 
-```sh
-sh .agents/skills/gui-testing/scripts/smoke.sh capture shot.png 3 gui-app/tests/fixtures/one-box.ad
-```
+- **Goldens live in `gui-app/tests/goldens/`** and are committed with the story that introduces them. Diff a fresh dump against a golden with any pixel-diff tool (`cmp` on raw RGBA, or ImageMagick's `compare -metric AE` if present).
+- The rasterizer is **deterministic pure Rust over epaint's tessellator output** — more stable than GPU captures: goldens survive as long as the egui/epaint version + fonts in the image don't change. If either changes (eframe bump, font packages), regenerate goldens and note it in the progress log.
+- The dump is opt-in (`GUI_DUMP=1`) so plain `cargo test` stays fast; coverage runs should set it (`GUI_DUMP=1 cargo tarpaulin --engine Llvm --workspace`).
 
-- **Goldens live in `gui-app/tests/goldens/`** and are committed with the story that introduces them.
-- Generate a golden **once, inside the same image build** — pixel-exact matches are only stable within one image build (fonts/renderer come from the image's apt packages). If the Dockerfile changes anything GUI-relevant (fonts, ImageMagick, eframe version), regenerate goldens and note it in the progress log.
-- The capture script verifies the app is still alive before capturing — a crashed app fails loudly instead of producing a black-frame "pass".
-- For meaningful goldens the startup state must be deterministic: fixed window size, fixed theme, no animations (see eframe notes below), and a known diagram — once `gui-app` takes CLI args (S-012+), capture with a fixture `.ad` file.
+**How to "see" a screenshot as an agent:** models here cannot view images. Two working methods:
+
+1. **ASCII downscale** — `python3 .agents/skills/gui-testing/scripts/ascii_view.py <png> [cols]` (stdlib-only; brighter → `| - # @`). Good for layout, panels, dialogs, "is the canvas empty or not".
+2. **Pixel scans** — decode the PNG and print alpha/luminance transitions along chosen rows/columns (a ~30-line Python script with `zlib`+`struct`, same decoder as `ascii_view.py`). Good for exact positions: "the selection border starts at x=180", "row y=24 is transparent, y=25 opaque".
+
+Use both together: ASCII view to orient, scans to verify the AC's exact claim.
 
 ### Tier 3 — perceptual check (vision model; use sparingly)
 
-Only when tiers 0–2 **genuinely cannot answer the AC** — a semantic property no pixel diff can express ("label is legible", "box drawn at clicked position"). Requirements:
+Only when tiers 0–2 **genuinely cannot answer the AC**. Requirements:
 
-1. The session model supports images (`"images": true` in `.devcontainer/models.json`) and Unsloth has a vision-capable variant loaded. **Status 2026-10-27:** the endpoint accepts `image_url` parts but the loaded GGUF is not vision-capable (HTTP 400 "does not support vision") — until a Qwen VL variant is loaded, tier 3 is unavailable and its ACs go to ⚠️ deferred-to-human.
-2. The vision model runs on **CPU** — every call is slow. Downscale first: `magick shot.png -resize 320x shot-low.png`, then `read` the low-res PNG (structure and labels stay legible; tokens and inference time don't).
+1. The session model supports images (`"images": true` in `.devcontainer/models.json`) and Unsloth has a vision-capable variant loaded. **Status 2026-10-30:** this session's model cannot view images at all — use tier 2's ASCII view + pixel scans instead; reserve ⚠️ deferred-to-human for truly semantic judgments ("looks professional").
+2. If a vision-capable endpoint is available: the vision model runs on **CPU** — every call is slow. Downscale first, then `read` the low-res PNG.
 3. **Batch several perceptual assertions into one screenshot** instead of taking many.
-4. Save the (low-res) screenshot as an artifact and cite its path + your observed findings as evidence — a human re-checks the PNG, not the agent's claim.
+4. Save the screenshot as an artifact and cite its path + your observed findings (ASCII excerpt / scan lines) as evidence — a human re-checks the PNG, not the agent's claim.
 
 ## Decision table
 
@@ -87,27 +84,27 @@ Only when tiers 0–2 **genuinely cannot answer the AC** — a semantic property
 |---|---|
 | Model state after a user action (move/resize/connect/delete) | 0 |
 | GUI behavior through real egui input (buttons, prompts, inline editor, overlays) | 0b |
-| App starts, stays up, no panic on open | 1 |
-| "Looks like before" — visual regression of a known screen | 2 |
-| Semantic visual property (legibility, correct position in pixels) | 3 |
-| Gesture → mutation sequence with fakes | 0 (never screenshot this) |
+| App starts, stays up, no panic on open | 0b (frame pumping; tier 1 unavailable in this image) |
+| "Looks like before" — visual regression of a known screen | 2 (software rasterizer dump vs golden) |
+| Semantic visual property (legibility, correct position in pixels) | 2 + pixel scans / ASCII view (vision model = tier 3, see below) |
 
 ## Evidence rules (story Verification section)
 
 - Every ✅ cites the **command actually run + observed result**: exit code, AE pixel count, or screenshot path. "Tests passed" is not evidence.
-- Screenshot artifacts stay on disk (e.g. `gui-app/tests/goldens/` for goldens; a story-local path for one-off perceptual shots) and are cited by path.
-- Only checks that fail **all** tiers close as ⚠️ *deferred to human*, with a concrete checklist written into Verification; every ⚠️ is flagged in the board's progress log. An agent never marks a visual AC ✅ without having seen it (tier ≥ 2 evidence).
+- Screenshot artifacts stay on disk (`gui-app/tests/goldens/` for goldens; a story-local path for one-off shots) and are cited by path. `/tmp/gui-dump/*.png` from `visual_dump` is fine as working evidence but is **not durable** — copy anything worth keeping into the repo.
+- Only checks that fail **all** tiers close as ⚠️ *deferred to human*, with a concrete checklist written into Verification; every ⚠️ is flagged in the board's progress log. An agent never marks a visual AC ✅ without tier ≥ 2 evidence (an inspected dump: ASCII view excerpt or scan lines proving the claim).
 
-## eframe determinism notes (stable goldens)
+## Determinism notes (stable goldens)
 
-Pixel-exact diffs only work if the app renders identically on every run:
+Pixel-exact diffs only work if the app renders identically on every run. The software rasterizer removes most of the usual hazards (no GPU driver, no compositor, no timing) — the harness already pins what matters:
 
-- Pin the viewport: fixed `InnerSize`, no user-resize between capture and diff; same xvfb screen size (default is fine — it's constant inside the image).
-- Fix the theme (`Visuals::dark` or `light`) — never follow system settings.
-- Disable animations / transitions (`Context::set_animations_enabled(false)`) so a mid-animation frame can't be captured.
-- Capture after idle (the script's `sleep N`): egui repaints on events, so the settled frame is stable.
-- Monospace font must resolve to the same file every run — it does inside one image build; another reason goldens are per-image-build.
+- Fixed viewport: the `Gui` harness pumps at a fixed 1024×768, ppp 1.0.
+- Fixed theme: `DrawingApp` sets its visuals explicitly — never follow system settings.
+- Deterministic state: each dump state is reached by an explicit event sequence (no timing, no idle sleep needed); the last pumped frame is captured directly.
+- Font atlas comes from the image's fontconfig + epaint's rasterizer — stable within one image build; regenerate goldens on eframe/epaint bumps or font package changes.
+
+Known rasterizer conventions (why the PNGs match what a GPU would show): epaint vertex colors are straight sRGBA, untextured vertices sample `uv=(0,0)` which egui keeps as an opaque white texel in the font atlas, and blending is straight-alpha "over". If you change any of this in `screenshot.rs`, re-run the synthetic check (`dbg_raster_synth` pattern: two known rects must land on their exact pixel bounds).
 
 ## wasm target
 
-This skill covers the **native** target (what runs under xvfb). The web milestone (S-019) verifies differently: `cargo check -p gui-app --target wasm32-unknown-unknown` + the headless core test suite on wasm — there is no browser in the isolated devcontainer, so no screenshots for wasm.
+This skill covers the **native** target (headless frame pumping + software rasterizer). The web milestone (S-019) verifies differently: `cargo check -p gui-app --target wasm32-unknown-unknown` + the headless core test suite on wasm — there is no browser in the isolated devcontainer, so no screenshots for wasm.
