@@ -1347,3 +1347,114 @@ fn template_editor_save_registers_a_placeable_template() {
         "sidebar lists the new template by name"
     );
 }
+
+// ─────────────────────── visual dump (opt-in) ───────────────────────
+//
+// GUI_DUMP=1 cargo test -p gui-app visual_dump
+// Rasterizes representative UI states to /tmp/gui-dump/*.png with the
+// headless software renderer (`screenshot.rs`) — no GPU/X11 needed.
+
+#[test]
+fn visual_dump() {
+    if std::env::var("GUI_DUMP").is_err() {
+        return; // opt-in: keep plain `cargo test` from writing files
+    }
+    let dir = std::path::PathBuf::from("/tmp/gui-dump");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let shot = |ctx: &egui::Context, out: &egui::FullOutput, name: &str| {
+        crate::screenshot::capture_to_png(ctx, out, WIN_W as u32, WIN_H as u32, &dir.join(name))
+            .unwrap_or_else(|e| panic!("rasterize {name}: {e}"));
+    };
+
+    let load_fixture = |name: &str| -> DrawingApp {
+        let mut app = DrawingApp::new(Services::native());
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/{name}"));
+        match app.open(&path) {
+            crate::fileio::OpenOutcome::Loaded { .. } => app,
+            other => panic!(
+                "fixture {name:?} failed to load: {}",
+                crate::fileio::open_message(&other)
+            ),
+        }
+    };
+
+    // 1. Empty canvas.
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.frame();
+    shot(&gui.ctx, &out, "01-empty.png");
+
+    // 2. Text fixture (shape + single/multi-line text).
+    {
+        let mut gui = Gui::new(load_fixture("text-sample.ad"));
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "02-text-sample.png");
+    }
+
+    // 3. Two boxes with a connector.
+    {
+        let mut gui = Gui::new(load_fixture("two-boxes-connector.ad"));
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "03-two-boxes.png");
+    }
+
+    // 4. Box selected: outline, anchor dots, resize handle.
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let min = gui.canvas_min();
+        gui.place_box_via_ui(min, 2, 1);
+        gui.select_first_box(min);
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "04-selected.png");
+    }
+
+    // 5. Connect drag in progress (line from anchor to cursor).
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let min = gui.canvas_min();
+        gui.place_box_via_ui(min, 2, 1);
+        gui.select_first_box(min);
+        let (x, y, w, h) = gui.first_box();
+        let e_anchor = gui.cell_center(min, x + w - 1, y + h / 2);
+        let cursor = gui.cell_center(min, x + w + 4, y);
+        let out = gui.press_and_hold_to(e_anchor, cursor);
+        shot(&gui.ctx, &out, "05-connect-drag.png");
+    }
+
+    // 6. Template editor window open (name typed, pattern cells painted).
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let out = gui.frame();
+        let new_btn = find_text(&out, "New template").expect("sidebar has '＋ New template…'");
+        let _ = gui.click_at(new_btn.center());
+        assert!(gui.app.template_editor_name().is_some(), "editor opened");
+        // Type a name and paint a few pattern cells so the preview shows.
+        let out = gui.frame();
+        let name_label = find_text_exact(&out, "Name:").expect("editor shows Name field");
+        let _ = gui.click_at(Pos2::new(name_label.max.x + 10.0, name_label.center().y));
+        let _ = gui.type_text("star");
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "06-template-editor.png");
+    }
+
+    // 7. Path prompt open with a typed path.
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let _ = gui.open_prompt("Open…");
+        let _ = gui.type_text("/tmp/diagrams/next.ad");
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "07-path-prompt.png");
+    }
+
+    // 8. Inline text editing (floating editor over the object).
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let min = gui.canvas_min();
+        place_text_object(&mut gui, min);
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "08-inline-edit.png");
+    }
+
+    eprintln!("visual dump written to {dir:?}");
+}

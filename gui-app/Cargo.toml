@@ -19,6 +19,8 @@ eframe = "0.37"
 [dev-dependencies]
 # AC3 test: the `.txt` sink writes into a throwaway directory.
 tempfile = "3"
+# Headless screenshot rasterizer (gui_tests::visual_dump, opt-in via GUI_DUMP=1).
+png = "0.17"
 
 [lints]
 workspace = true

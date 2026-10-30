@@ -17,6 +17,8 @@ mod exportio;
 mod fileio;
 #[cfg(test)]
 mod gui_tests;
+#[cfg(test)]
+mod screenshot;
 mod sidebar;
 mod template_editor;
 
