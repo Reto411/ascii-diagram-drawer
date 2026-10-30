@@ -19,3 +19,6 @@ target
 !Cargo.lock
 # security incident log — local only, never push
 ATTENTION.md
+
+# python bytecode from .agents/skills/gui-testing/scripts tooling
+__pycache__/
