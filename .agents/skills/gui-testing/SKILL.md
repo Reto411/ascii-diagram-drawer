@@ -76,8 +76,8 @@ Use both together: ASCII view to orient, scans to verify the AC's exact claim.
 
 Only when tiers 0–2 **genuinely cannot answer the AC**. Requirements:
 
-1. The session model supports images (`"images": true` in `.devcontainer/models.json`) and Unsloth has a vision-capable variant loaded. **Status 2026-10-30:** this session's model cannot view images at all — use tier 2's ASCII view + pixel scans instead; reserve ⚠️ deferred-to-human for truly semantic judgments ("looks professional").
-2. If a vision-capable endpoint is available: the vision model runs on **CPU** — every call is slow. Downscale first, then `read` the low-res PNG.
+1. The session model supports images (`"images": true` in `.devcontainer/models.json`) and Unsloth has a vision-capable variant loaded. **Status 2026-10-30:** vision IS available — Qwen3.8-27B GGUF with mmproj on the OpenAI-compatible endpoint `http://127.0.0.1:8888/v1` (auth: `Authorization: Bearer $UNSLOTH_API_KEY` from `.devcontainer/.env`; send the image as an `image_url` data-URL part). Probe with a tiny colored image before relying on it. Use tier 2's ASCII view + pixel scans first; reserve ⚠️ deferred-to-human for truly semantic judgments ("looks professional").
+2. The vision model runs on **CPU** — every call is slow. Downscale first (`magick shot.png -resize 320x`), keep `max_tokens` large enough for reasoning + answer, and ask for a concise structured reply.
 3. **Batch several perceptual assertions into one screenshot** instead of taking many.
 4. Save the screenshot as an artifact and cite its path + your observed findings (ASCII excerpt / scan lines) as evidence — a human re-checks the PNG, not the agent's claim.
 
