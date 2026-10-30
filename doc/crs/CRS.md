@@ -22,6 +22,8 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | CR-006 | Material Design GUI with custom title bar | medium | proposed | [CR-006-material-design-title-bar.md](CR-006-material-design-title-bar.md) |
 | CR-007 | User-modifiable arrow shapes (manual bends) | medium | proposed | [CR-007-manual-arrow-bends.md](CR-007-manual-arrow-bends.md) |
 | CR-008 | Selectable arrow tips on both ends + arrow-shaped anchor markers | medium | proposed | [CR-008-selectable-arrow-tips.md](CR-008-selectable-arrow-tips.md) |
+| CR-009 | Diagram colors (background/shape fill/line & text) via color picker, svgbob Settings | medium | proposed | [CR-009-diagram-colors-picker.md](CR-009-diagram-colors-picker.md) |
+| CR-010 | Standalone arrows with attachable/detachable ends | medium | proposed | [CR-010-standalone-arrows.md](CR-010-standalone-arrows.md) |
 
 ## Closed
 
