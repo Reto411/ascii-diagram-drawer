@@ -15,6 +15,7 @@ Filed via the **bug-report skill** (`.agents/skills/bug-report/SKILL.md`). One f
 | ID | Title | Severity | Status | File |
 |----|-------|----------|--------|------|
 | B-001 | Ellipse resizing does not work | major | reproduced | [B-001](B-001-ellipse-resizing-does-not-work.md) |
+| B-002 | Scale duplicates shape | major | open | [B-002](B-002-scale-duplicates-shape.md) |
 
 ## Closed
 
