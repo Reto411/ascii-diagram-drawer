@@ -2,7 +2,7 @@
 title: CR-003 - template creation via text box + resize-rule toolset
 description: custom template authoring = hand-typed ASCII art in a text box, plus a second toolset declaring resize behavior (per-edge insert/remove characters, parity variants for ellipses)
 scope: shapes/templates (custom object authoring + resize rules)
-status: accepted
+status: implemented
 priority: high
 updated: 2026-10-31
 ---
@@ -57,4 +57,4 @@ User feedback: painting the object cell-by-cell in the graphical grid editor is 
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-024** — commit `d6d6f3e` (2026-10-31). Art text box + per-edge resize toolset in the template editor (parity pairs included); `resize` statements in `.adc` 1.1 with round-trip; pure re-rasterization at instance size (`rasterize_pattern`) with shrink-simulated minimums; resize gesture enabled for rule-bearing customs and clamped to the minimum; a placed instance resizes by re-rasterization (tier-0b pins the exact bytes). One implementation detail beyond the request's wording: interior fill is auto-derived from the art — space cannot be a token, so "insert a space" is expressed by the derived fill. 33 new tests; workspace green; tarpaulin 94.07% ≥ 80%; ADR 007 → accepted v7.
