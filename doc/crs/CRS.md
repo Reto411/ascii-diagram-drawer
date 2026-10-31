@@ -30,7 +30,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
-| CR-007 | User-modifiable arrow shapes (manual bends) | 2026-10-31 | implemented — S-028, commit `pending` (FR9, ADR 013 v4) |
+| CR-007 | User-modifiable arrow shapes (manual bends) | 2026-10-31 | implemented — S-028, commit `7010cc1` (FR9, ADR 013 v4) |
 | CR-006 | Material Design GUI with custom title bar | 2026-10-31 | implemented — S-027, commit `5f78f74` (FR14) |
 | CR-004 | Right-side SVG preview pane | 2026-10-31 | implemented — S-026, commit `fd9ce32` (FR6) |
 | CR-002 | Grouped dropdown menus in the toolbar | 2026-10-31 | implemented — S-025, commit `16710cc` (FR6) |
