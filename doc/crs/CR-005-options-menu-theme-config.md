@@ -2,7 +2,7 @@
 title: CR-005 - options menu with theme selection and config persistence
 description: an Options menu to modify application settings — starting with UI theme (light / dark / native-inherited, default) — persisted in the application's config file across sessions
 scope: gui (options/settings + theming)
-status: accepted
+status: implemented
 priority: low
 updated: 2026-10-31
 ---
@@ -58,4 +58,4 @@ User feedback: the UI is currently fixed to a dark theme with no way to adapt it
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-023** — `ea40669` (2026-10-31). Notes on outcomes vs. this CR's assumptions: egui 0.37 shipped a native theme system (`ThemePreference::System` + `RawInput::system_theme`) that eframe 0.37 feeds on **every** target — winit's OS query natively, `prefers-color-scheme` on the web — so "native" works first-class rather than best-effort; egui's built-in dark fallback covers the unknown-appearance case exactly as this CR allowed. Config file: JSON at `…/ascii-diagram-drawer/config.json` (platform config dir via the `directories` crate), tolerant of missing/corrupt/foreign files.

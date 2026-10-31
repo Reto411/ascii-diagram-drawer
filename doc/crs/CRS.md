@@ -18,7 +18,6 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | CR-002 | Grouped dropdown menus in the toolbar | low | accepted | [CR-002-grouped-dropdown-menus.md](CR-002-grouped-dropdown-menus.md) |
 | CR-003 | Template creation via text box + resize-rule toolset | high | accepted | [CR-003-template-textbox-resize-rules.md](CR-003-template-textbox-resize-rules.md) |
 | CR-004 | Right-side SVG preview pane | medium | accepted | [CR-004-svg-preview-pane.md](CR-004-svg-preview-pane.md) |
-| CR-005 | Options menu with theme selection and config persistence | low | accepted | [CR-005-options-menu-theme-config.md](CR-005-options-menu-theme-config.md) |
 | CR-006 | Material Design GUI with custom title bar | medium | accepted | [CR-006-material-design-title-bar.md](CR-006-material-design-title-bar.md) |
 | CR-007 | User-modifiable arrow shapes (manual bends) | medium | accepted | [CR-007-manual-arrow-bends.md](CR-007-manual-arrow-bends.md) |
 | CR-008 | Selectable arrow tips on both ends + arrow-shaped anchor markers | medium | accepted | [CR-008-selectable-arrow-tips.md](CR-008-selectable-arrow-tips.md) |
@@ -36,4 +35,5 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
+| CR-005 | Options menu with theme selection and config persistence | 2026-10-31 | implemented — S-023, commit `ea40669` (FR13) |
 | CR-014 | Canvas panning for diagram navigation | 2026-10-31 | implemented — S-022, commit `973d2d7` (FR17) |
