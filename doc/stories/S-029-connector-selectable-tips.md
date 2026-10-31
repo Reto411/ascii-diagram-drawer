@@ -18,7 +18,7 @@ FR9 extended by CR-008: each connector end carries a selectable tip style — no
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-008](CR-008-selectable-arrow-tips.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-008](../crs/CR-008-selectable-arrow-tips.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

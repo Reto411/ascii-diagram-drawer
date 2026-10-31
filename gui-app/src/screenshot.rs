@@ -25,16 +25,10 @@ use egui::epaint::{Mesh, Primitive, TextureId, Vertex};
 use egui::{Color32, ColorImage, FullOutput};
 use std::path::Path;
 
-/// Rasterize `out` (the last pumped frame of `ctx`) to a PNG at `path`.
-///
-/// Returns the image size in pixels.
-pub fn capture_to_png(
-    ctx: &egui::Context,
-    out: &FullOutput,
-    width: u32,
-    height: u32,
-    path: &Path,
-) -> Result<(u32, u32), String> {
+/// Rasterize `out` (the last pumped frame of `ctx`) into a straight-alpha RGBA8
+/// buffer, row-major. Exposed separately from [`capture_to_png`] so tests can
+/// compare regions pixel-for-pixel without writing files.
+pub fn rasterize(ctx: &egui::Context, out: &FullOutput, width: u32, height: u32) -> Vec<[u8; 4]> {
     let font_image = ctx.fonts(|f| f.image());
     let font_size = ctx.fonts(|f| f.font_image_size());
 
@@ -52,6 +46,20 @@ pub fn capture_to_png(
             rasterize_mesh(&mut buf, width, height, prim.clip_rect, mesh, &font_image);
         }
     }
+    buf
+}
+
+/// Rasterize `out` (the last pumped frame of `ctx`) to a PNG at `path`.
+///
+/// Returns the image size in pixels.
+pub fn capture_to_png(
+    ctx: &egui::Context,
+    out: &FullOutput,
+    width: u32,
+    height: u32,
+    path: &Path,
+) -> Result<(u32, u32), String> {
+    let buf = rasterize(ctx, out, width, height);
 
     // The framebuffer is already straight-alpha — write it out directly.
     let mut bytes = Vec::with_capacity(buf.len() * 4);

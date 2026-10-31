@@ -1,14 +1,14 @@
 ---
 title: S-024 Template resize rules (.adc 1.1 + re-rasterization)
 description: story for CR-003 — per-edge insert/remove resize rules with parity variants in the .adc format, pure re-rasterization at instance size, resize gesture enabled for rule-bearing custom shapes, template editor text box + resize toolset
-scope: doc/crs/CR-003-template-resize-rules.md / shape-registry / render-pipeline / ui-api / core-services / gui-app
+scope: doc/crs/CR-003-template-textbox-resize-rules.md / shape-registry / render-pipeline / ui-api / core-services / gui-app
 status: done
 updated: 2026-10-31
 ---
 
 # S-024 Template resize rules (.adc 1.1 + re-rasterization)
 
-**CR:** [CR-003](../crs/CR-003-template-resize-rules.md) — user-defined objects are fixed-size; users want to declare per-edge insert/remove characters (+ parity variants) so their templates resize like the built-ins
+**CR:** [CR-003](../crs/CR-003-template-textbox-resize-rules.md) — user-defined objects are fixed-size; users want to declare per-edge insert/remove characters (+ parity variants) so their templates resize like the built-ins
 **Dependencies:** S-017 (template editor + .adc serializer), B-001 (ellipse re-rasterization precedent) — both done.
 
 ## Acceptance criteria

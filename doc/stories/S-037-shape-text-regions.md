@@ -18,7 +18,7 @@ FR19: templates declare one or more named text regions (text boxes) with positio
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-016](CR-016-shape-text-boxes.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-016](../crs/CR-016-shape-text-boxes.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

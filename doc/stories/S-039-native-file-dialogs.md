@@ -18,7 +18,7 @@ FR2/FR4/FR5: Open / Save / Save As use a system file dialog; Save As offers what
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-001](CR-001-native-file-dialogs.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-001](../crs/CR-001-native-file-dialogs.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

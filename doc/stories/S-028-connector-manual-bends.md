@@ -18,7 +18,7 @@ FR9 extended by CR-007: automatic routing cannot always produce a readable layou
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-007](CR-007-manual-arrow-bends.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-007](../crs/CR-007-manual-arrow-bends.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

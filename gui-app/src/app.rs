@@ -46,6 +46,13 @@ const ANCHOR_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
 const CONNECT_LINE_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
 /// Muted hint text on an empty canvas (first-run affordance).
 const HINT_COLOR: Color32 = Color32::from_rgb(96, 102, 114);
+/// Fixed canvas surface (FR14 / ADR 017): the WYSIWYG region paints its own dark
+/// background regardless of palette — light-theme chrome must never wash out the
+/// fixed `TEXT_COLOR`/`GRID_LINE_COLOR` content, so the canvas is pixel-identical
+/// under both Material palettes by construction.
+/// The canvas background — fixed (not themed): the diagram is monochrome art
+/// (FR14 / ADR 017), so the same pixels render under every Material palette.
+pub(crate) const CANVAS_BG: Color32 = Color32::from_rgb(26, 29, 35);
 
 /// Right-side SVG preview pane (S-026 / CR-004): a live view of exactly what FR5 would
 /// export — the canvas text rasterized through the same `svg_from_text` → resvg
@@ -153,20 +160,22 @@ pub struct DrawingApp {
     preview: PreviewPane,
 }
 
-/// Builds the app from services, an optional startup fixture (the visual test tiers
-/// pass a `.ad` path as the first CLI argument) and the collection-load warnings from
-/// startup (S-016 AC2). Load failures are reported, not fatal — the user can still
-/// open a file later. User options are loaded from the platform config directory
-/// (FR13 / CR-005); a missing or corrupt file simply yields the defaults.
-#[must_use]
+/// Builds the app from services, the loaded user options (FR13 / CR-005), an
+/// optional startup fixture (the visual test tiers pass a `.ad` path as the first
+/// CLI argument) and the collection-load warnings from startup (S-016 AC2). Load
+/// failures are reported, not fatal — the user can still open a file later.
+///
+/// The config arrives pre-loaded: the native entry point (main.rs) must hand its
+/// theme to [`crate::theme::install`] on the eframe context *before* the first UI
+/// pass — egui snapshots the active style into each `Ui` at creation, so a mid-pass
+/// install would make frame 1 render with default spacing and settle over two frames.
 pub fn create_app(
     services: Services,
+    config: AppConfig,
     fixture: Option<&Path>,
     collection_warnings: Vec<String>,
 ) -> DrawingApp {
-    let config_path = crate::config::default_config_path();
-    let config = AppConfig::load(config_path.as_deref());
-    let mut app = DrawingApp::with_config(services, config, config_path);
+    let mut app = DrawingApp::with_config(services, config, crate::config::default_config_path());
     app.collection_warnings = collection_warnings;
     if let Some(path) = fixture {
         let outcome = app.open(path);
@@ -229,6 +238,16 @@ impl DrawingApp {
     #[must_use]
     pub fn current_file(&self) -> Option<&PathBuf> {
         self.current_file.as_ref()
+    }
+
+    /// Window / app-bar title (FR14): the current file's name, else the app name.
+    #[must_use]
+    pub fn window_title(&self) -> String {
+        self.current_file
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| crate::appbar::DEFAULT_TITLE.to_owned())
     }
 
     /// The service seam (catalog, renderer, exporter, stores). Read-only view for the
@@ -810,6 +829,10 @@ impl DrawingApp {
         let painter = ui.painter_at(rect);
         let off = |p: Pos2| p + rect.min.to_vec2();
         let off_rect = |r: egui::Rect| r.translate(rect.min.to_vec2());
+
+        // FR14 (ADR 017): the canvas paints its own fixed surface first — the
+        // WYSIWYG region is palette-independent by construction (AC5).
+        painter.rect_filled(rect, 0.0, CANVAS_BG);
 
         // Subtle full-canvas grid aligned to cell boundaries (graph paper): empty
         // space reads as intentional placement surface instead of a dead void, and
@@ -1496,16 +1519,22 @@ impl DrawingApp {
         // completion the exact bytes are written and the "exporting" state clears.
         self.tick_png_export();
 
-        // FR13 (CR-005) — apply the configured theme exactly once per change: at
-        // startup (`applied_theme` is None) this runs before the first paint, so
-        // there is no flash of unstyled frames; later changes are applied
-        // immediately by [`Self::set_theme`] and this check stays a no-op. egui 0.37
+        // FR13 (CR-005) / FR14 (CR-006, ADR 017) — apply the configured theme
+        // exactly once per change. At startup (`applied_theme` is None) this
+        // re-runs what `theme::install` already did before the first pass
+        // (main.rs / the headless harness), so it is a no-op; after a runtime
+        // switch via [`Self::set_theme`] it activates the new preference. egui 0.37
         // resolves `System` against the OS/browser appearance eframe feeds in —
         // dark where unknown (CR-005's fallback).
         if self.applied_theme != Some(self.config().theme) {
-            ui.ctx().set_theme(self.config().theme.preference());
+            crate::theme::install(ui.ctx(), self.config().theme);
             self.applied_theme = Some(self.config().theme);
         }
+
+        // FR14 (CR-006 / ADR 017): the custom Material app bar — on native targets
+        // the window runs undecorated, so this bar is the window border itself and
+        // must claim its strip before any other panel (panels reserve in show order).
+        crate::appbar::show(ui, &self.window_title());
 
         // Toolbar: file actions on the left, scale control on the right; the last-
         // action message lives in the bottom status bar. Ctrl+S saves without touching
@@ -1804,6 +1833,12 @@ impl DrawingApp {
             }
             Ok((text, width, height)) => self.draw_canvas(ui, &text, width, height),
         });
+
+        // FR14 (CR-006 / ADR 017): window edge/corner resize grips — the window is
+        // undecorated on native, so without these there would be no way to resize
+        // it at all. Foreground layer: shown last, hit-tested first.
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::appbar::show_resize_grips(ui.ctx());
     }
 
     // ── SVG preview pane (S-026 / CR-004) ────────────────────────────────────────
@@ -2235,13 +2270,14 @@ mod tests {
         let services = Services::native();
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/one-box.ad");
-        let app = create_app(services, Some(&fixture), Vec::new());
+        let app = create_app(services, AppConfig::default(), Some(&fixture), Vec::new());
         assert_eq!(app.diagram.len(), 1);
 
         // A missing fixture is reported (eprintln), not fatal — the app still starts empty.
         let services = Services::native();
         let app = create_app(
             services,
+            AppConfig::default(),
             Some(std::path::Path::new("/nonexistent/missing.ad")),
             vec!["broken.adc: line 2, column 1: boom".to_owned()],
         );

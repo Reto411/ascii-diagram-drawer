@@ -18,7 +18,7 @@ FR21: the resize hook is currently a filled square in the anchor-dot color — i
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-018](CR-018-resize-handle-symbol.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-018](../crs/CR-018-resize-handle-symbol.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

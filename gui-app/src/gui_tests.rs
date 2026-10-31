@@ -53,6 +53,13 @@ impl Gui {
         // these defaults — Hack monospace + Ubuntu proportional — so every metric the
         // app computes here matches the native app's.
         ctx.set_fonts(egui::FontDefinitions::default());
+        // FR14 (CR-006, ADR 017): install the Material palettes BEFORE the first UI
+        // pass — mirroring main.rs. egui snapshots the active style into each Ui at
+        // creation, so a mid-pass install would make frame 1 render with default
+        // spacing (20px button rows) and settle to the Material metrics (32px rows)
+        // over the next two frames; every geometry probe in this harness assumes the
+        // layout is stable from frame one.
+        crate::theme::install(&ctx, app.config().theme);
         Self { ctx, app, ts: 1.0 }
     }
 
@@ -76,6 +83,22 @@ impl Gui {
     /// Pump one idle frame.
     fn frame(&mut self) -> egui::FullOutput {
         self.pump(Vec::new())
+    }
+
+    /// Pump one frame reporting a `(w, h)` viewport — for the resize grips'
+    /// degenerate-window guard (FR14 / ADR 017).
+    fn pump_screen(&mut self, w: f32, h: f32, events: Vec<Event>) -> egui::FullOutput {
+        let raw = egui::RawInput {
+            time: Some(self.ts),
+            screen_rect: Some(Rect::from_min_max(Pos2::ZERO, Pos2::new(w, h))),
+            events,
+            ..Default::default()
+        };
+        self.ts += 1.0 / 60.0;
+        let app = &mut self.app;
+        let mut out = self.ctx.run_ui(raw, |ui| app.show(ui));
+        out.textures_delta.clear();
+        out
     }
 
     // ── event constructors ──
@@ -1705,11 +1728,12 @@ fn template_editor_art_box_and_resize_rules_save_a_resizable_template() {
     let anchor_label = find_text(&out, "Anchor mode").expect("anchor-mode checkbox is shown");
     let _ = gui.click_at(anchor_label.center());
     let out = gui.frame();
-    // The toolbar's scale control is also a "+" — take the topmost one below it
-    // (the grid's top-left corner cell).
+    // The toolbar's scale control is also a "+" — it lives on the right side of
+    // the top chrome (x ≈ 1000), while the grid sits in the window on the left;
+    // filter by x, not y (the S-027 app bar pushed the toolbar below y = 20).
     let corner = texts(&out)
         .into_iter()
-        .filter(|(t, r)| t == "+" && r.min.y > 20.0)
+        .filter(|(t, r)| t == "+" && r.min.x < 400.0 && r.min.y > 20.0)
         .min_by(|a, b| {
             a.1.min
                 .y
@@ -1905,6 +1929,51 @@ fn visual_dump() {
         let _ = gui.click_topbar_button("File ▾");
         let out = gui.frame();
         shot(&gui.ctx, &out, "09-file-menu.png");
+    }
+
+    // 10. Material dark palette (FR14 / CR-006): app bar + themed chrome.
+    {
+        let mut app = DrawingApp::with_config(
+            Services::native(),
+            crate::config::AppConfig { theme: Theme::Dark },
+            None,
+        );
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/two-boxes-connector.ad");
+        match app.open(&path) {
+            crate::fileio::OpenOutcome::Loaded { .. } => {}
+            other => panic!(
+                "fixture failed to load: {}",
+                crate::fileio::open_message(&other)
+            ),
+        }
+        let mut gui = Gui::new(app);
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "10-material-dark.png");
+    }
+
+    // 11. Material light palette: same fixture under Light (AC2/AC5 — only the
+    // chrome re-colors, the canvas pixels are identical to shot 10's).
+    {
+        let mut app = DrawingApp::with_config(
+            Services::native(),
+            crate::config::AppConfig {
+                theme: Theme::Light,
+            },
+            None,
+        );
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/two-boxes-connector.ad");
+        match app.open(&path) {
+            crate::fileio::OpenOutcome::Loaded { .. } => {}
+            other => panic!(
+                "fixture failed to load: {}",
+                crate::fileio::open_message(&other)
+            ),
+        }
+        let mut gui = Gui::new(app);
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "11-material-light.png");
     }
 
     eprintln!("visual dump written to {dir:?}");
@@ -2437,6 +2506,423 @@ fn the_default_native_theme_renders_dark() {
         egui::Theme::Dark,
         "native falls back to dark without a system theme"
     );
+}
+
+// ── Material app bar & window controls (S-027 / CR-006 / ADR 017) ───────────
+
+/// The viewport commands queued for the root window in this frame's output.
+/// egui drains them at the end of each pass, so a command is visible only in
+/// the frame it was sent on — which is exactly what makes the one-shot drag
+/// rule testable.
+fn window_commands(out: &egui::FullOutput) -> Vec<egui::ViewportCommand> {
+    out.viewport_output
+        .get(&egui::viewport::ViewportId::ROOT)
+        .map(|vo| vo.commands.clone())
+        .unwrap_or_default()
+}
+
+/// The bundled monospace font must cover the window-control glyphs, or the app
+/// bar would draw tofu boxes for minimize / fullscreen / close (the proportional
+/// font genuinely lacks them — that is why the controls are monospace by design,
+/// see `appbar::window_controls`).
+#[test]
+fn window_control_glyphs_are_in_the_font() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.frame(); // build the font atlas
+    let font_id = egui::FontId::monospace(14.0);
+    gui.ctx.fonts_mut(|fonts| {
+        for c in ['─', '□', '×'] {
+            assert!(
+                fonts.has_glyph(&font_id, c),
+                "window control glyph '{c}' missing from the bundled monospace font"
+            );
+        }
+    });
+}
+
+/// Regression (user report: “grabbing the window never undrags it”): the app bar
+/// must queue `StartDrag` exactly once per drag — on the press frame. The old code
+/// sent it on every frame while `dragged()`, and egui-winit re-invokes winit's
+/// `drag_window()` for each command; on X11 those pointer grabs stack, so the
+/// window keeps following the cursor after release.
+#[test]
+fn app_bar_drag_queues_start_drag_exactly_once() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    // A point in the app bar strip that is over neither the title nor a control.
+    let pos = Pos2::new(500.0, 20.0);
+
+    let count = |out: &egui::FullOutput| -> usize {
+        window_commands(out)
+            .iter()
+            .filter(|c| matches!(c, egui::ViewportCommand::StartDrag))
+            .count()
+    };
+
+    // Hovering queues no drag/resize command (the first frame may carry the
+    // one-shot `SetTheme`, which is unrelated to dragging).
+    let out = gui.pump(vec![Event::PointerMoved(pos)]);
+    assert!(
+        !window_commands(&out).iter().any(|c| matches!(
+            c,
+            egui::ViewportCommand::StartDrag | egui::ViewportCommand::BeginResize(_)
+        )),
+        "hovering must not queue a drag/resize command"
+    );
+
+    // Press: the drag region senses only drags, so this frame starts the drag —
+    // and must send the one `StartDrag`.
+    let out = gui.pump(Gui::press_at(pos));
+    assert_eq!(
+        count(&out),
+        1,
+        "the press frame queues exactly one StartDrag"
+    );
+
+    // Every following frame of the gesture: zero more (this is what the old code
+    // broke — one per frame).
+    for dx in [4.0, 8.0, 12.0] {
+        let out = gui.pump(vec![Event::PointerMoved(Pos2::new(pos.x + dx, pos.y))]);
+        assert_eq!(
+            count(&out),
+            0,
+            "a frame while dragging must not re-queue StartDrag"
+        );
+    }
+
+    // Release: the drag ends; nothing is queued.
+    let out = gui.pump(Gui::release_at(pos));
+    assert_eq!(count(&out), 0, "releasing queues no window command");
+}
+
+/// FR14 (ADR 017): an undecorated window has no border to grab, so the app owns
+/// resizing — invisible grips along all four screen edges and at the corners.
+/// Each grip shows its resize cursor on hover and queues exactly one
+/// `BeginResize(dir)` per gesture (the same one-shot rule as `StartDrag`).
+#[test]
+fn window_edge_grips_queue_begin_resize_once() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    // Two priming frames: a brand-new `Area` runs one invisible "sizing pass"
+    // (its widgets are disabled and therefore not hit-testable), and egui
+    // resolves hover from the PREVIOUS frame's widget rects — so the grips only
+    // become hoverable from the third frame on.
+    let _ = gui.frame();
+    let _ = gui.frame();
+    let (w, h) = (WIN_W, WIN_H);
+    let g = 3.0; // well inside the 6-pt grip band
+
+    let cases: [(Pos2, egui::viewport::ResizeDirection, egui::CursorIcon); 8] = [
+        (
+            Pos2::new(g, g),
+            egui::viewport::ResizeDirection::NorthWest,
+            egui::CursorIcon::ResizeNorthWest,
+        ),
+        (
+            Pos2::new(w / 2.0, g),
+            egui::viewport::ResizeDirection::North,
+            egui::CursorIcon::ResizeNorth,
+        ),
+        (
+            Pos2::new(w - g, g),
+            egui::viewport::ResizeDirection::NorthEast,
+            egui::CursorIcon::ResizeNorthEast,
+        ),
+        (
+            Pos2::new(g, h / 2.0),
+            egui::viewport::ResizeDirection::West,
+            egui::CursorIcon::ResizeWest,
+        ),
+        (
+            Pos2::new(w - g, h / 2.0),
+            egui::viewport::ResizeDirection::East,
+            egui::CursorIcon::ResizeEast,
+        ),
+        (
+            Pos2::new(g, h - g),
+            egui::viewport::ResizeDirection::SouthWest,
+            egui::CursorIcon::ResizeSouthWest,
+        ),
+        (
+            Pos2::new(w / 2.0, h - g),
+            egui::viewport::ResizeDirection::South,
+            egui::CursorIcon::ResizeSouth,
+        ),
+        (
+            Pos2::new(w - g, h - g),
+            egui::viewport::ResizeDirection::SouthEast,
+            egui::CursorIcon::ResizeSouthEast,
+        ),
+    ];
+
+    for (i, (pos, dir, icon)) in cases.iter().enumerate() {
+        // Hover: the grip shows its resize cursor.
+        let out = gui.pump(vec![Event::PointerMoved(*pos)]);
+        assert_eq!(
+            out.platform_output.cursor_icon, *icon,
+            "grip {i} ({pos:?}) hover cursor"
+        );
+
+        // Press: exactly one `BeginResize(dir)` — on the press frame (drag-only sense).
+        let out = gui.pump(Gui::press_at(*pos));
+        let n = window_commands(&out)
+            .iter()
+            .filter(|c| matches!(c, egui::ViewportCommand::BeginResize(d) if d == dir))
+            .count();
+        assert_eq!(
+            n,
+            1,
+            "grip {i} ({pos:?}) press queues exactly one BeginResize({dir:?}); got {:?}",
+            window_commands(&out)
+        );
+
+        // Move + release: no further commands (same one-shot rule as StartDrag).
+        let out = gui.pump(vec![Event::PointerMoved(*pos + egui::vec2(5.0, 5.0))]);
+        assert!(
+            window_commands(&out).is_empty(),
+            "grip {i} move queues nothing"
+        );
+        let _ = gui.pump(Gui::release_at(*pos));
+    }
+}
+
+/// A window narrower than two grip bands has no distinct edge zones: the grips are
+/// not registered at all — no resize cursor on hover, no `BeginResize` on press.
+#[test]
+fn resize_grips_disappear_on_a_degenerate_window() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let pos = Pos2::new(3.0, 10.0); // where the West grip would sit
+
+    let out = gui.pump_screen(8.0, WIN_H, vec![Event::PointerMoved(pos)]);
+    assert!(
+        matches!(
+            out.platform_output.cursor_icon,
+            egui::CursorIcon::None | egui::CursorIcon::Default
+        ),
+        "no resize cursor where no grip exists: {:?}",
+        out.platform_output.cursor_icon
+    );
+    let out = gui.pump_screen(8.0, WIN_H, Gui::press_at(pos));
+    assert!(
+        window_commands(&out)
+            .iter()
+            .all(|c| !matches!(c, egui::ViewportCommand::BeginResize(_))),
+        "no BeginResize on a degenerate window: {:?}",
+        window_commands(&out)
+    );
+}
+
+/// The minimize / fullscreen / close controls queue their viewport commands on click
+/// (eframe applies them natively after the frame; headlessly they just land in the
+/// output).
+#[test]
+fn window_controls_queue_viewport_commands() {
+    // Minimize: “─”.
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let out = gui.frame();
+        let btn = find_text_exact(&out, "─").expect("minimize control in the app bar");
+        assert!(
+            btn.max.y < crate::appbar::APP_BAR_HEIGHT,
+            "the control sits in the app bar strip"
+        );
+        let _ = gui.pump(Gui::press_at(btn.center()));
+        let out = gui.pump(Gui::release_at(btn.center())); // `clicked()` fires on release
+        assert!(
+            window_commands(&out)
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::Minimized(true))),
+            "minimize click queues Minimized(true); got {:?}",
+            window_commands(&out)
+        );
+    }
+
+    // Fullscreen: “□” (headless viewport info is unknown → enters fullscreen).
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let out = gui.frame();
+        let btn = find_text_exact(&out, "□").expect("fullscreen control in the app bar");
+        let _ = gui.pump(Gui::press_at(btn.center()));
+        let out = gui.pump(Gui::release_at(btn.center()));
+        assert!(
+            window_commands(&out)
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::Fullscreen(true))),
+            "fullscreen click queues Fullscreen(true); got {:?}",
+            window_commands(&out)
+        );
+    }
+
+    // Close: “×” (eframe exits after this frame natively).
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let out = gui.frame();
+        let btn = find_text_exact(&out, "×").expect("close control in the app bar");
+        let _ = gui.pump(Gui::press_at(btn.center()));
+        let out = gui.pump(Gui::release_at(btn.center()));
+        assert!(
+            window_commands(&out)
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::Close)),
+            "close click queues Close; got {:?}",
+            window_commands(&out)
+        );
+    }
+}
+
+/// AC2 — the app bar is painted with the active Material palette's surface color:
+/// dark by default (Native resolves to dark headlessly), light after a switch.
+#[test]
+fn app_bar_paints_the_active_material_surface() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.frame(); // default theme: Native → dark fallback
+
+    let bar_rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(WIN_W, crate::appbar::APP_BAR_HEIGHT));
+    let fill = |out: &egui::FullOutput| -> Option<Color32> {
+        filled_rects(out)
+            .into_iter()
+            .find(|(r, _)| *r == bar_rect)
+            .map(|(_, c)| c)
+    };
+    assert_eq!(
+        fill(&out),
+        Some(crate::theme::DARK.surface),
+        "default (dark) app bar uses the dark Material surface"
+    );
+
+    // Switch to Light: the very next frame paints the light surface.
+    let ctx = gui.ctx.clone();
+    gui.app.set_theme(&ctx, Theme::Light);
+    let out = gui.frame();
+    assert_eq!(
+        fill(&out),
+        Some(crate::theme::LIGHT.surface),
+        "light app bar uses the light Material surface"
+    );
+}
+
+/// AC5 — the diagram content renders identically under both Material palettes: only
+/// the chrome re-colors. Rasterize the same fixture under Dark and Light and compare
+/// the canvas region pixel-for-pixel.
+#[test]
+fn canvas_is_pixel_identical_under_both_palettes() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/two-boxes-connector.ad");
+
+    let raster = |theme: Theme| -> (Vec<[u8; 4]>, Rect) {
+        let mut app =
+            DrawingApp::with_config(Services::native(), crate::config::AppConfig { theme }, None);
+        match app.open(&path) {
+            crate::fileio::OpenOutcome::Loaded { .. } => {}
+            other => panic!(
+                "fixture failed to load: {}",
+                crate::fileio::open_message(&other)
+            ),
+        }
+        let mut gui = Gui::new(app);
+        let out = gui.frame();
+        // The canvas is the rect painted with the fixed (unthemed) CANVAS_BG.
+        let canvas = filled_rects(&out)
+            .into_iter()
+            .find(|(_, c)| *c == crate::app::CANVAS_BG)
+            .map(|(r, _)| r)
+            .expect("the canvas background is drawn");
+        (
+            crate::screenshot::rasterize(&gui.ctx, &out, WIN_W as u32, WIN_H as u32),
+            canvas,
+        )
+    };
+
+    let (dark_buf, dark_canvas) = raster(Theme::Dark);
+    let (light_buf, light_canvas) = raster(Theme::Light);
+    assert_eq!(
+        dark_canvas, light_canvas,
+        "the canvas rect does not move between palettes"
+    );
+
+    for y in (dark_canvas.min.y as i32)..(dark_canvas.max.y as i32) {
+        for x in (dark_canvas.min.x as i32)..(dark_canvas.max.x as i32) {
+            let i = (y * WIN_W as i32 + x) as usize;
+            assert_eq!(
+                dark_buf[i], light_buf[i],
+                "canvas pixel ({x},{y}) differs between palettes"
+            );
+        }
+    }
+}
+
+/// AC6 — tier-2 golden-screenshot regression (the first committed golden set).
+///
+/// The software rasterizer is deterministic, so the restyled app must render
+/// pixel-exact against `tests/goldens/material-{dark,light}.png`. To regenerate
+/// after an intended visual change: `GOLDEN_UPDATE=1 cargo test -p gui-app material_theme_goldens`.
+#[test]
+fn material_theme_goldens_match_committed_pngs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let goldens = root.join("tests/goldens");
+    let fixture = root.join("tests/fixtures/two-boxes-connector.ad");
+
+    for (theme, name) in [
+        (Theme::Dark, "material-dark.png"),
+        (Theme::Light, "material-light.png"),
+    ] {
+        let mut app =
+            DrawingApp::with_config(Services::native(), crate::config::AppConfig { theme }, None);
+        match app.open(&fixture) {
+            crate::fileio::OpenOutcome::Loaded { .. } => {}
+            other => panic!(
+                "fixture failed to load: {}",
+                crate::fileio::open_message(&other)
+            ),
+        }
+        let mut gui = Gui::new(app);
+        let out = gui.frame();
+        let fresh = crate::screenshot::rasterize(&gui.ctx, &out, WIN_W as u32, WIN_H as u32);
+
+        let golden_path = goldens.join(name);
+        if std::env::var("GOLDEN_UPDATE").is_ok() {
+            crate::screenshot::capture_to_png(
+                &gui.ctx,
+                &out,
+                WIN_W as u32,
+                WIN_H as u32,
+                &golden_path,
+            )
+            .unwrap_or_else(|e| panic!("write golden {name}: {e}"));
+            eprintln!("regenerated {golden_path:?}");
+            continue;
+        }
+
+        let file = std::fs::File::open(&golden_path)
+            .unwrap_or_else(|e| panic!("missing golden {name} — run with GOLDEN_UPDATE=1: {e}"));
+        let mut reader = png::Decoder::new(file)
+            .read_info()
+            .unwrap_or_else(|e| panic!("decode golden {name}: {e}"));
+        let mut golden = vec![0u8; (WIN_W * WIN_H) as usize * 4];
+        let info = reader
+            .next_frame(&mut golden)
+            .unwrap_or_else(|e| panic!("decode golden {name}: {e}"));
+        assert_eq!(
+            (info.width, info.height),
+            (WIN_W as u32, WIN_H as u32),
+            "golden {name} has an unexpected size"
+        );
+
+        let mut bad = 0;
+        for (i, px) in fresh.iter().enumerate() {
+            if [
+                golden[i * 4],
+                golden[i * 4 + 1],
+                golden[i * 4 + 2],
+                golden[i * 4 + 3],
+            ] != *px
+            {
+                bad += 1;
+            }
+        }
+        assert_eq!(
+            bad, 0,
+            "{name}: {bad} pixels differ from the committed golden — write the fresh render to /tmp/gui-dump and diff it against tests/goldens/{name}"
+        );
+    }
 }
 
 // ── SVG preview pane (S-026 / CR-004) ────────────────────────────────────────

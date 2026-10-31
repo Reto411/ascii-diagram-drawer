@@ -18,7 +18,7 @@ FR6 extended by CR-011: every UI grouping (menu-bar dropdowns, template sidebar)
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-011](CR-011-collapsible-groupings-subcategories.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-011](../crs/CR-011-collapsible-groupings-subcategories.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

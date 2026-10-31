@@ -18,7 +18,7 @@ FR9 extended by CR-010: arrows whose ends are not bound to any shape (annotation
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-010](CR-010-standalone-arrows.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-010](../crs/CR-010-standalone-arrows.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

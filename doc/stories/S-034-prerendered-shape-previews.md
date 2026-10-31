@@ -18,7 +18,7 @@ FR16: sidebar shapes are shown as pre-rendered visual previews generated from th
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-013](CR-013-prerendered-shape-previews.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-013](../crs/CR-013-prerendered-shape-previews.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

@@ -2,7 +2,7 @@
 title: 017 - material-design-title-bar
 description: the GUI is styled according to Material Design; native windows use a custom Material app bar (minimize/fullscreen/close) instead of the OS window border, with the canvas kept monospace for WYSIWYG
 scope: gui
-status: proposed
+status: accepted
 updated: 2026-10-31
 version: 1
 ---
@@ -43,3 +43,4 @@ Constraints in play:
 ## Version history
 
 - **v1 (2026-10-31):** initial decision — accepted with CR-006; status `proposed` until S-027 implements it.
+- **Accepted 2026-10-31:** implemented by S-027 (`theme.rs` + `appbar.rs`, undecorated native window, one-`StartDrag`-per-gesture fix, edge resize grips). Decision unchanged — no version bump.

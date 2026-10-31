@@ -18,7 +18,7 @@ FR20: select several shapes with Ctrl/Shift+click and move the whole selection b
 
 ## Acceptance criteria
 
-> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-017](CR-017-multi-select-group-move.md)'s "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
+> Skeleton — acceptance criteria are written by the cr-implementation skill when work starts, from [CR-017](../crs/CR-017-multi-select-group-move.md's "Requested change" + §14 wording. Nothing here is agreed yet beyond the requirement itself.
 
 - (TBD at implementation)
 

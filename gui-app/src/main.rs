@@ -11,6 +11,7 @@
 //! `#[wasm_bindgen]` glue struct, per eframe's documented pattern) lands in S-019.
 
 mod app;
+mod appbar;
 mod canvas;
 mod config;
 mod editor;
@@ -22,6 +23,7 @@ mod gui_tests;
 mod screenshot;
 mod sidebar;
 mod template_editor;
+mod theme;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
@@ -37,19 +39,29 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "ascii-diagram-drawer",
         eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 768.0]),
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size([1024.0, 768.0])
+                // FR14 (CR-006 / ADR 017): the window runs undecorated — the custom
+                // Material app bar is the window border itself (drag region + window
+                // controls). Wasm keeps the browser's own chrome (NFR1); this builder
+                // only exists on native.
+                .with_decorations(false),
             ..Default::default()
         },
-        Box::new(|_cc| {
-            // FR13 (CR-005): the theme comes from the persisted app config (default
-            // native — follows the OS/browser appearance, dark where unknown),
-            // applied by the app on its first frame — no flash of unstyled frames.
-            // The headless test harness feeds no system appearance, so
-            // golden-screenshot capture (gui-testing skill) still renders
-            // deterministically in dark; egui 0.37 has no animation toggle and the
-            // UI is static, so settled frames are stable.
+        Box::new(|cc| {
+            // FR13 (CR-005) / FR14 (CR-006, ADR 017): the theme comes from the
+            // persisted app config (default native — follows the OS/browser
+            // appearance, dark where unknown). Install the Material palettes on the
+            // eframe context BEFORE the first UI pass: egui snapshots the active
+            // style into each Ui at creation, so a mid-pass install would render
+            // frame 1 with default spacing and settle over two frames (a visible
+            // jump in the chrome height at startup).
+            let config =
+                crate::config::AppConfig::load(crate::config::default_config_path().as_deref());
+            crate::theme::install(&cc.egui_ctx, config.theme);
             Ok(Box::new(app::create_app(
                 services.clone(),
+                config,
                 args.fixture.as_deref().map(Path::new),
                 warnings.iter().map(|w| w.to_notice()).collect(),
             )))
