@@ -15,7 +15,6 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | ID | Title | Priority | Status | File |
 |----|-------|----------|--------|------|
 | CR-001 | Native file dialogs for Open, Save and Export | medium | accepted | [CR-001-native-file-dialogs.md](CR-001-native-file-dialogs.md) |
-| CR-008 | Selectable arrow tips on both ends + arrow-shaped anchor markers | medium | accepted | [CR-008-selectable-arrow-tips.md](CR-008-selectable-arrow-tips.md) |
 | CR-009 | Diagram colors (background/shape fill/line & text) via color picker, svgbob Settings | medium | accepted | [CR-009-diagram-colors-picker.md](CR-009-diagram-colors-picker.md) |
 | CR-010 | Standalone arrows with attachable/detachable ends | medium | accepted | [CR-010-standalone-arrows.md](CR-010-standalone-arrows.md) |
 | CR-011 | Collapsible groupings with subcategories (menus + sidebar) | low | accepted | [CR-011-collapsible-groupings-subcategories.md](CR-011-collapsible-groupings-subcategories.md) |
@@ -30,6 +29,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
+| CR-008 | Selectable arrow tips on both ends + arrow-shaped anchor markers | 2026-10-31 | implemented — S-029, commit `adb1a3f` (FR9, ADR 013 v5) |
 | CR-007 | User-modifiable arrow shapes (manual bends) | 2026-10-31 | implemented — S-028, commit `7010cc1` (FR9, ADR 013 v4) |
 | CR-006 | Material Design GUI with custom title bar | 2026-10-31 | implemented — S-027, commit `5f78f74` (FR14) |
 | CR-004 | Right-side SVG preview pane | 2026-10-31 | implemented — S-026, commit `fd9ce32` (FR6) |

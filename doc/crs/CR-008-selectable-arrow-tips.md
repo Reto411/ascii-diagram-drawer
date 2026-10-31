@@ -2,7 +2,7 @@
 title: CR-008 - selectable arrow tips on both ends + arrow-shaped anchor markers
 description: each connector end can carry a selectable tip (none / hollow arrow / empty rhombus / filled rhombus), changed by pressing onto the tip; GUI anchor dots become small arrow symbols (svgbob-rendered asset) to signal "connecting adds an arrow"
 scope: connectors (tips + GUI affordances)
-status: accepted
+status: implemented
 priority: medium
 updated: 2026-10-31
 ---
@@ -59,4 +59,4 @@ Usability: users need to control what each end of a connection *means* (e.g. one
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-029** (commit `adb1a3f`): `TipStyle { Bare, HollowArrow, EmptyRhombus ◇, FilledRhombus ◆ }` + `ConnectorEnd` on both ends of `ConnectorInstance` (`Diagram::set_tip`, typed errors); defaults source bare / target hollow arrow — existing diagrams render byte-identical (NFR2); pipeline stamps each non-bare tip as content on the cell adjacent to its endpoint (target second-to-last route cell, source second; 3-cell collision → target wins; 2-cell routes draw no tips) — hollow arrows point along the outer segment, `◇`/`◆` direction-independent content-only glyphs (no ADR 001 bump); `.ad` optional `tip <src> <tgt>` clause between `dashed` and `via` (positioned parse errors, byte-stable round-trip, omitted at defaults); seam unchanged — tips flow through the existing `connector_routes` seam (§8.3); GUI: press on a tip cell cycles the end's style with status-bar feedback (hit-tested below bends/anchors/shapes), anchor dots become small outward-pointing arrow glyphs (`< > ^ v`, interior → `·`) — overlay-only, WYSIWYG preserved; new golden `connector-tips.grid`, all pre-existing goldens byte-identical. ADR 013 v5.
