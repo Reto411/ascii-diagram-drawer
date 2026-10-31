@@ -1808,3 +1808,182 @@ fn b002_scale_presses_render_exactly_one_expanded_copy() {
         );
     }
 }
+
+// ─────────────────────────── panning (S-022) ───────────────────────────
+
+/// Middle-button press at `pos` (with the pointer already there).
+fn middle_press(pos: Pos2) -> Vec<Event> {
+    vec![
+        Event::PointerMoved(pos),
+        Event::PointerButton {
+            pos,
+            button: PointerButton::Middle,
+            pressed: true,
+            modifiers: Modifiers::default(),
+        },
+    ]
+}
+
+/// Middle-button release at `pos`.
+fn middle_release(pos: Pos2) -> Vec<Event> {
+    vec![Event::PointerButton {
+        pos,
+        button: PointerButton::Middle,
+        pressed: false,
+        modifiers: Modifiers::default(),
+    }]
+}
+
+/// The drawn rect of the placed box's top border row inside the canvas area.
+/// (The built-in box template uses ASCII corners: `+-------+`.)
+fn box_top_row(out: &egui::FullOutput) -> Rect {
+    texts(out)
+        .into_iter()
+        .find(|(t, r)| t.contains("+-------+") && r.min.x > SIDEBAR)
+        .map(|(_, r)| r)
+        .expect("placed box draws its top border in the canvas")
+}
+
+/// One scroll frame at `pos`. Point-unit deltas below 8 px are applied in full on
+/// the event's frame by egui (no smoothing tail), so these pan deterministically.
+fn scroll_at(pos: Pos2, delta: Vec2) -> Vec<Event> {
+    vec![
+        Event::PointerMoved(pos),
+        Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: Modifiers::default(),
+        },
+    ]
+}
+
+#[test]
+fn middle_drag_pans_the_canvas_and_hit_testing_follows() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 6, 3);
+
+    // Baseline: where the box's top border row is drawn (LEFT_TOP text anchor).
+    let before = box_top_row(&gui.frame());
+
+    // Middle-drag left/up by (60, 30) over two move frames.
+    let _ = gui.pump(middle_press(Pos2::new(560.0, 290.0)));
+    let _ = gui.pump(vec![Event::PointerMoved(Pos2::new(530.0, 275.0))]);
+    let _ = gui.pump(vec![Event::PointerMoved(Pos2::new(500.0, 260.0))]);
+    let _ = gui.pump(middle_release(Pos2::new(500.0, 260.0)));
+    assert_eq!(
+        gui.app.pan(),
+        Vec2::new(60.0, 30.0),
+        "middle-drag left/up pans the view right/down"
+    );
+
+    // The whole canvas content shifted by exactly the drag delta.
+    let after = box_top_row(&gui.frame());
+    assert!(
+        close(before.min.x - after.min.x, 60.0, 0.5),
+        "content moved left by the drag: {before:?} -> {after:?}"
+    );
+    assert!(
+        close(before.min.y - after.min.y, 30.0, 0.5),
+        "content moved up by the drag: {before:?} -> {after:?}"
+    );
+
+    // Hit-testing follows the panned origin: clicking where the box body is NOW
+    // (same model cell as before the pan) selects it.
+    let (x, y, w, h) = gui.first_box();
+    let (cw, ch) = gui.cell_metrics();
+    let body_now = Pos2::new(
+        min.x + MARGIN - 60.0 + (x + w / 2) as f32 * cw + cw / 2.0,
+        min.y + MARGIN - 30.0 + (y + h / 2) as f32 * ch + ch / 2.0,
+    );
+    let out = gui.click_at(body_now);
+    assert!(
+        stroked_rects(&out).iter().any(|(_, c)| *c == SELECTION),
+        "clicking the panned body position selects the box; rects: {:?}",
+        stroked_rects(&out)
+    );
+}
+
+#[test]
+fn scroll_pans_the_canvas_but_not_over_the_sidebar() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 6, 3);
+    let before = box_top_row(&gui.frame());
+
+    // 15 × −4 px point deltas over the canvas: content moves up by 60 px (egui's
+    // delta says how the CONTENT should move).
+    let over_canvas = Pos2::new(min.x + 400.0, min.y + 300.0);
+    for _ in 0..15 {
+        let _ = gui.pump(scroll_at(over_canvas, Vec2::new(0.0, -4.0)));
+    }
+    assert_eq!(
+        gui.app.pan(),
+        Vec2::new(0.0, 60.0),
+        "scrolling over the canvas pans the view"
+    );
+    let after = box_top_row(&gui.frame());
+    assert!(
+        close(before.min.y - after.min.y, 60.0, 0.5),
+        "content moved up: {before:?} -> {after:?}"
+    );
+
+    // The same scroll over the sidebar must not pan the canvas.
+    let over_sidebar = Pos2::new(80.0, 300.0);
+    for _ in 0..5 {
+        let _ = gui.pump(scroll_at(over_sidebar, Vec2::new(0.0, -4.0)));
+    }
+    assert_eq!(
+        gui.app.pan(),
+        Vec2::new(0.0, 60.0),
+        "scrolling over the sidebar does not pan"
+    );
+}
+
+#[test]
+fn pan_is_clamped_at_the_model_origin() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    gui.frame();
+
+    // Middle-drag right/down: the view tries to pan past cell 0 — clamped at zero.
+    let _ = gui.pump(middle_press(Pos2::new(400.0, 300.0)));
+    let _ = gui.pump(vec![Event::PointerMoved(Pos2::new(600.0, 400.0))]);
+    let _ = gui.pump(middle_release(Pos2::new(600.0, 400.0)));
+    assert_eq!(
+        gui.app.pan(),
+        Vec2::ZERO,
+        "panning past the model origin clamps at zero"
+    );
+}
+
+#[test]
+fn opening_a_document_resets_the_pan() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 6, 3);
+
+    // Pan first.
+    let _ = gui.pump(middle_press(Pos2::new(500.0, 300.0)));
+    let _ = gui.pump(vec![Event::PointerMoved(Pos2::new(400.0, 250.0))]);
+    let _ = gui.pump(middle_release(Pos2::new(400.0, 250.0)));
+    assert_eq!(
+        gui.app.pan(),
+        Vec2::new(100.0, 50.0),
+        "panned before opening"
+    );
+
+    // Opening a real document replaces the model and returns the view to the origin.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/one-box.ad");
+    let outcome = gui.app.open(&path);
+    assert!(
+        matches!(outcome, crate::fileio::OpenOutcome::Loaded { .. }),
+        "fixture loads: {outcome:?}"
+    );
+    assert_eq!(
+        gui.app.pan(),
+        Vec2::ZERO,
+        "opening a document resets the pan"
+    );
+}

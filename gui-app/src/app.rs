@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use core_services::Services;
 use diagram_model::geometry::CellSize;
 use diagram_model::{Diagram, objects::Object};
-use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense};
+use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense, Vec2};
 
 use crate::canvas::{HitTarget, Viewport, hit_target};
 use crate::editor::{EditOutcome, EditorState, Placing, PointerEvent};
@@ -76,6 +76,12 @@ pub struct DrawingApp {
     pub status: String,
     /// Whether the primary button was held on the previous frame (edge detection).
     pointer_held: bool,
+    /// View pan in pixels (S-022): how far the view has moved from the model origin.
+    /// Positive = the view has scrolled right/down, i.e. the content is drawn shifted
+    /// left/up by this amount. Clamped at zero — nothing exists before cell 0.
+    pan: Vec2,
+    /// Whether the middle button was held on the previous frame (S-022 grab latch).
+    middle_held: bool,
     /// The file the current model was loaded from — `Save` targets it (S-014).
     current_file: Option<PathBuf>,
     /// Unknown statements skipped when loading `current_file` (ADR 009 v4 / RS2):
@@ -132,6 +138,8 @@ impl DrawingApp {
             editor: EditorState::default(),
             status: "Ready".to_owned(),
             pointer_held: false,
+            pan: Vec2::ZERO,
+            middle_held: false,
             current_file: None,
             skipped_unknowns: 0,
             confirming_save: false,
@@ -165,6 +173,13 @@ impl DrawingApp {
         self.confirming_save
     }
 
+    /// The current view pan in pixels (S-022) — test seam.
+    #[cfg(test)]
+    #[must_use]
+    pub fn pan(&self) -> Vec2 {
+        self.pan
+    }
+
     /// AC1 — open a `.ad` file through the store seam. On success the model is
     /// replaced and the file remembered; on failure the previous model is kept and a
     /// notice with line/column (parse) or cause (IO) is shown (RS2/RS5).
@@ -180,8 +195,10 @@ impl DrawingApp {
             self.diagram = diagram.clone();
             self.current_file = Some(path.to_path_buf());
             self.skipped_unknowns = *skipped_unknowns;
-            // A new document invalidates any in-flight interaction.
+            // A new document invalidates any in-flight interaction and starts the
+            // view at the model origin (S-022).
             self.editor.reset();
+            self.pan = Vec2::ZERO;
         }
         self.status = crate::fileio::open_message(&outcome);
         outcome
@@ -594,6 +611,36 @@ impl DrawingApp {
         // unreadable (the "invisible text" bug).
         let cell_w = (sample.size().x / 10.0).max(4.0);
         let cell_h = sample.size().y.max(cell_w);
+
+        let rect = ui.max_rect();
+
+        // Panning (S-022): middle-drag grabs the canvas — the content follows the
+        // pointer; scrolling moves it too. egui's scroll delta says how the CONTENT
+        // should move (positive = right/down), so both shift the view origin the
+        // other way: `pan -= delta`. The pan is clamped at the model origin — nothing
+        // exists before cell 0, so panning further left/up would only show dead
+        // margin. While a primary-button gesture runs, middle-drag does not pan (the
+        // drag belongs to the editor).
+        let held = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        let middle_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
+        // The frame that starts a middle-drag only latches the grab — the pointer
+        // "delta" on that frame is where the press happened, not movement (a synthetic
+        // move+press batch would otherwise jump the view).
+        if middle_down && self.middle_held && !held {
+            self.pan -= ctx.input(|i| i.pointer.delta());
+        }
+        self.middle_held = middle_down;
+        let scroll = ctx.input(|i| i.smooth_scroll_delta());
+        if scroll != Vec2::ZERO
+            && ctx
+                .input(|i| i.pointer.interact_pos())
+                .is_some_and(|p| rect.contains(p))
+        {
+            self.pan -= scroll;
+        }
+        self.pan.x = self.pan.x.max(0.0);
+        self.pan.y = self.pan.y.max(0.0);
+
         // The viewport maps MODEL space to canvas-RELATIVE pixels; the trimmed grid
         // text starts at the content origin within it, so rendered cells and model
         // cells coincide (the same mapping hit-testing uses).
@@ -602,10 +649,17 @@ impl DrawingApp {
         // space. At scale N the expanded grid's blocks start at (ox·N, oy·N) — anchor
         // them there and advance one sub-row per line, so rendered cells coincide with
         // model cells (the same mapping hit-testing and overlays use).
-        let vp = Viewport::new(MARGIN_PX, cell_w, cell_h, self.diagram.scale());
+        // Pannable (S-022): the origin is the margin shifted by the view pan; content,
+        // grid paper, overlays and hit-testing all derive from this one viewport.
+        let vp = Viewport::with_origin(
+            MARGIN_PX - self.pan.x,
+            MARGIN_PX - self.pan.y,
+            cell_w,
+            cell_h,
+            self.diagram.scale(),
+        );
         let (origin_x, origin_y) = self.content_origin();
 
-        let rect = ui.max_rect();
         let response = ui.interact(rect, egui::Id::unique("canvas"), Sense::click());
         // ALL canvas painting goes through a painter clipped to the canvas rect.
         // egui 0.37 painters draw in SCREEN coordinates — `painter_at` only clips,
@@ -626,19 +680,21 @@ impl DrawingApp {
         // output), including margin-region columns/rows before cell 0; visual only,
         // hit-testing still starts at cell 0.
         let s = self.diagram.scale() as f32;
-        let first_col = ((-MARGIN_PX) / (s * cell_w)).ceil() as i64;
-        let last_col = ((rect.width() - MARGIN_PX) / (s * cell_w)).floor() as i64;
+        // Lines are derived from the (possibly panned) viewport origin, so the paper
+        // pans together with the content (S-022).
+        let first_col = ((0.0 - vp.origin_x) / (s * cell_w)).ceil() as i64;
+        let last_col = ((rect.width() - vp.origin_x) / (s * cell_w)).floor() as i64;
         for col in first_col..=last_col {
-            let x = MARGIN_PX + col as f32 * s * cell_w;
+            let x = vp.origin_x + col as f32 * s * cell_w;
             painter.line_segment(
                 [off(Pos2::new(x, 0.0)), off(Pos2::new(x, rect.height()))],
                 egui::epaint::Stroke::new(1.0, GRID_LINE_COLOR),
             );
         }
-        let first_row = ((-MARGIN_PX) / (s * cell_h)).ceil() as i64;
-        let last_row = ((rect.height() - MARGIN_PX) / (s * cell_h)).floor() as i64;
+        let first_row = ((0.0 - vp.origin_y) / (s * cell_h)).ceil() as i64;
+        let last_row = ((rect.height() - vp.origin_y) / (s * cell_h)).floor() as i64;
         for row in first_row..=last_row {
-            let y = MARGIN_PX + row as f32 * s * cell_h;
+            let y = vp.origin_y + row as f32 * s * cell_h;
             painter.line_segment(
                 [off(Pos2::new(0.0, y)), off(Pos2::new(rect.width(), y))],
                 egui::epaint::Stroke::new(1.0, GRID_LINE_COLOR),
@@ -711,7 +767,6 @@ impl DrawingApp {
         // While we are already in a gesture (`pointer_held`) we therefore fall back to
         // the raw pointer position, gated to the canvas rect so covering widgets
         // (inline editor, dialogs) cannot feed the canvas outside of a running gesture.
-        let held = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
         let cursor = response
             .hover_pos()
             .or_else(|| {

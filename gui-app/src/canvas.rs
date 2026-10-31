@@ -239,13 +239,17 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    /// A viewport with a uniform margin around the grid and the given pixel size per
-    /// cell axis. `scale < 1` is treated as 1 (the model guarantees ≥ 1).
+    /// A viewport anchored at an explicit canvas-relative origin: model cell `(0, 0)`
+    /// starts at `(origin_x, origin_y)`. A margin-based viewport is
+    /// `with_origin(margin, margin, …)`; panning (S-022) shifts the origin, left/up
+    /// past the margin makes it negative. The mapping math is unchanged and callers
+    /// are responsible for clamping the pan itself (nothing exists before cell 0).
+    /// `scale < 1` is treated as 1 (the model guarantees ≥ 1).
     #[must_use]
-    pub fn new(margin_px: f32, cell_w: f32, cell_h: f32, scale: u32) -> Self {
+    pub fn with_origin(origin_x: f32, origin_y: f32, cell_w: f32, cell_h: f32, scale: u32) -> Self {
         Self {
-            origin_x: margin_px,
-            origin_y: margin_px,
+            origin_x,
+            origin_y,
             cell_w,
             cell_h,
             scale: scale.max(1),
@@ -351,18 +355,18 @@ mod tests {
 
     fn vp() -> Viewport {
         // 8 px margin, 16 px cells, scale ×1.
-        Viewport::new(8.0, 16.0, 16.0, 1)
+        Viewport::with_origin(8.0, 8.0, 16.0, 16.0, 1)
     }
 
     /// A rectangular viewport (8 px margin, 8×16 px cells) — the real canvas shape:
     /// monospace glyphs are taller than they are wide.
     fn vp_rect() -> Viewport {
-        Viewport::new(8.0, 8.0, 16.0, 1)
+        Viewport::with_origin(8.0, 8.0, 8.0, 16.0, 1)
     }
 
     #[test]
     fn viewport_scale_maps_blocks_and_hit_tests_roundtrip() {
-        let v = Viewport::new(8.0, 16.0, 16.0, 2);
+        let v = Viewport::with_origin(8.0, 8.0, 16.0, 16.0, 2);
         // Model cell (3, 2) renders as a 2×2 block starting at screen cells (6, 4).
         assert_eq!(v.cell_origin(3, 2), (8.0 + 6.0 * 16.0, 8.0 + 4.0 * 16.0));
         // Anchor dots / the handle marker sit at the block's center.
@@ -393,11 +397,40 @@ mod tests {
 
     #[test]
     fn viewport_scale_one_is_the_identity_mapping() {
-        let scaled = Viewport::new(8.0, 16.0, 16.0, 1);
+        let scaled = Viewport::with_origin(8.0, 8.0, 16.0, 16.0, 1);
         let plain = vp();
         assert_eq!(scaled.cell_origin(4, 2), plain.cell_origin(4, 2));
         assert_eq!(scaled.center_of(4, 2), plain.center_of(4, 2));
         assert_eq!(scaled.cell_block(1, 1, 5, 3), plain.cell_block(1, 1, 5, 3));
+    }
+
+    #[test]
+    fn panned_viewport_maps_from_a_negative_origin() {
+        // Panned right by 40 px and down by 24 px: cell (0,0) starts at (-40, -24)
+        // relative to the canvas area (S-022).
+        let v = Viewport::with_origin(-40.0, -24.0, 16.0, 16.0, 1);
+        assert_eq!(v.cell_origin(0, 0), (-40.0, -24.0));
+        // The canvas pixel (0, 0) now sits inside model cell (2, 1): the content
+        // moved left/up by exactly the pan.
+        assert_eq!(v.screen_to_model_cell(0.0, 0.0), Some((2, 1)));
+        // Round trip: cell (5, 3) starts at (-40 + 80, -24 + 48) and every pixel of
+        // its block hit-tests back to it.
+        assert_eq!(v.cell_origin(5, 3), (40.0, 24.0));
+        for dx in [0.0f32, 7.9, 15.9] {
+            for dy in [0.0f32, 7.9, 15.9] {
+                assert_eq!(v.screen_to_model_cell(40.0 + dx, 24.0 + dy), Some((5, 3)));
+            }
+        }
+        // A panned viewport with a scale factor still maps sub-cells to the block:
+        // cell (3, 2) renders as a 2×2 block starting at (-8 + 6·16, -16 + 4·16).
+        let s = Viewport::with_origin(-8.0, -16.0, 16.0, 16.0, 2);
+        assert_eq!(s.cell_origin(3, 2), (-8.0 + 6.0 * 16.0, -16.0 + 4.0 * 16.0));
+        for (dx, dy) in [(0.5f32, 0.5), (15.9, 15.9)] {
+            assert_eq!(
+                s.screen_to_model_cell(s.cell_origin(3, 2).0 + dx, s.cell_origin(3, 2).1 + dy),
+                Some((3, 2))
+            );
+        }
     }
 
     #[test]
