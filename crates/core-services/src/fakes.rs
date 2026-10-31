@@ -13,8 +13,10 @@ use diagram_model::Diagram;
 use render_pipeline::{RenderError, ResolvedGrid};
 use ui_api::{
     AnchorInfo, CatalogError, DiagramStore, Exporter, LoadedDocument, NewTemplate, Renderer,
-    ShapeCatalog, ShapeInfo, StoreError,
+    ResizeRuleSpec, ShapeCatalog, ShapeInfo, StoreError,
 };
+
+use crate::registry_state::pad_rows;
 
 /// In-memory store: seed documents, load/save against the map. The same semantics as
 /// the production `MemoryStore` (unknown path → IO error), but with a public seed API.
@@ -123,6 +125,26 @@ impl Renderer for FakeRenderer {
             message: e.to_string(),
         })
     }
+
+    /// The fake resized preview is a solid block of `#` at the requested size —
+    /// GUI tests can assert on the exact dimensions; without rules it stamps the
+    /// padded rows at natural size (the pipeline's rule-free behavior).
+    fn preview_resized(
+        &self,
+        rows: &[String],
+        rules: Option<&ResizeRuleSpec>,
+        width: u32,
+        height: u32,
+    ) -> Result<ResolvedGrid, RenderError> {
+        let lines: Vec<String> = match rules {
+            Some(_) => vec!["#".repeat(width as usize); (height.max(1)) as usize],
+            None => pad_rows(rows),
+        };
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        ResolvedGrid::from_rows(&refs).map_err(|e| RenderError::InvalidPattern {
+            message: e.to_string(),
+        })
+    }
 }
 
 /// Exporter that returns fixed media — deterministic bytes for GUI assertions.
@@ -202,12 +224,24 @@ impl ShapeCatalog for FakeCatalog {
         .map_err(|e| CatalogError::Invalid {
             message: e.to_string(),
         })?;
+        // S-024 AC4: rule-bearing fakes are resizable down to 2×2 (the computed
+        // minimum's floor); plain customs are not (FR12).
+        let (resizable, min_size) = match &template.resize_rules {
+            Some(_) => (
+                true,
+                diagram_model::geometry::CellSize::new(2, 2).expect("2×2 is a valid cell size"),
+            ),
+            None => (false, size),
+        };
         let info = ShapeInfo {
             type_id: format!("{collection}/{}", template.name),
             name: template.name.clone(),
             size,
             collection: Some(collection.to_owned()),
             preview: template.rows.clone(),
+            resizable,
+            min_size,
+            resize_rules: template.resize_rules.clone(),
         };
         self.entries
             .lock()

@@ -7,14 +7,19 @@
 //! known statement must be well-formed. Unknown statements are preserved verbatim only
 //! when the file's minor version is higher than this reader's (forward compatibility, QS7).
 
+use std::collections::BTreeMap;
+
 use crate::error::{AnchorSetError, ParseError};
 use crate::geometry::CellPos;
-use crate::types::{AnchorSet, Collection, GeometryKind, ShapeType, TemplateGrid};
+use crate::types::{
+    AnchorSet, Collection, EdgeRule, GeometryKind, ResizeRules, ShapeType, TemplateGrid,
+};
 
 /// The major format version this reader implements.
 const MAJOR: u32 = 1;
 /// The minor version this reader implements; files with a higher minor are read in forward-compat mode.
-const MINOR: u32 = 0;
+/// 1.1 adds `resize` statements (C10, S-024).
+const MINOR: u32 = 1;
 
 /// A parsed `.adc` file: the collection content plus unknown statements preserved
 /// verbatim, so re-saving after a format upgrade loses nothing (QS7).
@@ -119,6 +124,18 @@ pub fn parse_collection(name: &str, text: &str) -> Result<CollectionFile, ParseE
                 };
                 parse_anchor(&tokens, line_no, builder)?;
             }
+            // C10 (S-024): resize rules exist from v1.1 up; in older files the
+            // statement falls through to the unknown-statement arm below.
+            "resize" if version.1 >= MINOR => {
+                let Some(builder) = open.as_mut() else {
+                    return Err(ParseError::new(
+                        line_no,
+                        first.column,
+                        "resize statement outside a template block — resize rules belong to exactly one template",
+                    ));
+                };
+                parse_resize(&tokens, line_no, builder)?;
+            }
             other => {
                 if version.1 > MINOR {
                     // Forward-compat: preserve verbatim in its original position — inside the open
@@ -132,7 +149,8 @@ pub fn parse_collection(name: &str, text: &str) -> Result<CollectionFile, ParseE
                         line_no,
                         first.column,
                         format!(
-                            "unknown statement '{other}' — version 1.0 files may only contain known statements"
+                            "unknown statement '{other}' — version {}.{} files may only contain known statements",
+                            version.0, version.1
                         ),
                     ));
                 }
@@ -175,6 +193,19 @@ pub fn parse_collection(name: &str, text: &str) -> Result<CollectionFile, ParseE
     })
 }
 
+/// A template edge named by a `resize` statement (C10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Edge {
+    /// The top edge (row 0's run between its corner cells).
+    Top,
+    /// The bottom edge (last row's run).
+    Bottom,
+    /// The left edge.
+    Left,
+    /// The right edge.
+    Right,
+}
+
 /// A template block being read: declaration, grid rows consumed so far, anchor statements.
 struct TemplateBuilder {
     /// The declared template name (unique within the collection).
@@ -187,6 +218,12 @@ struct TemplateBuilder {
     rows: Vec<String>,
     /// Anchor statements declared in the block's anchor phase.
     anchors: AnchorSet,
+    /// Resize rules declared in the anchor phase: edge → draft (base + optional parity
+    /// overrides). All four base rules are required — checked on finalize (C10).
+    resize: BTreeMap<Edge, EdgeDraft>,
+    /// 1-based line of the last `resize` statement in this block (error context for
+    /// finalize-time checks such as the all-four-edges rule).
+    resize_last_line: usize,
     /// Unknown statements in the anchor phase, preserved verbatim in file order.
     unknowns: Vec<String>,
 }
@@ -208,17 +245,66 @@ fn finalize(
     // Rows were validated at parse time (length, printable ASCII); `from_rows` re-checks.
     let glyph_pattern =
         TemplateGrid::from_rows(&rows).expect("grid rows were validated at parse time");
+    let resize_rules =
+        build_resize_rules(&builder.name, builder.resize_last_line, &builder.resize)?;
     types.push(ShapeType {
         type_id: format!("{collection_name}/{}", builder.name),
         name: builder.name,
-        // Custom templates are always stamped opaquely at natural size (ADR 007).
+        // Custom templates are always stamped opaquely at natural size (ADR 007);
+        // resizing re-rasterizes the pattern per its rules (C10, S-024).
         geometry: GeometryKind::Pattern,
         glyph_pattern,
         anchor_set: builder.anchors,
-        resize_rules: None, // v1: all custom objects are fixed-size (ADR 007 v3)
+        resize_rules,
     });
     slots.push(Slot::Template(types.len() - 1, builder.unknowns));
     Ok(())
+}
+
+/// Builds the template's rule set from its declared edges: no statements keep the
+/// template fixed-size; a partial set is an error (rules are all-or-nothing, C10).
+fn build_resize_rules(
+    name: &str,
+    last_resize_line: usize,
+    edges: &BTreeMap<Edge, EdgeDraft>,
+) -> Result<Option<ResizeRules>, ParseError> {
+    if edges.is_empty() {
+        return Ok(None);
+    }
+    // A rule set is complete only when every edge declares its BASE pair; parity
+    // overrides are optional per edge (C10).
+    let missing: Vec<&str> = [
+        (Edge::Top, "top"),
+        (Edge::Bottom, "bottom"),
+        (Edge::Left, "left"),
+        (Edge::Right, "right"),
+    ]
+    .into_iter()
+    .filter(|(edge, _)| !edges.get(edge).is_some_and(|d| d.base.is_some()))
+    .map(|(_, label)| label)
+    .collect();
+    if !missing.is_empty() {
+        return Err(ParseError::new(
+            last_resize_line,
+            1,
+            format!(
+                "template '{name}' declares resize rules for some edges only — all four base rules are required (missing: {})",
+                missing.join(", ")
+            ),
+        ));
+    }
+    let rule = |draft: &EdgeDraft| EdgeRule {
+        insert: draft.base.expect("checked above").0,
+        remove: draft.base.expect("checked above").1,
+        even: draft.even,
+        odd: draft.odd,
+    };
+    Ok(Some(ResizeRules {
+        top: rule(&edges[&Edge::Top]),
+        bottom: rule(&edges[&Edge::Bottom]),
+        left: rule(&edges[&Edge::Left]),
+        right: rule(&edges[&Edge::Right]),
+    }))
 }
 
 /// Consumes one physical line as a grid row of the open template: at most `width`
@@ -299,6 +385,8 @@ fn parse_template_decl(
         height,
         rows: Vec::new(),
         anchors: AnchorSet::default(),
+        resize: BTreeMap::new(),
+        resize_last_line: 0,
         unknowns: Vec::new(),
     })
 }
@@ -347,6 +435,170 @@ fn parse_anchor(
         ));
     }
     Ok(())
+}
+
+/// Parses `resize <edge> [even | odd] insert "<char>" remove "<char>"` (keyword
+/// consumed) into the open template's rule set. A statement without a parity keyword
+/// declares the edge's base insert/remove pair; `even`/`odd` statements declare
+/// overrides used when the target extent has that parity (C10). At most one
+/// statement per (edge, parity); all four base rules are required to enable resizing.
+///
+/// Per-edge resize rule draft while parsing: the base pair plus at most one parity
+/// override each. `resize` statements are all-or-nothing per edge kind — duplicates
+/// are rejected as they arrive (C10).
+#[derive(Debug, Default)]
+struct EdgeDraft {
+    /// The base insert/remove pair (required for a complete rule set).
+    base: Option<(char, char)>,
+    /// Insert/remove pair used when the target extent is even.
+    even: Option<crate::types::ParityChars>,
+    /// Insert/remove pair used when the target extent is odd.
+    odd: Option<crate::types::ParityChars>,
+}
+
+fn parse_resize(
+    tokens: &[Token],
+    line_no: usize,
+    builder: &mut TemplateBuilder,
+) -> Result<(), ParseError> {
+    let what = "resize statement — expected 'resize <edge> [even | odd] insert \"<char>\" remove \"<char>\"'";
+    let edge_tok = need(tokens, 1, line_no, what)?;
+    let (edge, label) = match edge_tok.as_str() {
+        "top" => (Edge::Top, "top"),
+        "bottom" => (Edge::Bottom, "bottom"),
+        "left" => (Edge::Left, "left"),
+        "right" => (Edge::Right, "right"),
+        other => {
+            return Err(ParseError::new(
+                line_no,
+                edge_tok.column,
+                format!(
+                    "unknown resize edge '{other}' — expected 'top', 'bottom', 'left' or 'right'"
+                ),
+            ));
+        }
+    };
+    // Optional parity keyword between the edge and the `insert` keyword.
+    let mut rest = &tokens[2..];
+    let parity: Option<bool> = match rest.first().map(|t| t.as_str()) {
+        Some("even") => {
+            rest = &rest[1..];
+            Some(true)
+        }
+        Some("odd") => {
+            rest = &rest[1..];
+            Some(false)
+        }
+        _ => None,
+    };
+    let ins_kw = need(rest, 0, line_no, what)?;
+    if ins_kw.as_str() != "insert" {
+        return Err(ParseError::new(
+            line_no,
+            ins_kw.column,
+            format!(
+                "expected the 'insert' keyword after the resize edge — found '{}'",
+                ins_kw.as_str()
+            ),
+        ));
+    }
+    let insert = parse_char_token(need(rest, 1, line_no, what)?, line_no)?;
+    let rem_kw = need(rest, 2, line_no, what)?;
+    if rem_kw.as_str() != "remove" {
+        return Err(ParseError::new(
+            line_no,
+            rem_kw.column,
+            format!(
+                "expected the 'remove' keyword after the insert character — found '{}'",
+                rem_kw.as_str()
+            ),
+        ));
+    }
+    let remove = parse_char_token(need(rest, 3, line_no, what)?, line_no)?;
+    if rest.len() > 4 {
+        return Err(ParseError::new(
+            line_no,
+            rest[4].column,
+            format!(
+                "unexpected token '{}' after the remove character",
+                rest[4].as_str()
+            ),
+        ));
+    }
+
+    let draft = builder.resize.entry(edge).or_default();
+    let pair = (insert, remove);
+    match parity {
+        None => {
+            if draft.base.is_some() {
+                return Err(ParseError::new(
+                    line_no,
+                    edge_tok.column,
+                    format!(
+                        "the base resize rule for the '{label}' edge of template '{}' is already declared",
+                        builder.name
+                    ),
+                ));
+            }
+            draft.base = Some(pair);
+        }
+        Some(true) => {
+            if draft.even.is_some() {
+                return Err(ParseError::new(
+                    line_no,
+                    edge_tok.column,
+                    format!(
+                        "the even parity override for the '{label}' edge of template '{}' is already declared",
+                        builder.name
+                    ),
+                ));
+            }
+            draft.even = Some(crate::types::ParityChars { insert, remove });
+        }
+        Some(false) => {
+            if draft.odd.is_some() {
+                return Err(ParseError::new(
+                    line_no,
+                    edge_tok.column,
+                    format!(
+                        "the odd parity override for the '{label}' edge of template '{}' is already declared",
+                        builder.name
+                    ),
+                ));
+            }
+            draft.odd = Some(crate::types::ParityChars { insert, remove });
+        }
+    }
+    builder.resize_last_line = line_no;
+    Ok(())
+}
+
+/// Parses a quoted single-character token `"<c>"`: exactly one printable
+/// non-whitespace ASCII character between double quotes.
+fn parse_char_token(token: &Token, line_no: usize) -> Result<char, ParseError> {
+    let chars: Vec<char> = token.as_str().chars().collect();
+    if chars.len() != 3 || chars[0] != '"' || chars[2] != '"' {
+        return Err(ParseError::new(
+            line_no,
+            token.column,
+            format!(
+                "expected a quoted single character like '\"-\"', found '{}'",
+                token.as_str()
+            ),
+        ));
+    }
+    let c = chars[1];
+    if !matches!(c as u32, 0x21..=0x7e) {
+        return Err(ParseError::new(
+            line_no,
+            token.column + 1,
+            format!(
+                "resize characters must be printable non-whitespace ASCII — found U+{:04X}",
+                c as u32
+            ),
+        ));
+    }
+    Ok(c)
 }
 
 /// Parses the header statement `adc <major>.<minor>` and returns its `(major, minor)` version.
@@ -569,7 +821,7 @@ mod tests {
         assert_eq!(gear.glyph_pattern.row(0), Some("ab  ".to_owned()));
         assert_eq!(gear.glyph_pattern.row(1), Some("cd  ".to_owned()));
         assert!(gear.anchor_set.is_empty());
-        assert_eq!(gear.resize_rules, None); // AC4: v1 template shapes have no resize rules
+        assert_eq!(gear.resize_rules, None); // no resize statements → fixed-size (C10)
     }
 
     /// Full file: two templates with anchors, blank lines between blocks, comments.
@@ -619,14 +871,28 @@ mod tests {
         assert_eq!(file.collection.types.len(), 1);
     }
 
-    /// Forward-compat: a higher-minor file preserves unknown statements verbatim, in position.
+    /// Forward-compat: a higher-minor file (beyond this reader's 1.1) preserves
+    /// unknown statements verbatim, in position.
     #[test]
     fn forward_compat_preserves_unknown_statements() {
-        let text = "adc 1.1\nmeta author \"me\"\ntemplate t 2 x 2\nab\ncd\nhint prefer solid\n";
+        let text = "adc 1.2\nmeta author \"me\"\ntemplate t 2 x 2\nab\ncd\nhint prefer solid\n";
         let file = parse_ok("c", text);
         assert_eq!(file.unknown_count(), 2);
         // The template itself still parses normally.
         assert_eq!(file.collection.types.len(), 1);
+    }
+
+    /// A statement unknown to this reader in a same-version (1.1) file is rejected —
+    /// preservation applies only to *higher* minors.
+    #[test]
+    fn rejects_unknown_statements_in_same_version_file() {
+        let err = assert_err(
+            "c",
+            "adc 1.1\nmeta author \"me\"\ntemplate t 2 x 2\nab\ncd\n",
+        );
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("unknown statement 'meta'"), "{err}");
+        assert!(err.message.contains("version 1.1 files"), "{err}");
     }
 
     /// A version 1.0 file with an unknown statement is rejected, not preserved.
@@ -737,6 +1003,164 @@ mod tests {
         let err = assert_err("c", "adc 1.0\ntemplate t 04 x 2\nab\ncd\n");
         assert_eq!(err.line, 2);
         assert!(err.message.contains("leading zeros"), "{err}");
+    }
+
+    /// AC2 (S-024): a v1.1 file with complete resize rules parses into the rule set,
+    /// including parity overrides and distinct insert/remove pairs; other statements
+    /// are unaffected, and statement order among anchors is free.
+    #[test]
+    fn parses_resize_rules_with_parity_overrides() {
+        let text = "adc 1.1\ntemplate box 4 x 3\n+--+\n|  |\n+--+\nresize top insert \"-\" remove \"-\"\nanchor n at 2 0\nresize top even insert \"=\" remove \"=\"\nresize bottom insert \"-\" remove \"=\"\nresize left insert \"|\" remove \"|\"\nresize right insert \"|\" remove \"!\"\nresize right odd insert \"!\" remove \"!\"\n";
+        let file = parse_ok("c", text);
+        let box_ = &file.collection.types[0];
+        let rules = box_.resize_rules.expect("complete rule set parses");
+        assert_eq!(rules.top.insert, '-');
+        assert_eq!(rules.top.remove, '-');
+        assert_eq!(
+            rules.top.even,
+            Some(crate::types::ParityChars {
+                insert: '=',
+                remove: '='
+            })
+        );
+        assert_eq!(rules.top.odd, None);
+        // Insert and remove may differ per edge.
+        assert_eq!(rules.bottom.insert, '-');
+        assert_eq!(rules.bottom.remove, '=');
+        assert_eq!(rules.left.insert, '|');
+        assert_eq!(rules.right.insert, '|');
+        assert_eq!(rules.right.remove, '!');
+        assert_eq!(
+            rules.right.odd,
+            Some(crate::types::ParityChars {
+                insert: '!',
+                remove: '!'
+            })
+        );
+        // Anchors and the grid parse alongside the rules.
+        assert_eq!(box_.anchor_set.get("n"), Some(CellPos::new(2, 0)));
+        assert_eq!(box_.glyph_pattern.row(1), Some("|  |".to_owned()));
+    }
+
+    /// A template without resize statements stays fixed-size in a v1.1 file.
+    #[test]
+    fn v1_1_file_without_resize_statements_stays_fixed_size() {
+        let file = parse_ok("c", "adc 1.1\ntemplate t 2 x 2\nab\ncd\n");
+        assert_eq!(file.collection.types[0].resize_rules, None);
+    }
+
+    /// AC2 (S-024): resize statement errors — partial rule sets, duplicate base and
+    /// parity declarations, missing keywords, bad character tokens, trailing junk,
+    /// unknown edges, statements outside blocks, and 1.0 files.
+    #[test]
+    fn resize_statement_errors_are_typed_and_located() {
+        // Partial rule set: all four BASE rules are required once any is declared.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert \"-\" remove \"-\"\nresize left insert \"|\" remove \"|\"\n",
+        );
+        assert!(
+            err.message.contains("all four base rules are required"),
+            "{err}"
+        );
+        assert!(err.message.contains("missing: bottom, right"), "{err}");
+
+        // A parity override alone does not count as the edge's base rule.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top even insert \"=\" remove \"=\"\nresize bottom insert \"-\" remove \"-\"\nresize left insert \"|\" remove \"|\"\nresize right insert \"|\" remove \"|\"\n",
+        );
+        assert!(err.message.contains("missing: top"), "{err}");
+
+        // Duplicate base rule for an edge.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert \"-\" remove \"-\"\nresize top insert \"=\" remove \"=\"\n",
+        );
+        assert_eq!(err.line, 7);
+        assert!(err.message.contains("base resize rule"), "{err}");
+        assert!(err.message.contains("already declared"), "{err}");
+
+        // Duplicate parity override for an edge.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert \"-\" remove \"-\"\nresize top even insert \"=\" remove \"=\"\nresize top even insert \"~\" remove \"~\"\n",
+        );
+        assert_eq!(err.line, 8);
+        assert!(err.message.contains("even parity override"), "{err}");
+
+        // Missing the `insert` keyword.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top \"-\" remove \"-\"\n",
+        );
+        assert_eq!(err.line, 6);
+        assert!(
+            err.message.contains("expected the 'insert' keyword"),
+            "{err}"
+        );
+
+        // Missing the `remove` keyword.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert \"-\" junk\n",
+        );
+        assert!(
+            err.message.contains("expected the 'remove' keyword"),
+            "{err}"
+        );
+
+        // Unquoted character token.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert - remove \"-\"\n",
+        );
+        assert!(err.message.contains("quoted single character"), "{err}");
+
+        // Quoted multi-character token.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert \"--\" remove \"-\"\n",
+        );
+        assert!(err.message.contains("quoted single character"), "{err}");
+
+        // Whitespace characters are not declarable (space fills are auto-derived):
+        // a quoted space is two quote tokens, which fails the character check.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert \" \" remove \"-\"\n",
+        );
+        assert!(err.message.contains("quoted single character"), "{err}");
+
+        // Garbage after the remove character.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert \"-\" remove \"-\" junk\n",
+        );
+        assert!(err.message.contains("unexpected token 'junk'"), "{err}");
+
+        // Unknown edge keyword.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize north insert \"-\" remove \"-\"\n",
+        );
+        assert!(err.message.contains("unknown resize edge 'north'"), "{err}");
+
+        // Resize statement outside a template block.
+        let err = assert_err(
+            "c",
+            "adc 1.1\nresize top insert \"-\" remove \"-\"\ntemplate t 1 x 1\n.\n",
+        );
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("outside a template block"), "{err}");
+
+        // A 1.0 file cannot contain resize statements (unknown-statement rejection).
+        let err = assert_err(
+            "c",
+            "adc 1.0\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nresize top insert \"-\" remove \"-\"\n",
+        );
+        assert_eq!(err.line, 6);
+        assert!(err.message.contains("unknown statement 'resize'"), "{err}");
     }
 
     /// The parsed collection preserves declaration order of its templates.

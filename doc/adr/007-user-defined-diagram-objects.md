@@ -4,7 +4,7 @@ description: users define their own diagram objects as named shape templates (pl
 scope: domain model / file format
 status: accepted
 updated: 2026-10-31
-version: 6
+version: 7
 ---
 
 # ADR 007: User-defined diagram objects and collections
@@ -25,7 +25,7 @@ A **shape template** is the unit of user-defined content; a **collection** group
    - **Anchors are per type** (v2): the anchor set is part of the template definition and shared by all instances of that shape. It can be defined in two equivalent modes from v1: **textually** in the plain-text template file, or **graphically** in a template editor — same underlying data, the file remains the source of truth (FR11).
 2. **Collections.** Templates live in **collections**: named, open plain-text files (ADR 004 format family) that group related templates. Diagrams reference templates as `collection/name`. Collections make custom objects shareable between users and projects as ordinary files.
 3. **Rendering — opaque stamp with live anchors.** At render time the template grid is stamped onto the cell grid at the object's position: non-anchor cells are copied verbatim (like text — they do *not* participate in glyph resolution), while anchor cells resolve against connecting edges like built-in shape borders, so connectors join cleanly and stay bound when the object moves (FR9).
-4. **Resizability via declared rules.** A custom object is resizable only if its definition declares **resize behavior** (what to adjust when resized); without declared rules it is fixed-size — including unknown imported objects before registration (FR12). The rule mechanism (CR-003, concept C10 [resize-rules](../arc42/12-concepts/resize-rules.md)): a template declares **per-edge insert/remove characters** for growing/shrinking (top/bottom rows, left/right columns — e.g. a box inserts/removes `─`/`│` runs and keeps its corners), plus optional **parity variants** (alternate patterns selected by even/odd width or height) so curved shapes such as ellipses stay correct at every size. Re-rasterization is a pure function of (template, rules, target size) — NFR3 holds; the pipeline re-stamps the rasterized art at render time exactly like built-in `Ellipse` (B-001).
+4. **Resizability via declared rules.** A custom object is resizable only if its definition declares **resize behavior** (what to adjust when resized); without declared rules it is fixed-size — including unknown imported objects before registration (FR12). The rule mechanism (CR-003, concept C10 [resize-rules](../arc42/12-concepts/resize-rules.md) — normative for the exact behavior): a template declares **per-edge insert/remove characters** (printable ASCII, like the rest of the art — e.g. a box declares `-` top/bottom and `|` left/right), plus optional **parity variants** (alternate pairs selected by even/odd target extent) so curved shapes stay correct at every size. Re-rasterization is a pure function of (template, rules, target size) — NFR3 holds; the pipeline re-stamps the rasterized art at render time exactly like built-in `Ellipse` (B-001).
 5. **Determinism.** Stamping + anchor resolution are pure functions of (template, position, connectors) — NFR3 holds; golden-file tests cover stamping and anchor joins headlessly (NFR5).
 
 ## Alternatives considered
@@ -44,6 +44,7 @@ A **shape template** is the unit of user-defined content; a **collection** group
 
 ## Version history
 
+- **v7 (2026-10-31):** point 4 wording corrected against the S-024 implementation: rule characters are printable ASCII (the template alphabet), and the exact width/height substitution mechanism is normative in concept C10 [resize-rules](../arc42/12-concepts/resize-rules.md) (now `stable`). Decision unchanged.
 - **v6 (2026-10-31):** CR-003 accepted — point 4 updated: the resize-rule mechanism is declared (per-edge insert/remove characters + optional even/odd parity variants, re-rasterized purely at render time like built-in `Ellipse`), concept C10 [resize-rules](../arc42/12-concepts/resize-rules.md) created; custom objects with rules become fully resizable (FR3 extended). Implementation: S-024.
 - **v5 (2026-10-29):** status `proposed` → `accepted`. All v1-scope pieces are implemented: templates + collections as data (S-005), stamping with live anchors in the pipeline (S-006/S-007), GUI collection discovery + placement (S-016), and the template editor with graphical anchor definition (S-017 — `gui-app template_editor.rs` over the seam's new `ShapeCatalog::register`/`Renderer::preview_pattern`, ADR 009 v6). Decision unchanged.
 - **v4 (2026-10-23):** open spec points settled by S-003 — template/collection file syntax and the `collection/name` resolution rule are now normative in concept docs C7/C8; anchors are declared by coordinates (`anchor <name> at <x> <y>`), eliminating the marker-character collision concern. Decision unchanged; status stays `proposed` until S-005 implements it.

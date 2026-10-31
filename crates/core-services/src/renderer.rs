@@ -3,10 +3,12 @@
 
 use diagram_model::{Diagram, geometry::CellPos, objects::ShapeInstance};
 use render_pipeline::{RenderError, ResolvedGrid};
-use shape_registry::{AnchorSet, Collection, GeometryKind, ShapeRegistry, ShapeType, TemplateGrid};
-use ui_api::Renderer;
+use shape_registry::{
+    AnchorSet, Collection, GeometryKind, ShapeRegistry, ShapeType, TemplateGrid, min_size,
+};
+use ui_api::{Renderer, ResizeRuleSpec};
 
-use crate::registry_state::{SharedRegistry, pad_rows};
+use crate::registry_state::{SharedRegistry, pad_rows, rules_from_spec};
 
 /// Renders diagrams against the shared catalog — the GUI never passes registry
 /// types across the seam (C3: cross-context communication via published interfaces
@@ -39,13 +41,33 @@ impl Renderer for PipelineRenderer {
     }
 
     fn preview_pattern(&self, rows: &[String]) -> Result<ResolvedGrid, RenderError> {
+        self.preview_resized(rows, None, 0, 0)
+    }
+
+    fn preview_resized(
+        &self,
+        rows: &[String],
+        rules: Option<&ResizeRuleSpec>,
+        width: u32,
+        height: u32,
+    ) -> Result<ResolvedGrid, RenderError> {
         let grid = pattern_grid(rows)?;
         // A throwaway registry holding just the synthetic template: the pattern is
         // placed at the origin of an otherwise empty diagram and resolved by the same
-        // place/resolve stages a saved template would use (S-017 AC1).
+        // place/resolve stages a saved template would use (S-017 AC1, S-024 AC6).
         let type_id = format!("{PREVIEW_COLLECTION}/{PREVIEW_TEMPLATE}");
-        let size = diagram_model::geometry::CellSize::new(grid.width(), grid.height())
-            .expect("grid dimensions are valid cell sizes");
+        // Rule-bearing patterns stamp at the requested size — clamped to the minimum
+        // reachable extent so an out-of-range request previews the minimum (C10);
+        // rule-free patterns stamp at natural size, ignoring the dimensions.
+        let size = match rules {
+            Some(spec) => {
+                let min = min_size(&grid, &rules_from_spec(spec));
+                diagram_model::geometry::CellSize::new(width.max(min.width), height.max(min.height))
+                    .expect("clamped size is a valid cell size")
+            }
+            None => diagram_model::geometry::CellSize::new(grid.width(), grid.height())
+                .expect("grid dimensions are valid cell sizes"),
+        };
         let mut registry = ShapeRegistry::builtin();
         registry.add_collection(Collection {
             name: PREVIEW_COLLECTION.to_owned(),
@@ -55,7 +77,7 @@ impl Renderer for PipelineRenderer {
                 glyph_pattern: grid,
                 anchor_set: AnchorSet::new(),
                 geometry: GeometryKind::Pattern,
-                resize_rules: None,
+                resize_rules: rules.map(rules_from_spec),
             }],
         });
 
@@ -245,6 +267,103 @@ mod tests {
             renderer.preview_pattern(&["é".into()]),
             Err(RenderError::InvalidPattern { .. })
         ));
+    }
+
+    /// AC4 (S-024) — the seam re-rasterizes a rule-bearing pattern at the requested
+    /// size: the preview grid is exactly the C10 re-rasterization, through the same
+    /// place/resolve stages a saved shape uses.
+    #[test]
+    fn preview_resized_re_rasterizes_rule_bearing_patterns() {
+        use ui_api::{EdgeRuleSpec, ResizeRuleSpec};
+        let rules = ResizeRuleSpec {
+            top: EdgeRuleSpec {
+                insert: '-',
+                remove: '-',
+                even: None,
+                odd: None,
+            },
+            bottom: EdgeRuleSpec {
+                insert: '-',
+                remove: '-',
+                even: None,
+                odd: None,
+            },
+            left: EdgeRuleSpec {
+                insert: '|',
+                remove: '|',
+                even: None,
+                odd: None,
+            },
+            right: EdgeRuleSpec {
+                insert: '|',
+                remove: '|',
+                even: None,
+                odd: None,
+            },
+        };
+        let rows = vec!["+--+".to_owned(), "|  |".to_owned(), "+--+".to_owned()];
+        let renderer = PipelineRenderer::new(ShapeRegistry::builtin());
+
+        // 6 x 2: width grows with `-` (top/bottom) and the auto-derived space fill
+        // (interior); the height shrink removes the row just above the fixed bottom
+        // row — leaving two identical border rows (C10 corner-fixed semantics).
+        let grid = renderer
+            .preview_resized(&rows, Some(&rules), 6, 2)
+            .expect("previews");
+        assert_eq!(grid.to_text(), "+----+\n+----+");
+
+        // The natural size is the identity.
+        let grid = renderer
+            .preview_resized(&rows, Some(&rules), 4, 3)
+            .expect("previews");
+        assert_eq!(grid.to_text(), "+--+\n|  |\n+--+");
+
+        // Without rules: stamps at natural size, ignoring the requested dimensions.
+        let grid = renderer
+            .preview_resized(&rows, None, 9, 9)
+            .expect("previews");
+        assert_eq!(grid.to_text(), "+--+\n|  |\n+--+");
+    }
+
+    /// AC4 (S-024) — out-of-range targets clamp to the minimum reachable extent
+    /// (the preview never errors on size): a box below its 2×2 minimum previews it.
+    #[test]
+    fn preview_resized_clamps_to_the_minimum_extent() {
+        use ui_api::{EdgeRuleSpec, ResizeRuleSpec};
+        let rules = ResizeRuleSpec {
+            top: EdgeRuleSpec {
+                insert: '-',
+                remove: '-',
+                even: None,
+                odd: None,
+            },
+            bottom: EdgeRuleSpec {
+                insert: '-',
+                remove: '-',
+                even: None,
+                odd: None,
+            },
+            left: EdgeRuleSpec {
+                insert: '|',
+                remove: '|',
+                even: None,
+                odd: None,
+            },
+            right: EdgeRuleSpec {
+                insert: '|',
+                remove: '|',
+                even: None,
+                odd: None,
+            },
+        };
+        let rows = vec!["+--+".to_owned(), "|  |".to_owned(), "+--+".to_owned()];
+        let renderer = PipelineRenderer::new(ShapeRegistry::builtin());
+
+        // Width and height 1 are both below the minimum of 2 — clamps to 2×2.
+        let grid = renderer
+            .preview_resized(&rows, Some(&rules), 1, 1)
+            .expect("previews");
+        assert_eq!(grid.to_text(), "++\n++");
     }
 
     /// Unknown type ids surface as the typed `RenderError` — no panics at the seam.

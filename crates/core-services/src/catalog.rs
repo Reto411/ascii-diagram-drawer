@@ -2,7 +2,7 @@
 //! seam's read models — registry types never cross into the GUI. Registration
 //! (S-017) mutates the shared state that the renderer reads from the same handle.
 
-use shape_registry::{ShapeRegistry, ShapeType};
+use shape_registry::{ShapeRegistry, ShapeType, min_size};
 use ui_api::{AnchorInfo, CatalogError, NewTemplate, ShapeCatalog, ShapeInfo};
 
 use crate::registry_state::SharedRegistry;
@@ -19,6 +19,19 @@ fn collection_of(registry: &ShapeRegistry, shape: &ShapeType) -> Option<String> 
 /// from the registry's local value objects into `diagram-model`'s shared kernel).
 fn to_info(shape: &shape_registry::ShapeType, collection: Option<&str>) -> ShapeInfo {
     let pattern = &shape.glyph_pattern;
+    // S-024 AC4: resizability crosses the seam as data — built-ins (Rect/Ellipse
+    // geometry) are always resizable down to 1×1; rule-bearing customs down to their
+    // computed minimum; plain customs not at all (FR12).
+    let (resizable, min_size_) = match &shape.resize_rules {
+        Some(rules) => (true, min_size(pattern, rules)),
+        None if shape.geometry != shape_registry::GeometryKind::Pattern => {
+            (true, shape_registry::CellSize::new(1, 1))
+        }
+        None => (
+            false,
+            shape_registry::CellSize::new(pattern.width(), pattern.height()),
+        ),
+    };
     ShapeInfo {
         type_id: shape.type_id.clone(),
         name: shape.name.clone(),
@@ -30,6 +43,37 @@ fn to_info(shape: &shape_registry::ShapeType, collection: Option<&str>) -> Shape
         preview: (0..pattern.height())
             .filter_map(|y| pattern.row(y))
             .collect(),
+        resizable,
+        min_size: diagram_model::geometry::CellSize {
+            width: min_size_.width,
+            height: min_size_.height,
+        },
+        // S-024: the editor needs the declared rules to restore them when editing
+        // an existing rule-bearing template (saving must not drop them).
+        resize_rules: shape.resize_rules.as_ref().map(rules_to_spec),
+    }
+}
+
+/// Maps the registry's rule set to its seam-level spec (the inverse of
+/// `registry_state::rules_from_spec`) — no registry type crosses the seam (C3).
+fn rules_to_spec(rules: &shape_registry::ResizeRules) -> ui_api::ResizeRuleSpec {
+    let edge = |e: &shape_registry::EdgeRule| ui_api::EdgeRuleSpec {
+        insert: e.insert,
+        remove: e.remove,
+        even: e.even.map(|p| ui_api::ParityCharsSpec {
+            insert: p.insert,
+            remove: p.remove,
+        }),
+        odd: e.odd.map(|p| ui_api::ParityCharsSpec {
+            insert: p.insert,
+            remove: p.remove,
+        }),
+    };
+    ui_api::ResizeRuleSpec {
+        top: edge(&rules.top),
+        bottom: edge(&rules.bottom),
+        left: edge(&rules.left),
+        right: edge(&rules.right),
     }
 }
 

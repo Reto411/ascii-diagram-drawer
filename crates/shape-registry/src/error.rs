@@ -102,6 +102,62 @@ impl fmt::Display for LookupError {
 
 impl std::error::Error for LookupError {}
 
+/// Re-rasterization at a requested size is impossible (C10, [`crate::resize`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResizeError {
+    /// The target extent is below the minimum reachable for this rule set — corners
+    /// must stay distinct and runs may not go negative.
+    BelowMinimum {
+        /// Requested width in cells.
+        width: u32,
+        /// Requested height in cells.
+        height: u32,
+    },
+    /// A shrink step would remove a cell that differs from the declared/auto-derived
+    /// remove character — art preservation (C10 point 5).
+    RuleMismatch {
+        /// 0-based row of the offending cell.
+        row: u32,
+        /// 0-based column of the offending cell.
+        column: u32,
+        /// The character the rule declared for removal.
+        expected: char,
+        /// The character actually found there.
+        found: char,
+    },
+    /// A row being removed is not a pure edge+fill row — shrinking would destroy art.
+    RowContainsArt {
+        /// 0-based index of the protected row.
+        row: u32,
+    },
+}
+
+impl fmt::Display for ResizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BelowMinimum { width, height } => write!(
+                f,
+                "size {width}×{height} is below the minimum size this template can reach"
+            ),
+            Self::RuleMismatch {
+                row,
+                column,
+                expected,
+                found,
+            } => write!(
+                f,
+                "cell ({column}, {row}) holds '{found}' but the resize rule removes '{expected}' — shrinking here would destroy art"
+            ),
+            Self::RowContainsArt { row } => write!(
+                f,
+                "row {row} contains art that is not a pure edge+fill row — shrinking here would destroy it"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ResizeError {}
+
 /// A `.adc` collection file is malformed. Carries the 1-based position of the problem.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
@@ -190,5 +246,13 @@ mod tests {
         );
         let err = ParseError::new(3, 7, "expected template");
         assert_eq!(err.to_string(), "line 3, column 7: expected template");
+        assert_eq!(
+            ResizeError::BelowMinimum {
+                width: 1,
+                height: 3
+            }
+            .to_string(),
+            "size 1×3 is below the minimum size this template can reach"
+        );
     }
 }

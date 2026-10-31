@@ -5,6 +5,7 @@
 
 use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
+use diagram_model::geometry::CellSize;
 use diagram_model::objects::{Object, ObjectId, ShapeInstance, TextInstance};
 use ui_api::{AnchorInfo, ShapeCatalog};
 
@@ -19,8 +20,9 @@ pub enum HitTarget {
     Body(ObjectId),
     /// A named anchor of a shape — starts/finishes a connection.
     Anchor(ObjectId, String),
-    /// The resize handle of the selected shape (its bottom-right cell, v1).
-    ResizeHandle(ObjectId),
+    /// The resize handle of the selected shape (its bottom-right cell) plus the
+    /// smallest size an instance may reach — the gesture's clamp (S-024 AC5).
+    ResizeHandle { id: ObjectId, min_size: CellSize },
 }
 
 /// Proportional per-axis mapping of a template coordinate onto an instance extent —
@@ -104,16 +106,20 @@ pub fn hit_target(
                 }
             }
         }
-        // v1: one resize handle — the selected shape's bottom-right cell. Built-ins
-        // only: custom shapes are `collection/name` (qualified id) and fixed-size
-        // until resize rules land (ADR 007 v3).
-        if !shape.type_id.contains('/')
+        // One resize handle — the selected shape's bottom-right cell. Offered iff the
+        // catalog says the type is resizable: built-ins and rule-bearing custom shapes
+        // (S-024 AC5); plain custom shapes stay fixed-size (FR12).
+        if let Some(info) = catalog.get(&shape.type_id)
+            && info.resizable
             && col >= shape.pos.x
             && col - shape.pos.x + 1 == shape.size.width
             && row >= shape.pos.y
             && row - shape.pos.y + 1 == shape.size.height
         {
-            return HitTarget::ResizeHandle(shape.id.clone());
+            return HitTarget::ResizeHandle {
+                id: shape.id.clone(),
+                min_size: info.min_size,
+            };
         }
     }
 
@@ -204,10 +210,16 @@ pub fn overlays(
             }
         }
 
-        // One resize handle: the selection's bottom-right cell (v1, built-ins only —
-        // custom shapes are fixed-size per ADR 007 v3). The drawn marker and the
-        // hit-test must agree on this exact cell.
-        if selected && connecting_from.is_none() && !shape.type_id.contains('/') {
+        // One resize handle: the selection's bottom-right cell, iff the catalog says
+        // the type is resizable (S-024 AC5 — built-ins and rule-bearing custom shapes;
+        // plain customs stay fixed-size per FR12). The drawn marker and the hit-test
+        // must agree on this exact cell.
+        if selected
+            && connecting_from.is_none()
+            && catalog
+                .get(&shape.type_id)
+                .is_some_and(|info| info.resizable)
+        {
             out.push(Overlay::ResizeHandle((
                 shape.pos.x + shape.size.width - 1,
                 shape.pos.y + shape.size.height - 1,
@@ -548,11 +560,14 @@ mod tests {
             hit_target(&diagram, &catalog, Some(&s1), None, (8, 2)),
             HitTarget::Anchor(ObjectId::new("s1").expect("valid"), "e".to_owned())
         );
-        // Bottom-right cell of s1 = the resize handle (the same cell the overlay
-        // draws its marker on).
+        // Bottom-right cell of s1 = the resize handle with the catalog's minimum
+        // extent (the same cell the overlay draws its marker on).
         assert_eq!(
             hit_target(&diagram, &catalog, Some(&s1), None, (8, 4)),
-            HitTarget::ResizeHandle(s1.clone())
+            HitTarget::ResizeHandle {
+                id: s1.clone(),
+                min_size: CellSize::new(1, 1).expect("valid"),
+            }
         );
         // Interior body cell → the shape itself.
         assert_eq!(
@@ -610,57 +625,84 @@ mod tests {
         );
     }
 
-    /// ADR 007 v3: custom shapes (`collection/name`) are fixed-size in v1 — no resize
-    /// handle is offered for them, even when selected; their body still selects/moves.
+    /// S-024 AC5: resizability is catalog-driven — a plain custom shape (no rules)
+    /// offers no handle; a rule-bearing one does, carrying its minimum extent.
     #[test]
-    fn custom_shapes_offer_no_resize_handle() {
-        // A custom template from a collection: qualified type id.
+    fn resize_handle_follows_the_catalog_resizable_flag() {
+        // A plain custom template from a collection: qualified type id, not resizable.
         let arrow = ShapeInfo {
             type_id: "mycol/arrow".to_owned(),
             name: "Arrow".to_owned(),
             size: CellSize::new(5, 3).expect("valid size"),
             collection: Some("mycol".to_owned()),
             preview: vec!["..#..".to_owned()],
+            resizable: false,
+            min_size: CellSize::new(1, 1).expect("valid size"),
+            resize_rules: None,
         };
-        let catalog = catalog().add(
-            arrow,
-            [("e", CellPos::new(4, 1))]
+        // A rule-bearing custom shape: resizable down to its computed 2×2 floor.
+        let star = ShapeInfo {
+            type_id: "mycol/star".to_owned(),
+            name: "Star".to_owned(),
+            size: CellSize::new(5, 3).expect("valid size"),
+            collection: Some("mycol".to_owned()),
+            preview: vec!["..#..".to_owned()],
+            resizable: true,
+            min_size: CellSize::new(2, 2).expect("valid size"),
+            resize_rules: None,
+        };
+        let anchors_for = |x: u32| {
+            [("e", CellPos::new(x, 1))]
                 .into_iter()
                 .map(|(name, position)| AnchorInfo {
                     name: name.to_owned(),
                     position,
                 })
-                .collect(),
-        );
+                .collect()
+        };
+        let catalog = catalog()
+            .add(arrow, anchors_for(4))
+            .add(star, anchors_for(14));
 
         let mut diagram = Diagram::new();
-        diagram
-            .place_shape(
-                ShapeInstance::new(
-                    ObjectId::new("a1").expect("valid id"),
-                    "mycol/arrow",
-                    "",
-                    CellPos::new(0, 0),
-                    CellSize::new(5, 3).expect("valid size"),
+        for (id, type_id, x) in [("a1", "mycol/arrow", 0u32), ("s1", "mycol/star", 10)] {
+            diagram
+                .place_shape(
+                    ShapeInstance::new(
+                        ObjectId::new(id).expect("valid id"),
+                        type_id,
+                        "",
+                        CellPos::new(x, 0),
+                        CellSize::new(5, 3).expect("valid size"),
+                    )
+                    .expect("valid instance"),
                 )
-                .expect("valid instance"),
-            )
-            .expect("placement is valid");
+                .expect("placement is valid");
+        }
         let a1 = ObjectId::new("a1").expect("valid id");
+        let s1 = ObjectId::new("s1").expect("valid id");
 
-        // Its bottom-right cell (4,2) selects the body — not a resize handle…
+        // Plain custom: its bottom-right cell (4,2) selects the body — no handle…
         assert_eq!(
             hit_target(&diagram, &catalog, Some(&a1), None, (4, 2)),
             HitTarget::Body(a1.clone())
         );
-        // …and the overlay has dots but no handle.
-        let overlays = overlays(&diagram, &catalog, Some(&a1), None);
-        assert!(
-            !overlays
-                .iter()
-                .any(|o| matches!(o, Overlay::ResizeHandle(_)))
+        let ov = overlays(&diagram, &catalog, Some(&a1), None);
+        assert!(!ov.iter().any(|o| matches!(o, Overlay::ResizeHandle(_))));
+        assert_eq!(ov.len(), 1, "just the single anchor dot");
+
+        // Rule-bearing custom: its bottom-right cell (14,2) is a resize handle with
+        // its min size…
+        assert_eq!(
+            hit_target(&diagram, &catalog, Some(&s1), None, (14, 2)),
+            HitTarget::ResizeHandle {
+                id: s1.clone(),
+                min_size: CellSize::new(2, 2).expect("valid size"),
+            }
         );
-        assert_eq!(overlays.len(), 1, "just the single anchor dot");
+        // …and the overlay carries its handle marker.
+        let ov = overlays(&diagram, &catalog, Some(&s1), None);
+        assert!(ov.contains(&Overlay::ResizeHandle((14, 2))));
     }
 
     /// Overlay data (S-013 AC1/AC2): selection → its dots + handle; connecting → every

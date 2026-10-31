@@ -14,7 +14,7 @@ use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::objects::{ConnectorInstance, Object};
-use shape_registry::{GeometryKind, ShapeRegistry};
+use shape_registry::{GeometryKind, ShapeRegistry, min_size};
 
 use crate::RenderError;
 use crate::edges::EdgeSet;
@@ -109,14 +109,29 @@ fn resolve_endpoint(
                 h,
             )
         }
-        GeometryKind::Pattern => (
-            CellPos::new(
-                instance.pos.x + template_pos.x,
-                instance.pos.y + template_pos.y,
-            ),
-            tw,
-            th,
-        ),
+        GeometryKind::Pattern => {
+            // AC3 (S-024): rule-bearing patterns re-rasterize at the instance extent —
+            // anchors map proportionally onto it, exactly like Rect/Ellipse. Rule-free
+            // patterns stamp at natural size, so raw template offsets stay exact.
+            let (w, h) = match &shape.resize_rules {
+                Some(rules) => {
+                    let min = min_size(&shape.glyph_pattern, rules);
+                    (
+                        instance.size.width.max(min.width),
+                        instance.size.height.max(min.height),
+                    )
+                }
+                None => (tw, th),
+            };
+            (
+                CellPos::new(
+                    instance.pos.x + crate::place::map_proportional(template_pos.x, tw, w),
+                    instance.pos.y + crate::place::map_proportional(template_pos.y, th, h),
+                ),
+                w,
+                h,
+            )
+        }
     };
 
     Ok(Endpoint {

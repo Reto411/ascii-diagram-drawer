@@ -1046,19 +1046,21 @@ impl DrawingApp {
         let Some(session) = self.template_editor.as_mut() else {
             return;
         };
-        let draft = &mut session.draft;
 
         let mut field_gained_focus = false;
         ui.horizontal(|ui| {
             ui.label("Collection:");
             if ui
-                .text_edit_singleline(&mut draft.collection)
+                .text_edit_singleline(&mut session.draft.collection)
                 .gained_focus()
             {
                 field_gained_focus = true;
             }
             ui.label("Name:");
-            if ui.text_edit_singleline(&mut draft.name).gained_focus() {
+            if ui
+                .text_edit_singleline(&mut session.draft.name)
+                .gained_focus()
+            {
                 field_gained_focus = true;
             }
         });
@@ -1071,9 +1073,22 @@ impl DrawingApp {
         {
             let _ = self.editor.commit_edit(&mut self.diagram);
         }
-        if let Some(rejection) = &draft.rejection {
+        if let Some(rejection) = &session.draft.rejection {
             // AC1/AC2 — inline hint for rejected input / blocked save.
             ui.label(RichText::new(rejection.clone()).color(ERROR_COLOR));
+        }
+
+        // S-024 AC6 — the art text box: the primary art input. Typing/pasting re-parses
+        // into rows; rejected input reverts to the previous art and shows the hint.
+        ui.label(RichText::new("Art (type or paste — the grid is a live preview)").weak());
+        if ui
+            .add_sized(
+                [420.0, 132.0],
+                egui::TextEdit::multiline(&mut session.art_text).font(egui::TextStyle::Monospace),
+            )
+            .changed()
+        {
+            let _ = session.apply_art(); // `false` → buffer reverted, hint shown
         }
 
         ui.horizontal(|ui| {
@@ -1084,24 +1099,28 @@ impl DrawingApp {
             if ui.button("Clear cell").clicked()
                 && let Some((x, y)) = session.selected_cell
             {
-                draft.clear_cell(x, y);
+                session.clear_cell(x, y);
                 session.cell_input.clear();
             }
         });
 
         // The grid: one row of cells per template row. Empty cells show a faint dot;
-        // anchored cells are tinted; the selected cell is highlighted.
+        // anchored cells are tinted; the selected cell is highlighted. Clicks land in
+        // a local (the closure only reads `session`) and are applied below.
+        let mut clicked_cell: Option<((u32, u32), char)> = None;
         egui::ScrollArea::both().max_height(200.0).show(ui, |ui| {
-            for y in 0..draft.height() {
+            for y in 0..session.draft.height() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("{y:>2}")).monospace().weak());
-                    for x in 0..draft.width() {
-                        let ch = draft
+                    for x in 0..session.draft.width() {
+                        let ch = session
+                            .draft
                             .rows
                             .get(y as usize)
                             .and_then(|row| row.chars().nth(x as usize))
                             .unwrap_or(' ');
-                        let anchored = draft
+                        let anchored = session
+                            .draft
                             .anchors
                             .iter()
                             .any(|a| a.position.x == x && a.position.y == y);
@@ -1124,21 +1143,24 @@ impl DrawingApp {
                             .add_sized([16.0, 18.0], egui::Button::new(glyph).fill(fill))
                             .clicked()
                         {
-                            if session.anchor_mode {
-                                draft.toggle_anchor(x, y);
-                            } else {
-                                session.selected_cell = Some((x, y));
-                                session.cell_input = if ch == ' ' {
-                                    String::new()
-                                } else {
-                                    ch.to_string()
-                                };
-                            }
+                            clicked_cell = Some(((x, y), ch));
                         }
                     }
                 });
             }
         });
+        if let Some(((x, y), ch)) = clicked_cell {
+            if session.anchor_mode {
+                session.draft.toggle_anchor(x, y);
+            } else {
+                session.selected_cell = Some((x, y));
+                session.cell_input = if ch == ' ' {
+                    String::new()
+                } else {
+                    ch.to_string()
+                };
+            }
+        }
 
         // Character input for the selected cell — live commit on every change.
         ui.horizontal(|ui| {
@@ -1159,18 +1181,19 @@ impl DrawingApp {
                 match session.cell_input.chars().next() {
                     Some(c) => {
                         // `false` = rejected input; the inline hint is shown.
-                        let _ = draft.set_cell(x, y, c);
+                        let _ = session.paint_cell(x, y, c);
                     }
-                    None => draft.clear_cell(x, y),
+                    None => session.clear_cell(x, y),
                 }
             }
         });
 
         // The anchor list (names with positions).
-        let anchors = if draft.anchors.is_empty() {
+        let anchors = if session.draft.anchors.is_empty() {
             "none".to_owned()
         } else {
-            draft
+            session
+                .draft
                 .anchors
                 .iter()
                 .map(|a| format!("{}@({},{})", a.name, a.position.x, a.position.y))
@@ -1179,8 +1202,75 @@ impl DrawingApp {
         };
         ui.label(RichText::new(format!("Anchors: {anchors}")).weak());
 
-        // AC1 — live preview: the exact bytes the renderer would stamp.
-        match services_preview(&self.services, &draft.rows) {
+        // S-024 AC6 — the resize toolset: per-edge insert/remove characters, parity
+        // pairs behind their toggles, and a preview size for the live preview.
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut session.draft.resize.enabled, "Resize rules");
+            ui.label(RichText::new("(all four edges required when enabled)").weak());
+        });
+        if session.draft.resize.enabled {
+            let resize = &mut session.draft.resize;
+            for (label, edge) in [
+                ("Top", &mut resize.top),
+                ("Bottom", &mut resize.bottom),
+                ("Left", &mut resize.left),
+                ("Right", &mut resize.right),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(label).strong());
+                    ui.label("insert");
+                    ui.add_sized([24.0, 24.0], egui::TextEdit::singleline(&mut edge.insert));
+                    ui.label("remove");
+                    ui.add_sized([24.0, 24.0], egui::TextEdit::singleline(&mut edge.remove));
+                    ui.checkbox(&mut edge.even_enabled, "even");
+                    if edge.even_enabled {
+                        ui.add_sized(
+                            [24.0, 24.0],
+                            egui::TextEdit::singleline(&mut edge.even_insert),
+                        );
+                        ui.add_sized(
+                            [24.0, 24.0],
+                            egui::TextEdit::singleline(&mut edge.even_remove),
+                        );
+                    }
+                    ui.checkbox(&mut edge.odd_enabled, "odd");
+                    if edge.odd_enabled {
+                        ui.add_sized(
+                            [24.0, 24.0],
+                            egui::TextEdit::singleline(&mut edge.odd_insert),
+                        );
+                        ui.add_sized(
+                            [24.0, 24.0],
+                            egui::TextEdit::singleline(&mut edge.odd_remove),
+                        );
+                    }
+                });
+            }
+            ui.horizontal(|ui| {
+                ui.label("Preview at");
+                ui.add(
+                    egui::DragValue::new(&mut session.preview_width)
+                        .range(1..=200)
+                        .suffix(" ×"),
+                );
+                ui.add(egui::DragValue::new(&mut session.preview_height).range(1..=200));
+            });
+        }
+
+        // Live preview: with complete resize rules, the exact bytes at the chosen size
+        // (S-024 AC6); otherwise the natural-size stamp (S-017 AC1).
+        let spec = session.resize_spec();
+        let preview = match &spec {
+            Some(rules) => services_preview_resized(
+                &self.services,
+                &session.draft.rows,
+                Some(rules),
+                session.preview_width.max(1),
+                session.preview_height.max(1),
+            ),
+            None => services_preview(&self.services, &session.draft.rows),
+        };
+        match preview {
             Ok(text) => ui.label(
                 RichText::new(if text.is_empty() {
                     "(blank)".to_owned()
@@ -1286,6 +1376,22 @@ fn services_preview(services: &Services, rows: &[String]) -> Result<String, Stri
     let pattern = services
         .renderer
         .preview_pattern(rows)
+        .map_err(|e| e.to_string())?;
+    Ok(services.exporter.to_text(&pattern))
+}
+
+/// The resized live preview (S-024 AC6) — the exact bytes the renderer would stamp at
+/// `width × height` under the draft's resize rules.
+fn services_preview_resized(
+    services: &Services,
+    rows: &[String],
+    rules: Option<&ui_api::ResizeRuleSpec>,
+    width: u32,
+    height: u32,
+) -> Result<String, String> {
+    let pattern = services
+        .renderer
+        .preview_resized(rows, rules, width, height)
         .map_err(|e| e.to_string())?;
     Ok(services.exporter.to_text(&pattern))
 }

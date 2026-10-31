@@ -185,7 +185,7 @@ ascii-diagram-drawer/
 ### 8.4.2 Shape Catalog context — `shape-registry`
 
 - **Aggregates:** `ShapeType { id, glyph_pattern: TemplateGrid, anchor_set: AnchorSet, resize_rules: Option<…> }` and `Collection { name, types }`.
-- **Sub-modules:** `builtin` (predefined catalog + standard default anchors incl. UML connection points, FR11), `templates` (user template/collection files, [ADR 007](../adr/007-user-defined-diagram-objects.md)), `resize-rules` (**v1+** — v1 shapes are fixed-size), `registration` (**v1+**, FR12).
+- **Sub-modules:** `builtin` (predefined catalog + standard default anchors incl. UML connection points, FR11), `templates` (user template/collection files, [ADR 007](../adr/007-user-defined-diagram-objects.md)), `resize` (re-rasterization of rule-bearing templates at instance size — pure `rasterize()` + `min_size()`, [resize rules](12-concepts/resize-rules.md) C10, S-024), `registration` (**v1+**, FR12).
 - **What it supplies to other contexts:** each `ShapeType.glyph_pattern` is the matching target consumed by the Import context (§8.4.5, v1+) — the catalog *stores* patterns and anchor sets; it does no matching itself.
 
 ### 8.4.3 Rendering & Export context — `render-pipeline`, `exporters`

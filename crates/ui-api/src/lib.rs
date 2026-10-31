@@ -19,7 +19,10 @@ pub use error::{CatalogError, ExportError, StoreError};
 // `Renderer`/`Exporter` signatures below — naming them here keeps consumers inside
 // the documented dependency edge (`gui-app` never links `render-pipeline` directly).
 pub use render_pipeline::{RenderError, ResolvedGrid};
-pub use types::{AnchorInfo, LoadedDocument, NewTemplate, ShapeInfo};
+pub use types::{
+    AnchorInfo, EdgeRuleSpec, LoadedDocument, NewTemplate, ParityCharsSpec, ResizeRuleSpec,
+    ShapeInfo,
+};
 
 /// Loads and saves `.ad` documents (FR4). The native backend uses the filesystem;
 /// targets without one (wasm) get an in-memory store behind this same trait.
@@ -49,6 +52,19 @@ pub trait Renderer {
     /// the origin of an otherwise empty diagram and resolved by the same place/resolve
     /// stages a saved template would use, so the preview equals the render output.
     fn preview_pattern(&self, rows: &[String]) -> Result<ResolvedGrid, RenderError>;
+
+    /// Renders a template pattern **at a chosen size** through the full pipeline —
+    /// the template editor's multi-size live preview (S-024 AC6). With `rules` the
+    /// pattern is re-rasterized to `width` x `height` per C10 (clamped to its minimum);
+    /// without them it stamps at natural size, ignoring the requested dimensions.
+    /// Same place/resolve stages as a saved shape, so the preview equals the render output.
+    fn preview_resized(
+        &self,
+        rows: &[String],
+        rules: Option<&ResizeRuleSpec>,
+        width: u32,
+        height: u32,
+    ) -> Result<ResolvedGrid, RenderError>;
 }
 
 /// Emits the resolved grid as user-facing media (FR2/FR5). Text is infallible; SVG

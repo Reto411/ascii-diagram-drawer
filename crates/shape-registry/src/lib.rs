@@ -16,18 +16,25 @@
 //!   → user collections only; disjoint namespaces, no silent fallback (C8).
 //! - [`serializer`]: canonical `.adc` serialization (`Collection` → text), the inverse
 //!   of parsing for well-formed files (S-017).
+//! - [`resize`]: re-rasterization — a template with resize rules renders at any size
+//!   its rules allow, pure grid math (C10, S-024).
 
 pub mod builtin;
 pub mod error;
 pub mod geometry;
 pub mod registry;
+pub mod resize;
 pub mod serializer;
 pub mod templates;
 pub mod types;
 
-pub use error::{AnchorSetError, GridError, LookupError, ParseError};
+pub use error::{AnchorSetError, GridError, LookupError, ParseError, ResizeError};
 pub use geometry::{CellPos, CellSize};
 pub use registry::ShapeRegistry;
+pub use resize::{min_size, rasterize};
 pub use serializer::serialize_collection;
 pub use templates::{CollectionFile, parse_collection};
-pub use types::{AnchorSet, Collection, GeometryKind, ResizeRules, ShapeType, TemplateGrid};
+pub use types::{
+    AnchorSet, Collection, EdgeRule, GeometryKind, ParityChars, ResizeRules, ShapeType,
+    TemplateGrid,
+};

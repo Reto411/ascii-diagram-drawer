@@ -10,10 +10,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use shape_registry::{
-    AnchorSet, Collection, GeometryKind, ShapeRegistry, ShapeType, TemplateGrid,
-    serialize_collection,
+    AnchorSet, Collection, EdgeRule, GeometryKind, ParityChars, ResizeRules, ShapeRegistry,
+    ShapeType, TemplateGrid, serialize_collection,
 };
-use ui_api::{CatalogError, NewTemplate};
+use ui_api::{CatalogError, EdgeRuleSpec, NewTemplate, ResizeRuleSpec};
 
 /// A registry shared between the services that read it. Cloning the handle shares
 /// state (the registry itself is a cheap deep clone; the `Arc` makes it one object).
@@ -159,13 +159,26 @@ impl SharedRegistry {
                 })?;
         }
 
+        // S-024 AC4: optional resize rules — the spec is complete by construction
+        // (all four edges always present), so only the characters need validation.
+        let resize_rules = match &template.resize_rules {
+            Some(spec) => {
+                validate_resize_chars("top", &spec.top)?;
+                validate_resize_chars("bottom", &spec.bottom)?;
+                validate_resize_chars("left", &spec.left)?;
+                validate_resize_chars("right", &spec.right)?;
+                Some(rules_from_spec(spec))
+            }
+            None => None,
+        };
+
         Ok(ShapeType {
             type_id: format!("{}/{}", collection, template.name),
             name: template.name.clone(),
             glyph_pattern,
             anchor_set,
             geometry: GeometryKind::Pattern,
-            resize_rules: None,
+            resize_rules,
         })
     }
 
@@ -177,6 +190,56 @@ impl SharedRegistry {
 }
 
 /// Right-pads `rows` to the longest row (the parser's rule for short grid rows).
+/// Maps the seam's plain resize-rule spec to the registry type (S-024 AC4) —
+/// no registry type crosses the seam in either direction (C3).
+pub(crate) fn rules_from_spec(spec: &ResizeRuleSpec) -> ResizeRules {
+    let edge = |e: &EdgeRuleSpec| EdgeRule {
+        insert: e.insert,
+        remove: e.remove,
+        even: e.even.map(|p| ParityChars {
+            insert: p.insert,
+            remove: p.remove,
+        }),
+        odd: e.odd.map(|p| ParityChars {
+            insert: p.insert,
+            remove: p.remove,
+        }),
+    };
+    ResizeRules {
+        top: edge(&spec.top),
+        bottom: edge(&spec.bottom),
+        left: edge(&spec.left),
+        right: edge(&spec.right),
+    }
+}
+
+/// Rejects whitespace and non-printable rule characters (C10: `char` is one
+/// printable NON-whitespace ASCII character) — the editor pre-validates, but the
+/// seam must not trust it.
+fn validate_resize_chars(edge_name: &str, edge: &EdgeRuleSpec) -> Result<(), CatalogError> {
+    // 0x21..=0x7e: printable ASCII excluding space (whitespace is auto-derived, C10).
+    let ok = |c: char| c.is_ascii() && (0x21u8..=0x7eu8).contains(&(c as u8));
+    for (label, ch) in [
+        ("insert", Some(edge.insert)),
+        ("remove", Some(edge.remove)),
+        ("even insert", edge.even.map(|p| p.insert)),
+        ("even remove", edge.even.map(|p| p.remove)),
+        ("odd insert", edge.odd.map(|p| p.insert)),
+        ("odd remove", edge.odd.map(|p| p.remove)),
+    ] {
+        if let Some(c) = ch
+            && !ok(c)
+        {
+            return Err(CatalogError::Invalid {
+                message: format!(
+                    "the {edge_name} rule's {label} character must be printable non-whitespace ASCII"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn pad_rows(rows: &[String]) -> Vec<String> {
     let width = rows.iter().map(|r| r.chars().count()).max().unwrap_or(0);
     rows.iter()
@@ -211,6 +274,7 @@ mod tests {
         NewTemplate {
             name: "star".to_owned(),
             rows: rows.into_iter().map(String::from).collect(),
+            resize_rules: None,
             anchors: anchors
                 .iter()
                 .map(|(n, x, y)| AnchorInfo {
@@ -273,6 +337,7 @@ mod tests {
                 NewTemplate {
                     name: "new".to_owned(),
                     rows: vec!["x".to_owned()],
+                    resize_rules: None,
                     anchors: vec![AnchorInfo {
                         name: "e".into(),
                         position: diagram_model::geometry::CellPos { x: 0, y: 0 },
@@ -291,6 +356,7 @@ mod tests {
                 NewTemplate {
                     name: "old".to_owned(),
                     rows: vec!["z".to_owned()],
+                    resize_rules: None,
                     anchors: vec![AnchorInfo {
                         name: "s".into(),
                         position: diagram_model::geometry::CellPos { x: 0, y: 0 },

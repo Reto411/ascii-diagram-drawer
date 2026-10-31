@@ -25,7 +25,7 @@
 use diagram_model::Diagram;
 use diagram_model::objects::{Object, ShapeInstance, TextInstance};
 use shape_registry::CellPos;
-use shape_registry::{GeometryKind, ShapeRegistry, ShapeType, TemplateGrid};
+use shape_registry::{GeometryKind, ShapeRegistry, ShapeType, TemplateGrid, min_size, rasterize};
 
 use crate::edges::EdgeSet;
 use crate::ellipse::rasterize_ellipse;
@@ -306,14 +306,26 @@ fn place_pattern(grid: &mut PlacedGrid, instance: &ShapeInstance, shape: &ShapeT
     let px = instance.pos.x;
     let py = instance.pos.y;
     let glyph = &shape.glyph_pattern;
-    let tw = glyph.width();
-    let th = glyph.height();
+
+    // AC3 (S-024): rule-bearing templates are re-rasterized at the instance's own
+    // pos/size — clamped per axis to their minimum extent, so hand-edited out-of-range
+    // sizes render at the minimum instead of failing the whole render (C10). Rule-free
+    // templates stamp at natural size, byte-for-byte as before.
+    let art: TemplateGrid = match &shape.resize_rules {
+        Some(rules) => {
+            let min = min_size(glyph, rules);
+            let w = instance.size.width.max(min.width);
+            let h = instance.size.height.max(min.height);
+            rasterize(glyph, rules, w, h).expect("clamped to the minimum extent")
+        }
+        None => glyph.clone(),
+    };
 
     // 1. Opaque art stamp: non-space cells verbatim (they do not participate in
     //    glyph resolution — ADR 007); space cells are transparent.
-    for dy in 0..th {
-        for dx in 0..tw {
-            if let Some(c) = glyph.get(CellPos::new(dx, dy))
+    for dy in 0..art.height() {
+        for dx in 0..art.width() {
+            if let Some(c) = art.get(CellPos::new(dx, dy))
                 && c != ' '
             {
                 grid.with_cell(px + dx, py + dy, |s| s.stamp_content(c));
@@ -321,26 +333,37 @@ fn place_pattern(grid: &mut PlacedGrid, instance: &ShapeInstance, shape: &ShapeT
         }
     }
 
-    // 2. Anchor base edges (passive): recorded on anchor cells that carry art so a
-    //    connector binding there in S-007 merges with the drawn neighbors. Invisible
-    //    while unbound — content wins at resolution. Anchors on space cells (or out of
+    // 2. Anchor base edges (passive): anchors are declared in template coordinates and
+    //    map proportionally onto the instance extent (identity at natural size — same
+    //    as the built-in Ellipse, B-001); recorded on anchor cells that carry art so a
+    //    connector binding there merges with the drawn neighbors. Invisible while
+    //    unbound — content wins at resolution. Anchors on space cells (or out of
     //    bounds) are stamped nothing: they become live only when a connector binds.
     for (_name, apos) in shape.anchor_set.iter() {
-        if let Some(c) = glyph.get(*apos)
+        let mapped = CellPos::new(
+            map_proportional(apos.x, glyph.width(), art.width()),
+            map_proportional(apos.y, glyph.height(), art.height()),
+        );
+        if let Some(c) = art.get(mapped)
             && c != ' '
         {
-            let base = anchor_base_edges(glyph, *apos);
-            grid.with_cell(px + apos.x, py + apos.y, |s| {
+            let base = anchor_base_edges(&art, mapped);
+            grid.with_cell(px + mapped.x, py + mapped.y, |s| {
                 s.stamp_content_with_base_edges(c, base)
             });
         }
     }
 
-    // 3. The label centers over the full pattern extent; only space cells may receive it.
+    // 3. The label centers over the full (possibly rasterized) pattern extent; only
+    //    space cells may receive it.
     stamp_label(
         grid,
         &instance.label,
-        LabelRegion::Pattern { glyph, px, py },
+        LabelRegion::Pattern {
+            glyph: &art,
+            px,
+            py,
+        },
     );
 }
 
@@ -787,6 +810,87 @@ mod tests {
         );
         // The `n` anchor sits on a space cell (template (1,0) -> abs (3,1)): nothing stamped.
         assert!(!g.cell(3, 1).occupied());
+    }
+
+    /// A rule-bearing box template (5×3): `+---+` / `|   |` / `+---+`, `-` top/bottom,
+    /// `|` left/right. Minimum extent 2×2 (S-024 AC3, C10).
+    fn rule_box_registry() -> ShapeRegistry {
+        let mut registry = ShapeRegistry::builtin();
+        let rule = |c: char| shape_registry::EdgeRule {
+            insert: c,
+            remove: c,
+            even: None,
+            odd: None,
+        };
+        let rules = shape_registry::ResizeRules {
+            top: rule('-'),
+            bottom: rule('-'),
+            left: rule('|'),
+            right: rule('|'),
+        };
+        registry.add_collection(shape_registry::Collection {
+            name: "mine".to_owned(),
+            types: vec![shape_registry::ShapeType {
+                type_id: "mine/box".to_owned(),
+                name: "box".to_owned(),
+                geometry: GeometryKind::Pattern,
+                glyph_pattern: TemplateGrid::from_rows(&["+---+", "|   |", "+---+"])
+                    .expect("valid art"),
+                anchor_set: shape_registry::AnchorSet::new(),
+                resize_rules: Some(rules),
+            }],
+        });
+        registry
+    }
+
+    fn rule_box_at(w: u32, h: u32) -> ShapeInstance {
+        ShapeInstance::new(
+            ObjectId::generated(0),
+            "mine/box",
+            "",
+            CellPos::new(0, 0),
+            CellSize::new(w, h).expect("non-zero test size"),
+        )
+        .expect("valid shape")
+    }
+
+    #[test]
+    fn rule_bearing_pattern_re_rasterizes_at_instance_size() {
+        let g = place(
+            &diagram_with(vec![Object::Shape(rule_box_at(7, 4))]),
+            &rule_box_registry(),
+        )
+        .expect("known shapes");
+        // Rasterized 7×4 box: top/bottom rows `+-----+`, one added interior row.
+        assert_eq!(g.cell(0, 0).content, Some('+'));
+        assert_eq!(g.cell(3, 0).content, Some('-'));
+        assert_eq!(g.cell(6, 0).content, Some('+'));
+        assert_eq!(g.cell(0, 1).content, Some('|'));
+        assert_eq!(g.cell(3, 1).content, None, "interior is empty");
+        assert_eq!(
+            g.cell(6, 3).content,
+            Some('+'),
+            "bottom row at the new height"
+        );
+        // The stamped extent is exactly the requested size — nothing beyond it.
+        assert_eq!((g.width, g.height), (7, 4));
+    }
+
+    #[test]
+    fn rule_bearing_pattern_clamps_to_the_minimum_extent() {
+        // A hand-edited out-of-range size (1×1) renders at the minimum (2×2), not an error.
+        let g = place(
+            &diagram_with(vec![Object::Shape(rule_box_at(1, 1))]),
+            &rule_box_registry(),
+        )
+        .expect("out-of-range sizes clamp instead of failing the render");
+        // The 2×2 minimum keeps the corner cells of both edge rows (`++` / `++`) —
+        // shrinking removes the interior row first, never the corners.
+        assert_eq!(g.cell(0, 0).content, Some('+'));
+        assert_eq!(g.cell(1, 0).content, Some('+'));
+        assert_eq!(g.cell(0, 1).content, Some('+'));
+        assert_eq!(g.cell(1, 1).content, Some('+'));
+        assert_eq!((g.width, g.height), (2, 2));
     }
 
     #[test]

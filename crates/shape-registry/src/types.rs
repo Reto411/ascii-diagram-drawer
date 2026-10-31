@@ -1,5 +1,6 @@
 //! Core catalog value types (ADR 007): [`TemplateGrid`], [`AnchorSet`], [`ShapeType`],
-//! [`Collection`] — and the placeholder [`ResizeRules`] that v1 leaves empty.
+//! [`Collection`] — and [`ResizeRules`], the per-edge insert/remove declarations that
+//! make a template's instances resizable (C10, ADR 007 v6).
 
 use std::collections::BTreeMap;
 
@@ -156,11 +157,70 @@ impl AnchorSet {
     }
 }
 
-/// Resize rules for a shape type. v1 has no resize rules — all custom objects are
-/// fixed-size; the field is retained on [`ShapeType`] so rules can be added without
-/// changing the model (S-005 AC4).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ResizeRules;
+/// One edge of a resize rule set (C10): which character is inserted per step of
+/// growth and removed per step of shrink, plus optional even/odd parity overrides.
+///
+/// All characters are printable **non-whitespace** ASCII — the declarable alphabet of
+/// `.adc` `resize` statements; space fills are auto-derived from the art itself
+/// (see [`crate::resize::rasterize`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeRule {
+    /// Character inserted per step of growth on this edge (base rule).
+    pub insert: char,
+    /// Character removed per step of shrink on this edge (base rule); a shrink step
+    /// whose removed cell differs from it is rejected.
+    pub remove: char,
+    /// Overrides `insert`/`remove` when the target extent is even, if set.
+    pub even: Option<ParityChars>,
+    /// Overrides `insert`/`remove` when the target extent is odd, if set.
+    pub odd: Option<ParityChars>,
+}
+
+/// A parity variant of an edge rule — the insert/remove pair used when the target
+/// extent has that parity (even or odd), so curved shapes can declare different runs
+/// per size class (C10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParityChars {
+    /// Character inserted per step of growth on this edge at this parity.
+    pub insert: char,
+    /// Character removed per step of shrink on this edge at this parity.
+    pub remove: char,
+}
+
+impl EdgeRule {
+    /// The insert/remove pair in force for a target extent of the given size:
+    /// the matching parity override when declared, else the base pair.
+    #[must_use]
+    pub fn chars_for(&self, target_extent: u32) -> (char, char) {
+        let parity = if target_extent.is_multiple_of(2) {
+            self.even
+        } else {
+            self.odd
+        };
+        match parity {
+            Some(p) => (p.insert, p.remove),
+            None => (self.insert, self.remove),
+        }
+    }
+}
+
+/// Resize rules for a shape type (C10, ADR 007 v6): one complete rule per edge.
+///
+/// A rule set is complete by construction — all four edges are always present; a
+/// template either carries no rules (`ShapeType::resize_rules == None`, fixed-size,
+/// ADR 007 point 4) or this full structure. Re-rasterization at instance sizes is the
+/// pure function [`crate::resize::rasterize`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResizeRules {
+    /// The top edge (row 0's run between its corner cells).
+    pub top: EdgeRule,
+    /// The bottom edge (last row's run).
+    pub bottom: EdgeRule,
+    /// The left edge (rows' first cells; new rows' left end on height growth).
+    pub left: EdgeRule,
+    /// The right edge (rows' last cells; new rows' right end on height growth).
+    pub right: EdgeRule,
+}
 
 /// How the render pipeline draws a shape type's geometry
 /// ([render pipeline](../../../doc/arc42/12-concepts/render-pipeline.md), S-006).
@@ -179,7 +239,7 @@ pub enum GeometryKind {
     Pattern,
 }
 
-/// A shape type: a glyph pattern plus its named anchors and (future) resize rules.
+/// A shape type: a glyph pattern plus its named anchors and optional resize rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShapeType {
     /// The catalog key: bare name for built-ins, `collection/name` for custom shapes.
@@ -192,7 +252,8 @@ pub struct ShapeType {
     pub anchor_set: AnchorSet,
     /// How the render pipeline draws this type's geometry (S-006).
     pub geometry: GeometryKind,
-    /// Resize rules; `None` in v1 (all custom objects are fixed-size).
+    /// Resize rules; `None` keeps the template fixed-size (ADR 007 point 4),
+    /// `Some(rules)` makes instances resizable via re-rasterization (C10, S-024).
     pub resize_rules: Option<ResizeRules>,
 }
 

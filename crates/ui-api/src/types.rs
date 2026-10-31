@@ -22,6 +22,17 @@ pub struct ShapeInfo {
     /// The glyph pattern rows, verbatim — the sidebar draws them as a small preview
     /// (ADR 009 v5). Same bytes the renderer stamps on placement.
     pub preview: Vec<String>,
+    /// Whether instances of this shape can be resized (S-024 AC5): built-ins and
+    /// rule-bearing custom shapes are resizable; plain custom shapes are not (FR12).
+    pub resizable: bool,
+    /// The smallest size an instance may reach on each axis — the resize gesture's
+    /// clamp (S-024 AC5). Built-ins: 1×1; rule-bearing customs: computed by pure
+    /// shrink simulation; plain customs: their natural size (the only valid one).
+    pub min_size: CellSize,
+    /// The template's declared resize rules, when it has any (S-024) — the editor
+    /// restores them when opening an existing rule-bearing template for editing,
+    /// so saving does not silently drop them.
+    pub resize_rules: Option<ResizeRuleSpec>,
 }
 
 impl ShapeInfo {
@@ -34,8 +45,48 @@ impl ShapeInfo {
             size,
             collection: None,
             preview: Vec::new(),
+            resizable: true,
+            min_size: CellSize::new(1, 1).expect("1×1 is a valid cell size"),
+            resize_rules: None,
         }
     }
+}
+
+/// A per-edge resize rule as the GUI submits it (S-024 AC4) — plain seam data
+/// mirroring `shape_registry::EdgeRule`; no registry type crosses the seam (C3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdgeRuleSpec {
+    /// Character inserted when the shape grows on this edge.
+    pub insert: char,
+    /// Character removed when it shrinks — a removed cell differing from this is an error.
+    pub remove: char,
+    /// Override pair used when the target extent on that axis is even (C10 parity).
+    pub even: Option<ParityCharsSpec>,
+    /// Override pair used when the target extent is odd.
+    pub odd: Option<ParityCharsSpec>,
+}
+
+/// A parity-variant character pair for one edge (S-024 AC4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParityCharsSpec {
+    /// Insert character for this parity.
+    pub insert: char,
+    /// Remove character for this parity.
+    pub remove: char,
+}
+
+/// A complete resize rule set — all four edges (S-024 AC4; a rule set is complete by
+/// construction, mirroring `shape_registry::ResizeRules`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeRuleSpec {
+    /// Rule for the top edge.
+    pub top: EdgeRuleSpec,
+    /// Rule for the bottom edge.
+    pub bottom: EdgeRuleSpec,
+    /// Rule for the left edge.
+    pub left: EdgeRuleSpec,
+    /// Rule for the right edge.
+    pub right: EdgeRuleSpec,
 }
 
 /// A named anchor point on a shape type (S-013 connectors).
@@ -61,6 +112,10 @@ pub struct NewTemplate {
     pub rows: Vec<String>,
     /// Declared anchors; at least one is required for saving (S-017 AC2).
     pub anchors: Vec<AnchorInfo>,
+    /// Optional resize rules (S-024 AC4) — present iff the editor's resize toolset
+    /// is enabled. The backend validates completeness (all four edges' base rules)
+    /// and character constraints, then persists them as `.adc` `resize` statements.
+    pub resize_rules: Option<ResizeRuleSpec>,
 }
 
 /// A loaded `.ad` document plus forward-compat metadata (ADR 009 v4, RS2):
@@ -100,6 +155,9 @@ mod tests {
             size: CellSize::new(9, 5).expect("valid size"),
             collection: None,
             preview: vec!["+-------+".to_owned()],
+            resizable: true,
+            min_size: CellSize::new(1, 1).expect("valid size"),
+            resize_rules: None,
         };
         assert_eq!(info.size.width, 9);
         assert_eq!(info.size.height, 5);

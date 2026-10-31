@@ -68,6 +68,9 @@ mod tests {
             size: CellSize::new(3, 3).expect("valid size"),
             collection: collection.map(str::to_owned),
             preview: vec!["###".to_owned()],
+            resizable: true,
+            min_size: CellSize::new(1, 1).expect("valid size"),
+            resize_rules: None,
         }
     }
 

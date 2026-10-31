@@ -75,8 +75,9 @@ enum Gesture {
         offset_x: u32,
         offset_y: u32,
     },
-    /// Resize drag on the selected shape's bottom-right handle (v1).
-    Resize { id: ObjectId },
+    /// Resize drag on the selected shape's bottom-right handle — with the catalog's
+    /// minimum extent as the clamp (S-024 AC5).
+    Resize { id: ObjectId, min_size: CellSize },
     /// Connect drag from a source anchor to wherever the pointer drops.
     Connect { from: AnchorRef },
 }
@@ -85,8 +86,9 @@ enum Gesture {
 /// S-018 text).
 #[derive(Debug, Clone)]
 pub enum Placing {
-    /// A shape template from the catalog.
-    Shape(ShapeInfo),
+    /// A shape template from the catalog. Boxed to keep the enum small
+    /// (`clippy::large_enum_variant` — `ShapeInfo` carries preview rows and rules).
+    Shape(Box<ShapeInfo>),
     /// A free-text object; inline editing opens immediately after placement (FR10).
     Text,
 }
@@ -117,7 +119,7 @@ impl EditorState {
     /// Sidebar action: pick a template to place (replaces a previous pick, clears the
     /// selection so the next click is unambiguously a placement).
     pub fn select_template(&mut self, info: ShapeInfo) {
-        self.placing = Some(Placing::Shape(info));
+        self.placing = Some(Placing::Shape(Box::new(info)));
         self.selection = None;
     }
 
@@ -219,7 +221,7 @@ impl EditorState {
             return self.commit_edit(diagram);
         }
         match self.placing.clone() {
-            Some(Placing::Shape(info)) => return self.place(col, row, info, diagram),
+            Some(Placing::Shape(info)) => return self.place(col, row, *info, diagram),
             Some(Placing::Text) => return self.place_text(col, row, diagram),
             None => {}
         }
@@ -234,8 +236,11 @@ impl EditorState {
                 self.gesture = Some(Gesture::Connect { from: from.clone() });
                 EditOutcome::Connecting { from }
             }
-            HitTarget::ResizeHandle(id) => {
-                self.gesture = Some(Gesture::Resize { id: id.clone() });
+            HitTarget::ResizeHandle { id, min_size } => {
+                self.gesture = Some(Gesture::Resize {
+                    id: id.clone(),
+                    min_size,
+                });
                 EditOutcome::Nothing
             }
             // Press on a shape or text body: select + start the move gesture (AC2).
@@ -362,15 +367,20 @@ impl EditorState {
                     Err(_) => EditOutcome::Nothing,
                 }
             }
-            Gesture::Resize { id } => {
+            Gesture::Resize { id, min_size } => {
                 let Some(Object::Shape(shape)) = diagram.get(&id) else {
                     return EditOutcome::Nothing;
                 };
                 // The bottom-right corner follows the pointer: extent = distance from the
-                // (fixed) top-left, minimum 1×1 by construction.
+                // (fixed) top-left, clamped per axis to the shape's minimum extent
+                // (S-024 AC5 — built-ins 1×1, rule-bearing customs their computed floor).
                 let to = CellSize::new(
-                    col.saturating_sub(shape.pos.x).saturating_add(1),
-                    row.saturating_sub(shape.pos.y).saturating_add(1),
+                    col.saturating_sub(shape.pos.x)
+                        .saturating_add(1)
+                        .max(min_size.width),
+                    row.saturating_sub(shape.pos.y)
+                        .saturating_add(1)
+                        .max(min_size.height),
                 )
                 .expect("resize extents are ≥ 1");
                 if shape.size == to {
@@ -439,6 +449,9 @@ mod tests {
             size: CellSize::new(width, height).expect("test sizes are valid"),
             collection,
             preview: Vec::new(),
+            resizable: true,
+            min_size: CellSize::new(1, 1).expect("valid size"),
+            resize_rules: None,
         }
     }
 
@@ -587,7 +600,8 @@ mod tests {
 
         let shape = first_shape(&diagram);
         assert_eq!((shape.pos.x, shape.pos.y), (10, 2));
-        // Fixed size from the template — no resize in v1 (ADR 007 v3).
+        // Placed at the template's natural size; whether it can be resized is the
+        // catalog's `resizable` flag (S-024 AC5 — canvas.rs pins both cases).
         assert_eq!((shape.size.width, shape.size.height), (3, 3));
     }
 
@@ -870,6 +884,69 @@ mod tests {
             EditOutcome::Resized {
                 id,
                 to: CellSize::new(1, 1).unwrap()
+            }
+        );
+    }
+
+    /// S-024 AC5 — rule-bearing customs clamp at their catalog minimum (not 1×1):
+    /// dragging past the top-left stops at the per-axis `min_size` floor.
+    #[test]
+    fn resize_clamps_to_the_shape_minimum_extent() {
+        let mut editor = EditorState::default();
+        let mut diagram = Diagram::new();
+        let id = diagram.new_object_id();
+        diagram
+            .place_shape(
+                ShapeInstance::new(
+                    id.clone(),
+                    "stars/star",
+                    "",
+                    CellPos::new(5, 5),
+                    CellSize::new(5, 3).unwrap(),
+                )
+                .expect("valid"),
+            )
+            .expect("placement is valid");
+
+        editor.selection = Some(id.clone());
+        // Press the bottom-right handle (9,7) carrying the catalog's 2×2 floor.
+        editor.on_pointer(
+            PointerEvent::Down {
+                cell: (9, 7),
+                target: HitTarget::ResizeHandle {
+                    id: id.clone(),
+                    min_size: CellSize::new(2, 2).unwrap(),
+                },
+            },
+            &mut diagram,
+        );
+
+        // Drag onto the top-left corner itself: both axes clamp at 2×2.
+        assert_eq!(
+            editor.on_pointer(
+                PointerEvent::Move {
+                    cell: (5, 5),
+                    target: HitTarget::Empty
+                },
+                &mut diagram,
+            ),
+            EditOutcome::Resized {
+                id: id.clone(),
+                to: CellSize::new(2, 2).unwrap()
+            }
+        );
+        // One axis can still grow independently of the clamp.
+        assert_eq!(
+            editor.on_pointer(
+                PointerEvent::Move {
+                    cell: (9, 5),
+                    target: HitTarget::Empty
+                },
+                &mut diagram,
+            ),
+            EditOutcome::Resized {
+                id,
+                to: CellSize::new(5, 2).unwrap()
             }
         );
     }

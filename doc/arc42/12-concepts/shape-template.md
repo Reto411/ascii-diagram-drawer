@@ -26,15 +26,17 @@ FR3 (High): users define their own diagram objects entirely themselves, beyond t
 ### File syntax (v1, inside a `.adc` collection file)
 
 ```ebnf
-template-block = "template", name, width, "x", height, grid-row* , anchor-stmt*
+template-block = "template", name, width, "x", height, grid-row* , anchor-stmt* , resize-stmt*
 grid-row       = line of ≤ width printable-ASCII chars ; right-padded with spaces to width on parse
 anchor-stmt    = "anchor", name, "at", int, int
+resize-stmt    = "resize", edge, ["even" | "odd"], "insert", quoted-char, "remove", quoted-char   ; v1.1 (C10)
+edge           = "top" | "bottom" | "left" | "right"
 ```
 
 - Exactly `height` physical lines follow the declaration — they are consumed as grid rows whatever they contain (a blank line is a fully empty row). Trailing spaces on rows are trimmed on parse and never emitted (canonical form); rows longer than `width` are a parse error.
 - **Anchor placement rules:** `0 ≤ x < width`, `0 ≤ y < height`; anchor names are single tokens, unique within the template; several anchors may share one cell. No other v1 constraint (e.g. "on the border" is a guideline for clean joins, not an invariant).
 - **No in-grid marker characters.** ADR 007's open "anchor marker character" point is settled by *coordinate-based* declarations: anchors never appear in the art itself, so there is nothing to collide with the svgbob alphabet or the double-quote escape. The graphical anchor mode (FR11) produces exactly this data — same underlying definition, file remains the source of truth.
-- **Resize rules:** a template may declare **resize rules** — per-edge insert/remove characters + optional even/odd parity variants — making its instances resizable; the mechanism is normative in [resize-rules](resize-rules.md) (C10, ADR 007 v6, CR-003 accepted 2026-10-31). `resize` statements inside a template block carry them (`.adc` minor version 1.1; exact syntax settled by S-024); unknown-statement tolerance (see [diagram file format](diagram-file-format.md)) applies inside `.adc` files identically. Without rules a template stays fixed-size (ADR 007 point 4). Built-ins do not need rules: their resizability comes from the `geometry` kind (`Rect` derives borders at instance size, `Ellipse` re-rasterizes its outline at instance size — B-001).
+- **Resize rules (v1.1):** a template may declare **resize rules** — per-edge insert/remove characters + optional even/odd parity variants — making its instances resizable; the mechanism is normative in [resize-rules](resize-rules.md) (C10, ADR 007 v6). `resize` statements inside a template block carry them: one statement per (edge, parity), all four base pairs required to enable resizing (a partial set is a parse error); without rules a template stays fixed-size (ADR 007 point 4). Built-ins do not need rules: their resizability comes from the `geometry` kind (`Rect` derives borders at instance size, `Ellipse` re-rasterizes its outline at instance size — B-001).
 - **Text regions (FR19, CR-016 accepted 2026-10-31):** a template may declare one or more named **text regions** with a position and extent inside the shape; instances carry per-region content that moves/resizes with the shape. `region` statements join the template block (`.adc` 1.1, ADR 004 v4); definable textually and graphically in the template editor, mirroring anchors (FR11). The existing single shape label remains supported alongside regions. Exact syntax settles with S-037.
 
 ### Identity and use

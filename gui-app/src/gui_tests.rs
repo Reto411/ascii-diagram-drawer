@@ -170,7 +170,21 @@ impl Gui {
     fn type_text(&mut self, s: &str) -> egui::FullOutput {
         let mut out = self.frame();
         for c in s.chars() {
-            out = self.pump(vec![Event::Text(c.to_string())]);
+            if c == '\n' {
+                // `Event::Text("\n")` is ignored by TextEdit — newlines are key
+                // events (multiline fields insert a line break on Enter).
+                let enter = |pressed: bool| Event::Key {
+                    key: Key::Enter,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: Modifiers::default(),
+                };
+                let _ = self.pump(vec![enter(true)]);
+                out = self.pump(vec![enter(false)]);
+            } else {
+                out = self.pump(vec![Event::Text(c.to_string())]);
+            }
         }
         out
     }
@@ -1557,6 +1571,196 @@ fn template_editor_save_registers_a_placeable_template() {
     assert!(
         find_text_exact(&out, "new").is_some(),
         "sidebar lists the new template by name"
+    );
+}
+
+/// S-024 AC6 — the art text box and resize toolset work end to end: pasted art
+/// replaces the grid, complete rules unlock a resized live preview without error,
+/// the saved template is resizable in the catalog with its computed minimum, and a
+/// placed instance resizes on the canvas by re-rasterization (AC5).
+#[test]
+fn template_editor_art_box_and_resize_rules_save_a_resizable_template() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (services, _warnings) = Services::native_with_collections(Some(tmp.path()));
+    let mut gui = Gui::new(DrawingApp::new(services));
+    let _ = gui.canvas_min();
+
+    // Open the editor from the sidebar.
+    let out = gui.frame();
+    let new_btn = find_text(&out, "New template").expect("sidebar has '＋ New template…'");
+    let _ = gui.click_at(new_btn.center());
+    let out = gui.frame();
+    assert!(
+        find_text(&out, "Template editor").is_some(),
+        "the editor window opened"
+    );
+
+    // The blank 12×8 grid: every visible cell is a faint dot (the grid scrolls).
+    let dots_before = texts(&out).iter().filter(|(t, _)| t == "·").count();
+    assert!(dots_before > 0, "the blank grid shows empty cells");
+
+    // Paste art into the text box: focus it just below its caption, drag-select the
+    // whole (blank) buffer — egui 0.37's TextEdit has no select-all shortcut — and
+    // type the 5×3 box over the selection.
+    let cap = find_text(&out, "Art (type or paste").expect("the art caption is shown");
+    let top_left = Pos2::new(cap.min.x + 2.0, cap.max.y + 4.0);
+    let bottom_right = Pos2::new(cap.min.x + 418.0, cap.max.y + 134.0);
+    let _ = gui.drag(top_left, bottom_right); // click-drag selects the whole buffer
+    let out = gui.type_text("+---+\n|   |\n+---+");
+
+    // The grid re-parsed to 5×3: both the art box and the live preview (rules still
+    // off → natural-size stamp rendered from `draft.rows`) show the exact three-line
+    // pattern. A rejected or newline-mangled input can never produce this galley —
+    // on rejection the buffer reverts to the previous grid, and dropped newlines
+    // yield a single 15-character row instead.
+    let shown = texts(&out);
+    assert!(
+        shown.iter().any(|(t, _)| t == "+---+\n|   |\n+---+"),
+        "the grid and preview mirror the pasted 5×3 art"
+    );
+    // Only the three interior spaces of the middle row remain empty cells.
+    assert_eq!(
+        shown.iter().filter(|(t, _)| t == "·").count(),
+        3,
+        "the grid mirrors the pasted 5×3 art"
+    );
+
+    // Enable the resize toolset and fill every edge's insert/remove pair.
+    let rules_label = find_text(&out, "Resize rules").expect("the resize checkbox is shown");
+    let _ = gui.click_at(rules_label.center());
+    let out = gui.frame();
+    assert!(find_text(&out, "Top").is_some(), "the edge rows appeared");
+
+    let field_texts = texts(&out);
+    let inserts: Vec<Rect> = field_texts
+        .iter()
+        .filter(|(t, _)| t == "insert")
+        .map(|(_, r)| *r)
+        .collect();
+    let removes: Vec<Rect> = field_texts
+        .iter()
+        .filter(|(t, _)| t == "remove")
+        .map(|(_, r)| *r)
+        .collect();
+    assert_eq!(inserts.len(), 4, "one insert field per edge");
+    assert_eq!(removes.len(), 4, "one remove field per edge");
+    // Row order in the UI: Top, Bottom, Left, Right — sort by y to be safe.
+    let mut inserts = inserts;
+    inserts.sort_by(|a, b| a.min.y.total_cmp(&b.min.y));
+    let mut removes = removes;
+    removes.sort_by(|a, b| a.min.y.total_cmp(&b.min.y));
+    // Fill all eight fields: top/bottom use '-', left/right use '|'.
+    let fill = |gui: &mut Gui, field: Rect, c: char| {
+        let _ = gui.click_at(Pos2::new(field.max.x + 12.0, field.center().y));
+        let _ = gui.type_text(&c.to_string());
+    };
+    fill(&mut gui, inserts[0], '-'); // top insert
+    fill(&mut gui, removes[0], '-'); // top remove
+    fill(&mut gui, inserts[1], '-'); // bottom insert
+    fill(&mut gui, removes[1], '-'); // bottom remove
+    fill(&mut gui, inserts[2], '|'); // left insert
+    fill(&mut gui, removes[2], '|'); // left remove
+    fill(&mut gui, inserts[3], '|'); // right insert
+    fill(&mut gui, removes[3], '|'); // right remove
+
+    // With complete rules the live preview rasterizes at its current target size —
+    // no error hint may appear.
+    let out = gui.frame();
+    assert!(
+        find_text(&out, "preview error").is_none(),
+        "the preview renders"
+    );
+
+    // Declare one anchor (validation requires at least one): anchor mode on, then
+    // click the top-left corner cell of the grid.
+    let anchor_label = find_text(&out, "Anchor mode").expect("anchor-mode checkbox is shown");
+    let _ = gui.click_at(anchor_label.center());
+    let out = gui.frame();
+    // The toolbar's scale control is also a "+" — take the topmost one below it
+    // (the grid's top-left corner cell).
+    let corner = texts(&out)
+        .into_iter()
+        .filter(|(t, r)| t == "+" && r.min.y > 20.0)
+        .min_by(|a, b| {
+            a.1.min
+                .y
+                .total_cmp(&b.1.min.y)
+                .then_with(|| a.1.min.x.total_cmp(&b.1.min.x))
+        })
+        .map(|(_, r)| r)
+        .expect("the grid shows the box's top-left corner");
+    let _ = gui.click_at(corner.center());
+
+    // Save via the window's own Save button (the lower of the two "Save" labels).
+    let out = gui.frame();
+    let saves: Vec<Rect> = texts(&out)
+        .into_iter()
+        .filter(|(t, _)| t == "Save")
+        .map(|(_, r)| r)
+        .collect();
+    let window_save = *saves
+        .iter()
+        .max_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .expect("the window's Save button is visible");
+    let out = gui.click_at(window_save.center());
+
+    // The template is registered and — because it carries resize rules — the catalog
+    // marks it resizable with a minimum extent (S-024 AC5/AC6).
+    let info = gui
+        .app
+        .services()
+        .catalog
+        .get("myshapes/new")
+        .expect("the saved template is in the catalog");
+    assert!(info.resizable, "a rule-bearing custom shape is resizable");
+    // The 5×3 box shrinks to `++`/`||` — both axes down to 2 (the corners are fixed,
+    // the middle row is a pure edge+fill row).
+    assert_eq!(
+        info.min_size,
+        diagram_model::geometry::CellSize::new(2, 2).expect("valid"),
+        "the minimum extent is computed by shrink simulation"
+    );
+    assert!(
+        find_text(&out, "Template editor").is_none(),
+        "the window closed after saving"
+    );
+
+    // AC6 end: the saved template is immediately placeable from the sidebar, and a
+    // placed instance resizes by re-rasterization (AC5) — not a fixed-size stamp.
+    let out = gui.frame();
+    let label = find_text_exact(&out, "new").expect("sidebar lists the new template");
+    let _ = gui.click_at(label.center());
+    let min = gui.canvas_min();
+    let _ = gui.click_at(gui.cell_center(min, 2, 2)); // place at (2, 2)
+    assert_eq!(gui.object_count(), 1);
+
+    // Natural size on the canvas: the pipeline trims to the content box, so a lone
+    // 5×3 box renders exactly its three art rows.
+    let (text, w, h) = gui.app.canvas_frame().expect("renders");
+    assert_eq!((w, h), (5, 3));
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec!["+---+", "|   |", "+---+"],
+        "natural-size stamp at first placement"
+    );
+
+    // Select it and drag the resize handle (inner bottom-right cell) out by 2×1.
+    let (x, y, w0, h0) = gui.first_box();
+    let _ = gui.click_at(gui.cell_center(min, x + w0 / 2, y + h0 / 2));
+    let from = gui.cell_center(min, x + w0 - 1, y + h0 - 1);
+    let (cw, ch) = gui.cell_metrics();
+    let _ = gui.drag(from, from + Vec2::new(2.0 * cw, 1.0 * ch));
+
+    let (_, _, w1, h1) = gui.first_box();
+    assert_eq!((w1, h1), (7, 4), "the resize gesture grew the instance");
+    // The canvas now shows exactly the re-rasterized 7×4 box — a fixed-size stamp
+    // would still render the original 5×3 art.
+    let (text, w, h) = gui.app.canvas_frame().expect("renders");
+    assert_eq!((w, h), (7, 4));
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec!["+-----+", "|     |", "|     |", "+-----+"],
+        "the canvas re-rasterizes at the instance size"
     );
 }
 
