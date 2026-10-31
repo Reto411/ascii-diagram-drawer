@@ -2,9 +2,9 @@
 title: B-003 - selection-outline-ignores-diagram-scale
 description: at diagram scale > 1 the selection/move outline of a selected object keeps its ×1 geometry while the rendered content expands into N×N blocks — the outline no longer encloses the object, and clicks on the scaled part outside the unscaled extent do not hit it
 scope: gui-app
-status: reproduced
+status: fixed
 severity: major
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # B-003: Selection outline ignores diagram scale
@@ -79,4 +79,12 @@ The outline's pixel rect is **identical before and after scaling** while the con
 
 > Filled when the bug closes: what fixed it (story S-NNN / commit hash), or why it won't be fixed. Empty while open.
 
--
+**Fixed 2026-10-31.** Root cause: the GUI's canvas mapping (`Viewport`, `gui-app/src/canvas.rs`) and the canvas text-draw both ignored the FR8 scale factor — the rendered text was anchored at the *unscaled* content origin while each glyph expanded into an N×N block growing right/down, so at ×N the scene occupied `[ox, ox+W·N)` instead of `[ox·N, ox·N+W·N)`. The selection outline (`cell_block`), anchor dots, resize-handle marker, and pointer→cell hit-testing all used the same ×1 mapping, hence the frozen outline and the clicks that missed the right half of scaled objects.
+
+Fix (bounded context: gui-app only — no pipeline/model change):
+
+1. `Viewport` is now scale-aware (new `scale` field, ≥ 1): `cell_origin`/`center_of`/`cell_block` map a model cell to its rendered N×N block at `(col·N, row·N)`, and `screen_to_model_cell` floor-divides by the scaled cell size — any sub-cell of a rendered block hit-tests back to its model cell.
+2. The canvas text draw anchors the expanded grid's top-left at the content origin's *scaled* position `(ox·N, oy·N)` and advances one sub-row per expanded row — rendered cells coincide with model cells at every scale (WYSIWYG). At ×1 the mapping is the byte-identical identity.
+3. The selection outline, anchor dots, resize-handle marker, connect line, placement ghost and inline-editor rect all route through `Viewport`, so they follow the scaled layout automatically.
+
+Pinned by: two new `Viewport` unit tests (block mapping + sub-cell hit-test round-trip; ×1 identity) and the tier-0b regression test `selection_outline_and_hit_test_follow_the_scaled_extent`, which replays the report (text `hello world` at (5,3), ×2): the outline covers exactly the scaled extent, the rendered text starts where the outline starts, and a click in the right half of the scaled text selects it.

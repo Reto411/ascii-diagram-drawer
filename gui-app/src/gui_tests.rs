@@ -633,6 +633,94 @@ fn selection_outline_covers_exactly_the_selected_cells() {
     assert!(close(sel.max.y, expected.max.y, 2.0), "outline bottom");
 }
 
+/// Regression (B-003): at scale ×N the selection outline, the rendered text and
+/// hit-testing must all agree on the FR8 layout — a model cell renders as an N×N
+/// block starting at (col·N, row·N), so the outline covers exactly the drawn extent
+/// and clicking anywhere inside it selects the object.
+#[test]
+fn selection_outline_and_hit_test_follow_the_scaled_extent() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    place_text_object(&mut gui, min); // text at (5,3), inline editor open
+    // The draft starts as the placeholder content "text": click its right edge to put
+    // the cursor at the end, clear it, then type the real content.
+    let out = gui.frame();
+    let draft = find_text_exact(&out, "text").expect("the draft shows its default content");
+    let _ = gui.click_at(Pos2::new(draft.max.x + 3.0, draft.center().y));
+    for _ in 0..4 {
+        let _ = gui.key(Key::Backspace);
+    }
+    let _ = gui.type_text("hello world"); // 11 cells wide
+    let _ = gui.key(Key::Enter); // commit → extent (5,3) 11×1
+    assert_eq!(text_content(&gui).as_deref(), Some("hello world"));
+
+    // Select by clicking the body.
+    let _ = gui.click_at(gui.cell_center(min, 10, 3));
+    assert!(gui.app.selection().is_some(), "body click selects the text");
+
+    // Scale ×2 via the top bar (a toolbar click keeps the selection).
+    let out = gui.click_topbar_button("+");
+
+    let (cw, ch) = gui.cell_metrics();
+    // The scaled block of model cell (5,3): starts at screen cells (10, 6), spans 22×2.
+    let tl = Pos2::new(min.x + MARGIN + 10.0 * cw, min.y + MARGIN + 6.0 * ch);
+    let expected = Rect::from_min_max(tl, Pos2::new(tl.x + 22.0 * cw, tl.y + 2.0 * ch));
+
+    // (a) The selection outline covers exactly the scaled extent…
+    let sel = stroked_rects(&out)
+        .into_iter()
+        .find(|(_, c)| *c == SELECTION)
+        .map(|(r, _)| r);
+    let sel = sel.expect("selection outline is drawn");
+    assert!(
+        close(sel.min.x, expected.min.x, 2.0),
+        "outline left: {sel:?} vs {expected:?}"
+    );
+    assert!(close(sel.min.y, expected.min.y, 2.0), "outline top");
+    assert!(close(sel.max.x, expected.max.x, 2.0), "outline right");
+    assert!(close(sel.max.y, expected.max.y, 2.0), "outline bottom");
+
+    // (b) …and the rendered text starts where the outline starts.
+    let galley = find_text_exact(&out, "h e l l o   w o r l d").expect("scaled text is drawn");
+    assert!(
+        close(galley.min.x, expected.min.x, 2.0),
+        "text left: {galley:?} vs {expected:?}"
+    );
+    assert!(close(galley.min.y, expected.min.y, 2.0), "text top");
+
+    // (c) A click in the right half of the scaled text selects it — deselect first so
+    // the assertion is meaningful. Model col 13 → block center at screen cell 27/7.
+    let _ = gui.click_at(Pos2::new(
+        min.x + MARGIN + 41.0 * cw,
+        min.y + MARGIN + 17.0 * ch,
+    ));
+    assert!(gui.app.selection().is_none(), "empty-cell click deselects");
+    let right_half = Pos2::new(min.x + MARGIN + 27.0 * cw, min.y + MARGIN + 7.0 * ch);
+    let _ = gui.click_at(right_half);
+    assert!(
+        gui.app.selection().is_some(),
+        "clicking the scaled text selects it"
+    );
+
+    // (d) The graph paper follows the rendered block size: at ×2 a line sits on every
+    // second screen cell — on the block boundary, never inside a rendered block.
+    let has_v_line = |x: f32| {
+        line_points(&out).iter().any(|(a, b)| {
+            (a.x - b.x).abs() < 0.5
+                && (a.y - b.y).abs() > 100.0 // full-height canvas grid lines only
+                && (a.x - x).abs() < 1.0
+        })
+    };
+    assert!(
+        has_v_line(min.x + MARGIN + 2.0 * cw),
+        "grid line on the block boundary"
+    );
+    assert!(
+        !has_v_line(min.x + MARGIN + 1.0 * cw),
+        "no grid line inside a rendered block"
+    );
+}
+
 #[test]
 fn resize_handle_marker_sits_on_the_inner_bottom_right_cell() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));

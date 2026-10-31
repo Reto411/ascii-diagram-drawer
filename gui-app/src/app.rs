@@ -314,6 +314,13 @@ impl DrawingApp {
         self.editor.editing.is_some()
     }
 
+    /// The currently selected object, if any (test support).
+    #[cfg(test)]
+    #[must_use]
+    pub fn selection(&self) -> Option<diagram_model::objects::ObjectId> {
+        self.editor.selection.clone()
+    }
+
     /// Submits the inline path prompt: opens or saves-as depending on its kind.
     pub fn submit_path_prompt(&mut self, path_str: &str) {
         let Some(prompt) = self.path_prompt.take() else {
@@ -590,7 +597,12 @@ impl DrawingApp {
         // The viewport maps MODEL space to canvas-RELATIVE pixels; the trimmed grid
         // text starts at the content origin within it, so rendered cells and model
         // cells coincide (the same mapping hit-testing uses).
-        let vp = Viewport::new(MARGIN_PX, cell_w, cell_h);
+        // FR8 scale-aware: the resolved grid is trimmed to the content's occupied
+        // extent (C3), so its top-left sits at the diagram's content origin in model
+        // space. At scale N the expanded grid's blocks start at (ox·N, oy·N) — anchor
+        // them there and advance one sub-row per line, so rendered cells coincide with
+        // model cells (the same mapping hit-testing and overlays use).
+        let vp = Viewport::new(MARGIN_PX, cell_w, cell_h, self.diagram.scale());
         let (origin_x, origin_y) = self.content_origin();
 
         let rect = ui.max_rect();
@@ -607,23 +619,26 @@ impl DrawingApp {
 
         // Subtle full-canvas grid aligned to cell boundaries (graph paper): empty
         // space reads as intentional placement surface instead of a dead void, and
-        // content always sits on the same grid the user sees. Only lines that
-        // intersect the canvas rect are emitted (no off-canvas geometry in output),
-        // including margin-region columns/rows before cell 0 — visual only; hit-
-        // testing still starts at cell 0.
-        let first_col = ((-MARGIN_PX) / cell_w).ceil() as i64;
-        let last_col = ((rect.width() - MARGIN_PX) / cell_w).floor() as i64;
+        // content always sits on the same grid the user sees. Lines sit on the edges
+        // of the RENDERED cells — at FR8 scale N that is every Nth screen cell — so
+        // the paper matches the block size the content actually occupies. Only lines
+        // that intersect the canvas rect are emitted (no off-canvas geometry in
+        // output), including margin-region columns/rows before cell 0; visual only,
+        // hit-testing still starts at cell 0.
+        let s = self.diagram.scale() as f32;
+        let first_col = ((-MARGIN_PX) / (s * cell_w)).ceil() as i64;
+        let last_col = ((rect.width() - MARGIN_PX) / (s * cell_w)).floor() as i64;
         for col in first_col..=last_col {
-            let x = MARGIN_PX + col as f32 * cell_w;
+            let x = MARGIN_PX + col as f32 * s * cell_w;
             painter.line_segment(
                 [off(Pos2::new(x, 0.0)), off(Pos2::new(x, rect.height()))],
                 egui::epaint::Stroke::new(1.0, GRID_LINE_COLOR),
             );
         }
-        let first_row = ((-MARGIN_PX) / cell_h).ceil() as i64;
-        let last_row = ((rect.height() - MARGIN_PX) / cell_h).floor() as i64;
+        let first_row = ((-MARGIN_PX) / (s * cell_h)).ceil() as i64;
+        let last_row = ((rect.height() - MARGIN_PX) / (s * cell_h)).floor() as i64;
         for row in first_row..=last_row {
-            let y = MARGIN_PX + row as f32 * cell_h;
+            let y = MARGIN_PX + row as f32 * s * cell_h;
             painter.line_segment(
                 [off(Pos2::new(0.0, y)), off(Pos2::new(rect.width(), y))],
                 egui::epaint::Stroke::new(1.0, GRID_LINE_COLOR),
@@ -633,14 +648,14 @@ impl DrawingApp {
         // The exact text bytes of the resolved grid — one line per row (AC2), offset by
         // the content origin in BOTH axes: the trimmed text starts at the content origin,
         // so rendered cells coincide with model cells (the same mapping hit-testing uses).
+        let (x0, y0) = vp.cell_origin(origin_x, origin_y);
         for (row, line) in text.lines().enumerate() {
             if line.is_empty() {
                 continue;
             }
-            let pos = off(Pos2::new(
-                vp.cell_origin(origin_x, 0).0,
-                vp.cell_origin(0, origin_y + row as u32).1,
-            ));
+            // Row `row` of the expanded grid is sub-row `row` below the content
+            // block's top edge — one screen row per expanded row.
+            let pos = off(Pos2::new(x0, y0 + row as f32 * cell_h));
             painter.text(pos, Align2::LEFT_TOP, line, font_id.clone(), TEXT_COLOR);
         }
 

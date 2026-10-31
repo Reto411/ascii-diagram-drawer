@@ -42,10 +42,10 @@ pub fn map_proportional(template_coord: u32, template_extent: u32, instance_exte
 
 /// The model cell of a named anchor on a placed shape, as the catalog serves it.
 ///
-/// Mirrors C9: `Rect` shapes map proportionally onto the instance extent; fixed-size
-/// (`Pattern`) shapes have instance extent == template extent, where the proportional
-/// mapping is the identity — i.e. exactly the pipeline's plain offset. One rule covers
-/// both (ADR 007 v3: only built-ins resize).
+/// Mirrors C9 / ADR 013: every resizable geometry (`Rect`, `Ellipse`) maps its
+/// template anchors proportionally onto the instance extent; at natural size the
+/// mapping is the identity — i.e. exactly the pipeline's plain offset. One rule
+/// covers all of them.
 #[must_use]
 pub fn anchor_cell(
     shape: &ShapeInstance,
@@ -233,58 +233,68 @@ pub struct Viewport {
     pub cell_w: f32,
     /// Pixels per grid row (the font's line height at the canvas font size).
     pub cell_h: f32,
+    /// FR8 expansion factor — every model cell renders as a `scale × scale` block of
+    /// screen cells, so all mappings work in the scaled layout the text is drawn in.
+    pub scale: u32,
 }
 
 impl Viewport {
     /// A viewport with a uniform margin around the grid and the given pixel size per
-    /// cell axis.
+    /// cell axis. `scale < 1` is treated as 1 (the model guarantees ≥ 1).
     #[must_use]
-    pub fn new(margin_px: f32, cell_w: f32, cell_h: f32) -> Self {
+    pub fn new(margin_px: f32, cell_w: f32, cell_h: f32, scale: u32) -> Self {
         Self {
             origin_x: margin_px,
             origin_y: margin_px,
             cell_w,
             cell_h,
+            scale: scale.max(1),
         }
     }
 
-    /// The pixel center of the cell at `(col, row)` — where anchor dots and the
-    /// resize-handle marker are drawn.
+    /// The pixel center of the rendered block of the model cell at `(col, row)` —
+    /// where anchor dots and the resize-handle marker are drawn.
     #[must_use]
     pub fn center_of(&self, col: u32, row: u32) -> (f32, f32) {
         let (x, y) = self.cell_origin(col, row);
-        (x + self.cell_w / 2.0, y + self.cell_h / 2.0)
+        let s = self.scale as f32;
+        (x + s * self.cell_w / 2.0, y + s * self.cell_h / 2.0)
     }
 
-    /// The top-left pixel of the cell at `(col, row)`.
+    /// The top-left pixel of the rendered block of the model cell at `(col, row)`.
     #[must_use]
     pub fn cell_origin(&self, col: u32, row: u32) -> (f32, f32) {
+        let s = self.scale as f32;
         (
-            self.origin_x + col as f32 * self.cell_w,
-            self.origin_y + row as f32 * self.cell_h,
+            self.origin_x + col as f32 * s * self.cell_w,
+            self.origin_y + row as f32 * s * self.cell_h,
         )
     }
 
-    /// The pixel rectangle `(x, y, w, h)` covering a `width`×`height` cell block starting at `(col, row)`.
+    /// The pixel rectangle `(x, y, w, h)` covering the rendered blocks of a
+    /// `width`×`height` model cell area starting at `(col, row)` (FR8-scaled).
     #[must_use]
     pub fn cell_block(&self, col: u32, row: u32, width: u32, height: u32) -> (f32, f32, f32, f32) {
         let (x, y) = self.cell_origin(col, row);
+        let s = self.scale as f32;
         (
             x,
             y,
-            width as f32 * self.cell_w,
-            height as f32 * self.cell_h,
+            width as f32 * s * self.cell_w,
+            height as f32 * s * self.cell_h,
         )
     }
 
     /// Hit-test: the model-space grid cell under a canvas-relative pixel position, or
-    /// `None` if the position is before the origin (the margin region). Model space is
+    /// `None` if the position is before the origin (the margin region). Any sub-cell of
+    /// a rendered `scale × scale` block maps back to its model cell. Model space is
     /// unbounded — any non-negative cell is a valid placement target, so there is no
     /// extent argument.
     #[must_use]
     pub fn screen_to_model_cell(&self, x: f32, y: f32) -> Option<(u32, u32)> {
-        let col = ((x - self.origin_x) / self.cell_w).floor();
-        let row = ((y - self.origin_y) / self.cell_h).floor();
+        let s = self.scale as f32;
+        let col = ((x - self.origin_x) / (s * self.cell_w)).floor();
+        let row = ((y - self.origin_y) / (s * self.cell_h)).floor();
         if col < 0.0 || row < 0.0 {
             return None;
         }
@@ -340,14 +350,54 @@ mod tests {
     }
 
     fn vp() -> Viewport {
-        // 8 px margin, 16 px cells.
-        Viewport::new(8.0, 16.0, 16.0)
+        // 8 px margin, 16 px cells, scale ×1.
+        Viewport::new(8.0, 16.0, 16.0, 1)
     }
 
     /// A rectangular viewport (8 px margin, 8×16 px cells) — the real canvas shape:
     /// monospace glyphs are taller than they are wide.
     fn vp_rect() -> Viewport {
-        Viewport::new(8.0, 8.0, 16.0)
+        Viewport::new(8.0, 8.0, 16.0, 1)
+    }
+
+    #[test]
+    fn viewport_scale_maps_blocks_and_hit_tests_roundtrip() {
+        let v = Viewport::new(8.0, 16.0, 16.0, 2);
+        // Model cell (3, 2) renders as a 2×2 block starting at screen cells (6, 4).
+        assert_eq!(v.cell_origin(3, 2), (8.0 + 6.0 * 16.0, 8.0 + 4.0 * 16.0));
+        // Anchor dots / the handle marker sit at the block's center.
+        assert_eq!(v.center_of(3, 2), (8.0 + 7.0 * 16.0, 8.0 + 5.0 * 16.0));
+        // A 4×2 extent at (1, 1) covers model cells [1..5) × [1..3) → screen
+        // blocks [2..10) × [2..6).
+        let (x, y, w, h) = v.cell_block(1, 1, 4, 2);
+        assert_eq!(
+            (x, y, w, h),
+            (
+                8.0 + 2.0 * 16.0,
+                8.0 + 2.0 * 16.0,
+                4.0 * 2.0 * 16.0,
+                2.0 * 2.0 * 16.0
+            )
+        );
+        // Every sub-cell of a rendered block hit-tests back to its model cell.
+        for dx in 0..2u32 {
+            for dy in 0..2u32 {
+                let px = v.cell_origin(3, 2).0 + (dx as f32 + 0.5) * 16.0;
+                let py = v.cell_origin(3, 2).1 + (dy as f32 + 0.5) * 16.0;
+                assert_eq!(v.screen_to_model_cell(px, py), Some((3, 2)));
+            }
+        }
+        // The margin is still outside the model grid.
+        assert_eq!(v.screen_to_model_cell(4.0, 4.0), None);
+    }
+
+    #[test]
+    fn viewport_scale_one_is_the_identity_mapping() {
+        let scaled = Viewport::new(8.0, 16.0, 16.0, 1);
+        let plain = vp();
+        assert_eq!(scaled.cell_origin(4, 2), plain.cell_origin(4, 2));
+        assert_eq!(scaled.center_of(4, 2), plain.center_of(4, 2));
+        assert_eq!(scaled.cell_block(1, 1, 5, 3), plain.cell_block(1, 1, 5, 3));
     }
 
     #[test]
