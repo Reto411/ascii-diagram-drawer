@@ -12,6 +12,7 @@
 
 mod app;
 mod canvas;
+mod config;
 mod editor;
 mod exportio;
 mod fileio;
@@ -39,11 +40,14 @@ fn main() -> eframe::Result<()> {
             viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 768.0]),
             ..Default::default()
         },
-        Box::new(move |cc| {
-            // Deterministic rendering for golden-screenshot capture (gui-testing
-            // skill): fixed dark theme. egui 0.37 has no animation toggle — the UI
-            // is static (no animated widgets), so settled frames are stable.
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        Box::new(|_cc| {
+            // FR13 (CR-005): the theme comes from the persisted app config (default
+            // native — follows the OS/browser appearance, dark where unknown),
+            // applied by the app on its first frame — no flash of unstyled frames.
+            // The headless test harness feeds no system appearance, so
+            // golden-screenshot capture (gui-testing skill) still renders
+            // deterministically in dark; egui 0.37 has no animation toggle and the
+            // UI is static, so settled frames are stable.
             Ok(Box::new(app::create_app(
                 services.clone(),
                 args.fixture.as_deref().map(Path::new),

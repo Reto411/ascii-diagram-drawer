@@ -15,6 +15,7 @@ use diagram_model::{Diagram, objects::Object};
 use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense, Vec2};
 
 use crate::canvas::{HitTarget, Viewport, hit_target};
+use crate::config::{AppConfig, Theme};
 use crate::editor::{EditOutcome, EditorState, Placing, PointerEvent};
 use crate::exportio::{self, PngExport};
 use crate::template_editor::TemplateEditorSession;
@@ -101,19 +102,30 @@ pub struct DrawingApp {
     png_export: Option<PngExport>,
     /// Sink for the in-flight PNG job — where the bytes are written on completion.
     pending_png_path: Option<PathBuf>,
+    /// The user options (FR13 / CR-005) — theme and future settings.
+    config: AppConfig,
+    /// Where option changes are persisted; `None` = in-memory only (no platform
+    /// config directory, e.g. wasm).
+    config_path: Option<PathBuf>,
+    /// The theme preference currently active in the egui context — applied once
+    /// per change (incl. at startup, when `None`).
+    applied_theme: Option<Theme>,
 }
 
 /// Builds the app from services, an optional startup fixture (the visual test tiers
 /// pass a `.ad` path as the first CLI argument) and the collection-load warnings from
 /// startup (S-016 AC2). Load failures are reported, not fatal — the user can still
-/// open a file later.
+/// open a file later. User options are loaded from the platform config directory
+/// (FR13 / CR-005); a missing or corrupt file simply yields the defaults.
 #[must_use]
 pub fn create_app(
     services: Services,
     fixture: Option<&Path>,
     collection_warnings: Vec<String>,
 ) -> DrawingApp {
-    let mut app = DrawingApp::new(services);
+    let config_path = crate::config::default_config_path();
+    let config = AppConfig::load(config_path.as_deref());
+    let mut app = DrawingApp::with_config(services, config, config_path);
     app.collection_warnings = collection_warnings;
     if let Some(path) = fixture {
         let outcome = app.open(path);
@@ -129,9 +141,24 @@ pub fn create_app(
 }
 
 impl DrawingApp {
-    /// Creates an app with an empty diagram.
+    /// Creates an app with an empty diagram and the default options (no persistence —
+    /// use [`Self::with_config`] to load/store a config file). Test-only convenience
+    /// wrapper; the real entry point is [`Self::create_app`].
+    #[cfg(test)]
     #[must_use]
     pub fn new(services: Services) -> Self {
+        Self::with_config(services, AppConfig::default(), None)
+    }
+
+    /// Creates an app with explicit options and their persistence location (FR13 /
+    /// CR-005). `config_path` is where Options-menu changes are written; `None`
+    /// keeps them in memory only. The selected theme is applied on the first frame.
+    #[must_use]
+    pub fn with_config(
+        services: Services,
+        config: AppConfig,
+        config_path: Option<PathBuf>,
+    ) -> Self {
         Self {
             services,
             diagram: Diagram::new(),
@@ -148,6 +175,9 @@ impl DrawingApp {
             template_editor: None,
             png_export: None,
             pending_png_path: None,
+            config,
+            config_path,
+            applied_theme: None,
         }
     }
 
@@ -178,6 +208,12 @@ impl DrawingApp {
     #[must_use]
     pub fn pan(&self) -> Vec2 {
         self.pan
+    }
+
+    /// The user options (FR13 / CR-005).
+    #[must_use]
+    pub fn config(&self) -> &AppConfig {
+        &self.config
     }
 
     /// AC1 — open a `.ad` file through the store seam. On success the model is
@@ -429,6 +465,25 @@ impl DrawingApp {
             // Clamped to ≥ 1 above, so the model invariant cannot fire.
             self.diagram.set_scale(next).expect("scale clamped to ≥ 1");
             self.status = format!("Scale ×{next}");
+        }
+    }
+
+    /// FR13 (CR-005) — change the UI theme from the Options menu: applies live to
+    /// the context and persists to the app config file. Persistence failures are
+    /// reported in the status bar, never fatal.
+    pub fn set_theme(&mut self, ctx: &egui::Context, theme: Theme) {
+        if theme == self.config.theme {
+            return;
+        }
+        self.config.theme = theme;
+        ctx.set_theme(theme.preference());
+        self.applied_theme = Some(theme);
+        match &self.config_path {
+            Some(path) => match self.config.save(path) {
+                Ok(()) => self.status = format!("Theme: {} (saved)", theme.short()),
+                Err(e) => self.status = format!("Could not save options: {e}"),
+            },
+            None => self.status = format!("Theme: {}", theme.short()),
         }
     }
 
@@ -1250,6 +1305,17 @@ impl DrawingApp {
         // completion the exact bytes are written and the "exporting" state clears.
         self.tick_png_export();
 
+        // FR13 (CR-005) — apply the configured theme exactly once per change: at
+        // startup (`applied_theme` is None) this runs before the first paint, so
+        // there is no flash of unstyled frames; later changes are applied
+        // immediately by [`Self::set_theme`] and this check stays a no-op. egui 0.37
+        // resolves `System` against the OS/browser appearance eframe feeds in —
+        // dark where unknown (CR-005's fallback).
+        if self.applied_theme != Some(self.config().theme) {
+            ui.ctx().set_theme(self.config().theme.preference());
+            self.applied_theme = Some(self.config().theme);
+        }
+
         // Toolbar: file actions on the left, scale control on the right; the last-
         // action message lives in the bottom status bar. Ctrl+S saves without touching
         // the mouse (read before the panel — `ui.ctx()` is a borrow that must not live
@@ -1303,6 +1369,19 @@ impl DrawingApp {
                 {
                     self.begin_path_prompt(PathPrompt::ExportPng);
                 }
+                // FR13 (CR-005) — Options menu: the home for user preferences; the
+                // theme is its first option. Selections apply live and persist to
+                // the app config file.
+                ui.menu_button(RichText::new("Options ▾"), |ui| {
+                    for theme in [Theme::Light, Theme::Dark, Theme::Native] {
+                        if ui
+                            .radio(self.config.theme == theme, theme.label())
+                            .clicked()
+                        {
+                            self.set_theme(ui.ctx(), theme);
+                        }
+                    }
+                });
                 // AC3/FR8 — whole-diagram scale control, top-right: the canvas and
                 // every export follow it; the model enforces ≥ 1. Screen order is
                 // “− Scale ×N +” (the familiar zoom pattern): in a right-to-left scope

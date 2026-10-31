@@ -16,6 +16,7 @@
 //! * anchor dots / connect line drawn at wrong offsets.
 
 use crate::app::{DrawingApp, PathPrompt};
+use crate::config::Theme;
 use core_services::Services;
 use diagram_model::objects::Object;
 // The app depends on eframe only; egui is reached through its re-export.
@@ -1985,5 +1986,86 @@ fn opening_a_document_resets_the_pan() {
         gui.app.pan(),
         Vec2::ZERO,
         "opening a document resets the pan"
+    );
+}
+
+// ─────────────── options menu + theme persistence (FR13 / CR-005, S-023) ───────────────
+
+/// AC1/AC3 — the Options menu lists all three themes; selecting one applies it live
+/// and persists it to the app config file.
+#[test]
+fn options_menu_selects_light_theme_and_persists_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.json");
+    let mut gui = Gui::new(DrawingApp::with_config(
+        Services::native(),
+        crate::config::AppConfig::default(),
+        Some(config_path.clone()),
+    ));
+
+    // Open the Options menu (top-bar button).
+    let _ = gui.click_topbar_button("Options ▾");
+
+    // The open menu lists all three theme choices; select Light.
+    let out = gui.frame();
+    for label in ["Light", "Dark", "Native (system)"] {
+        assert!(
+            find_text_exact(&out, label).is_some(),
+            "menu lists {label:?}"
+        );
+    }
+    let light = find_text_exact(&out, "Light").expect("the Light choice");
+    let _ = gui.click_at(light.center());
+
+    // The selection applies live (the context switches to light) and is recorded in
+    // the app state…
+    assert_eq!(
+        gui.app.config().theme,
+        Theme::Light,
+        "state holds the choice"
+    );
+    assert_eq!(gui.ctx.theme(), egui::Theme::Light, "light theme is active");
+    // …and is persisted to the config file.
+    let saved = std::fs::read_to_string(&config_path).expect("the config file was written");
+    assert!(
+        saved.contains(r#""theme": "light""#),
+        "file holds the theme: {saved}"
+    );
+    assert_eq!(gui.app.status, "Theme: light (saved)");
+}
+
+/// AC2 — a theme stored in the config file is applied at startup, before any click.
+#[test]
+fn the_stored_theme_is_applied_at_startup() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.json");
+    std::fs::write(&config_path, r#"{"theme": "light"}"#).unwrap();
+
+    let mut gui = Gui::new(DrawingApp::with_config(
+        Services::native(),
+        crate::config::AppConfig::load(Some(&config_path)),
+        Some(config_path),
+    ));
+    assert_eq!(gui.app.config().theme, Theme::Light, "the file was read");
+    let _ = gui.frame(); // first frame
+    assert_eq!(
+        gui.ctx.theme(),
+        egui::Theme::Light,
+        "stored light theme is active before any click"
+    );
+}
+
+/// AC1 — the default theme is native; in the headless harness no system appearance
+/// is fed through `RawInput::system_theme`, so it resolves to egui's dark fallback
+/// (CR-005's allowed fallback).
+#[test]
+fn the_default_native_theme_renders_dark() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    assert_eq!(gui.app.config().theme, Theme::Native);
+    let _ = gui.frame();
+    assert_eq!(
+        gui.ctx.theme(),
+        egui::Theme::Dark,
+        "native falls back to dark without a system theme"
     );
 }
