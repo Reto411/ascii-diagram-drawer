@@ -1621,3 +1621,102 @@ fn dbg_layout_dump() {
         );
     }
 }
+
+// ─────────────────────── B-002: scale control ───────────────────────
+
+/// All text galleys drawn inside the canvas area — for a non-empty diagram these
+/// are exactly the diagram's rows (grid lines are line segments; selection/anchor
+/// overlays are strokes and fills, never text). The canvas bounds come from the
+/// outermost grid lines, which span the whole canvas rect.
+fn canvas_lines(out: &egui::FullOutput) -> Vec<String> {
+    let (mut min_x, mut max_x) = (f32::INFINITY, f32::NEG_INFINITY);
+    let (mut min_y, mut max_y) = (f32::INFINITY, f32::NEG_INFINITY);
+    for (a, b) in line_points(out) {
+        if (a.x - b.x).abs() < 0.5 && a.x > SIDEBAR {
+            min_x = min_x.min(a.x); // vertical grid lines span the canvas height
+            max_x = max_x.max(a.x);
+        }
+        if (a.y - b.y).abs() < 0.5 && a.x > SIDEBAR && b.x > SIDEBAR {
+            min_y = min_y.min(a.y); // horizontal grid lines span the canvas width
+            max_y = max_y.max(a.y);
+        }
+    }
+    assert!(
+        min_x.is_finite() && max_x.is_finite() && min_y.is_finite() && max_y.is_finite(),
+        "canvas draws grid lines"
+    );
+    texts(out)
+        .into_iter()
+        .filter(|(_, r)| {
+            r.min.x >= min_x - 1.0
+                && r.min.y >= min_y - 1.0
+                && r.max.x <= max_x + 1.0
+                && r.min.y < max_y - 1.0
+        })
+        .map(|(t, _)| t)
+        .collect()
+}
+
+/// FR8 expansion at text level: each glyph becomes an `s × s` block; trailing
+/// whitespace is re-trimmed per line (the `to_text` rule).
+fn expand_lines(lines: &[String], s: u32) -> Vec<String> {
+    let mut out = Vec::with_capacity(lines.len() * s as usize);
+    for line in lines {
+        for _ in 0..s {
+            let row: String = line
+                .chars()
+                .flat_map(|c| std::iter::repeat_n(c, s as usize))
+                .collect();
+            out.push(row.trim_end().to_owned());
+        }
+    }
+    out
+}
+
+/// B-002: pressing the toolbar "+" scale control must render each shape exactly
+/// once — scaled (FR8), with no unscaled remnant on the canvas — and every press
+/// must register. Driven through the real UI: place an ellipse, then three "+"
+/// clicks; after each click the drawn rows must equal the FR8 expansion of the
+/// ×1 baseline.
+#[test]
+fn b002_scale_presses_render_exactly_one_expanded_copy() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min(); // measured while empty — the documented contract
+    // Place one ellipse via the UI: sidebar label, then a canvas cell.
+    let out = gui.frame();
+    let label = find_text_exact(&out, "ellipse").expect("sidebar lists the ellipse template");
+    let _ = gui.click_at(label.center());
+    let _ = gui.click_at(gui.cell_center(min, 4, 2));
+    assert_eq!(
+        gui.object_count(),
+        1,
+        "clicking the canvas placed one ellipse"
+    );
+
+    // Baseline: the exact rows drawn at scale 1.
+    let baseline = canvas_lines(&gui.frame());
+    assert_eq!(baseline.len(), 5, "the ellipse template is 5 rows tall");
+
+    // Three "+" presses (B-002 steps 2–3): each must register and the canvas must
+    // show exactly one scaled copy.
+    for (press, label) in ["Scale ×2", "Scale ×3", "Scale ×4"].into_iter().enumerate() {
+        let out = gui.click_topbar_button("+");
+        assert!(
+            find_text_exact(&out, label).is_some(),
+            "toolbar shows {label} after press {}; texts: {:?}",
+            press + 1,
+            texts(&out)
+        );
+        let s = (label
+            .chars()
+            .next_back()
+            .expect("scale label ends in a digit") as u32)
+            - ('0' as u32);
+        let lines = canvas_lines(&gui.frame());
+        assert_eq!(
+            lines,
+            expand_lines(&baseline, s),
+            "canvas at {label} is exactly the FR8 expansion of the ×1 rows"
+        );
+    }
+}
