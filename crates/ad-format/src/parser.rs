@@ -11,7 +11,7 @@ use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::invariants::ModelError;
 use diagram_model::objects::{
-    ConnectorInstance, ConnectorStyle, ObjectId, ShapeInstance, TextInstance,
+    ConnectorInstance, ConnectorStyle, ObjectId, ShapeInstance, TextInstance, TipStyle,
 };
 
 use crate::error::ParseError;
@@ -443,7 +443,8 @@ fn parse_connect(cursor: &mut Cursor, line_no: usize) -> Result<ConnectorInstanc
     )?;
     cursor.expect_keyword("to", line_no)?;
     let to = parse_anchor_ref(cursor.expect_word("the 'to' anchor-ref", line_no)?, line_no)?;
-    // Optional clauses in fixed order: `[dashed] [via <x> <y>, …]` (CR-007).
+    // Optional clauses in fixed order (CR-007/CR-008):
+    // `[dashed] [tip <src> <tgt>] [via <x> <y>, …]`.
     let style = match cursor.peek() {
         Some(dashed) if dashed.as_str() == "dashed" => {
             cursor.next();
@@ -451,27 +452,27 @@ fn parse_connect(cursor: &mut Cursor, line_no: usize) -> Result<ConnectorInstanc
         }
         _ => ConnectorStyle::Solid,
     };
+    let tips = match cursor.peek() {
+        Some(tip) if tip.as_str() == "tip" => {
+            cursor.next();
+            (
+                parse_tip_style(cursor, line_no)?,
+                parse_tip_style(cursor, line_no)?,
+            )
+        }
+        _ => (TipStyle::Bare, TipStyle::HollowArrow), // defaults — not serialized
+    };
     let bends = match cursor.peek() {
         Some(via) if via.as_str() == "via" => {
             cursor.next();
             parse_via_list(cursor, line_no)?
-        }
-        Some(extra) if style == ConnectorStyle::Dashed => {
-            return Err(ParseError::new(
-                line_no,
-                extra.column,
-                format!(
-                    "unexpected token '{}' — only 'via …' may follow 'dashed'",
-                    extra.as_str()
-                ),
-            ));
         }
         Some(extra) => {
             return Err(ParseError::new(
                 line_no,
                 extra.column,
                 format!(
-                    "unexpected token '{}' — only 'dashed' or 'via …' may follow the endpoints",
+                    "unexpected token '{}' — only 'via …' may follow here (clause order: [dashed] [tip <src> <tgt>] [via …])",
                     extra.as_str()
                 ),
             ));
@@ -479,7 +480,9 @@ fn parse_connect(cursor: &mut Cursor, line_no: usize) -> Result<ConnectorInstanc
         None => Vec::new(),
     };
     let object_id = ObjectId::new(&id).map_err(|e| model_error(e, line_no, 1))?;
-    Ok(ConnectorInstance::new(object_id, from, to, style).with_bends(bends))
+    Ok(ConnectorInstance::new(object_id, from, to, style)
+        .with_bends(bends)
+        .with_tips(tips.0, tips.1))
 }
 
 /// Parses the optional `via <x> <y>, …` manual-bend waypoint list (CR-007 / ADR 013 v4).
@@ -508,6 +511,31 @@ fn parse_via_list(cursor: &mut Cursor, line_no: usize) -> Result<Vec<CellPos>, P
         }
     }
     Ok(bends)
+}
+
+/// One tip-style keyword of a `tip <src> <tgt>` clause (CR-008): `none`, `arrow`,
+/// `rhombus-open` or `rhombus-filled`.
+fn parse_tip_style(cursor: &mut Cursor, line_no: usize) -> Result<TipStyle, ParseError> {
+    let Some(token) = cursor.next() else {
+        return Err(ParseError::new(
+            line_no,
+            1,
+            "statement is truncated — expected a tip style (one of none, arrow, rhombus-open, rhombus-filled)",
+        ));
+    };
+    match token.as_str() {
+        "none" => Ok(TipStyle::Bare),
+        "arrow" => Ok(TipStyle::HollowArrow),
+        "rhombus-open" => Ok(TipStyle::EmptyRhombus),
+        "rhombus-filled" => Ok(TipStyle::FilledRhombus),
+        other => Err(ParseError::new(
+            line_no,
+            token.column,
+            format!(
+                "unknown tip style '{other}' — expected one of none, arrow, rhombus-open, rhombus-filled"
+            ),
+        )),
+    }
 }
 
 /// Parses `<id>.<anchor>` split at the LAST dot (ids and anchors may themselves contain dots).
@@ -1166,7 +1194,7 @@ mod tests {
         let input = "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nshape box \"b\" as s2 at 5 0 w 2 h 2\nconnect as c1 from s1.a to s2.b junk\n";
         let err = assert_error(input, 4, 33);
         assert!(
-            err.message.contains("only 'dashed'"),
+            err.message.contains("only 'via …' may follow here"),
             "message: {}",
             err.message
         );
@@ -1239,7 +1267,7 @@ mod tests {
         assert!(connector.bends.is_empty());
     }
 
-    /// A token after `dashed` that is not `via` is an error naming the clause order.
+    /// A token after the optional clauses that is not `via` is an error naming the clause order.
     #[test]
     fn token_after_dashed_must_be_via() {
         let err = assert_error(
@@ -1248,7 +1276,59 @@ mod tests {
             40,
         );
         assert!(
-            err.message.contains("'via …' may follow 'dashed'"),
+            err.message.contains("only 'via …' may follow here"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    /// A `tip <src> <tgt>` clause parses both per-end styles (CR-008).
+    #[test]
+    fn tip_clause_parses_per_end_styles() {
+        let input = "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nshape box \"b\" as s2 at 5 0 w 2 h 2\nconnect as c1 from s1.e to s2.w tip rhombus-open rhombus-filled\n";
+        let diagram = parse(input).expect("valid");
+        let Object::Connector(connector) = &diagram.objects()[2] else {
+            panic!("expected connector")
+        };
+        assert_eq!(connector.from_tip, TipStyle::EmptyRhombus);
+        assert_eq!(connector.to_tip, TipStyle::FilledRhombus);
+    }
+
+    /// Without a `tip` clause the CR-008 defaults apply: source bare, target hollow arrow.
+    #[test]
+    fn tip_defaults_when_clause_absent() {
+        let input = "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w dashed via 3 1\n";
+        let diagram = parse(input).expect("valid");
+        let Object::Connector(connector) = &diagram.objects()[1] else {
+            panic!("expected connector")
+        };
+        assert_eq!(connector.from_tip, TipStyle::Bare);
+        assert_eq!(connector.to_tip, TipStyle::HollowArrow);
+    }
+
+    /// Unknown tip keywords and truncated clauses are line/column errors (CR-008).
+    #[test]
+    fn tip_clause_errors_are_positioned() {
+        // Unknown keyword — error at the offending token.
+        let err = assert_error(
+            "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w tip triangle arrow\n",
+            3,
+            37,
+        );
+        assert!(
+            err.message.contains("unknown tip style 'triangle'"),
+            "message: {}",
+            err.message
+        );
+
+        // Truncated clause (missing the target style) — error at the statement end.
+        let err = assert_error(
+            "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w tip arrow\n",
+            3,
+            1,
+        );
+        assert!(
+            err.message.contains("tip style"),
             "message: {}",
             err.message
         );

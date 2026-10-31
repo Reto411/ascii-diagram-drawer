@@ -1,6 +1,7 @@
 //! Connector placement (ADR 013): resolve both endpoint anchors to cells, route a
 //! straight or single-corner L between them (or the declared manual-bend polyline,
-//! CR-007 / ADR 013 v4), and stamp the route with an arrowhead at the target end.
+//! CR-007 / ADR 013 v4), and stamp per-end tips — by default an arrowhead at the
+//! target end (CR-008 / ADR 013 v5: hollow arrow, empty or filled rhombus, or none).
 //!
 //! A connector stores no geometry — its endpoints are anchor *references* re-resolved on
 //! every render (FR9), so moving or resizing a shape moves its connectors for free and
@@ -14,7 +15,7 @@
 use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
-use diagram_model::objects::{ConnectorInstance, Object, ObjectId};
+use diagram_model::objects::{ConnectorInstance, Object, ObjectId, TipStyle};
 use shape_registry::{GeometryKind, ShapeRegistry, min_size};
 
 use crate::RenderError;
@@ -265,8 +266,8 @@ fn straight_line(a: CellPos, b: CellPos) -> Vec<CellPos> {
         .collect()
 }
 
-/// The arrowhead glyph pointing in the direction of travel into the target (ADR 013):
-/// solid `< > ^ v` — svgbob content, so it never changes edge resolution.
+/// The hollow-arrow glyph pointing along `toward` (ADR 013 / CR-008): solid
+/// `< > ^ v` — svgbob content, so it never changes edge resolution.
 fn arrowhead_glyph(toward: EdgeSet) -> char {
     match toward {
         EdgeSet::E => '>',
@@ -289,7 +290,6 @@ fn direction_toward(from: CellPos, to: CellPos) -> EdgeSet {
     }
 }
 
-/// Stamps one connector into the place-stage grid (called in document order from `place`).
 /// The route cells of one connector in model space — the automatic straight/L route
 /// when it declares no bends, or its declared polyline otherwise (CR-007 / ADR 013 v4:
 /// the declared polyline wins over automatic routing; side preferences do not apply).
@@ -326,6 +326,17 @@ pub fn connector_routes(
         }
     }
     Ok(routes)
+}
+
+/// The content glyph stamped for one tip style (CR-008 / ADR 013 v5): hollow arrows
+/// point along the segment, rhombi are direction-independent, bare stamps nothing.
+fn tip_glyph(style: TipStyle, toward: EdgeSet) -> Option<char> {
+    match style {
+        TipStyle::Bare => None,
+        TipStyle::HollowArrow => Some(arrowhead_glyph(toward)),
+        TipStyle::EmptyRhombus => Some('◇'),
+        TipStyle::FilledRhombus => Some('◆'),
+    }
 }
 
 pub(crate) fn place_connector(
@@ -391,11 +402,26 @@ pub(crate) fn place_connector(
         }
     }
 
-    // Arrowhead: content on the second-to-last cell, pointing at the target (ADR 013).
+    // Per-end tips (CR-008 / ADR 013 v5): content on the cells adjacent to each
+    // endpoint — the target's second-to-last cell, the source's second cell. Hollow
+    // arrows point along the segment; rhombi are direction-independent. With exactly
+    // three route cells both tips would claim the same middle cell: the target wins.
     if route.len() >= 3 {
         let base = route[route.len() - 2];
-        let glyph = arrowhead_glyph(direction_toward(base, route[route.len() - 1]));
-        grid.with_cell(base.x, base.y, |state| state.stamp_content(glyph));
+        let last = *route.last().expect("length checked above");
+        if let Some(glyph) = tip_glyph(connector.to_tip, direction_toward(base, last)) {
+            grid.with_cell(base.x, base.y, |state| state.stamp_content(glyph));
+        }
+        if route.len() > 3 {
+            let source_base = route[1];
+            if let Some(glyph) =
+                tip_glyph(connector.from_tip, direction_toward(route[0], source_base))
+            {
+                grid.with_cell(source_base.x, source_base.y, |state| {
+                    state.stamp_content(glyph)
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -411,7 +437,7 @@ mod tests {
     use super::*;
     use crate::place::place;
     use diagram_model::geometry::{CellPos as MPos, CellSize as MSize};
-    use diagram_model::objects::{ConnectorStyle, ObjectId, ShapeInstance};
+    use diagram_model::objects::{ConnectorEnd, ConnectorStyle, ObjectId, ShapeInstance, TipStyle};
     use shape_registry::{AnchorSet, Collection, GeometryKind, ShapeType, TemplateGrid};
 
     fn box_at(id: u32, x: u32, y: u32, w: u32, h: u32) -> ShapeInstance {
@@ -693,6 +719,118 @@ mod tests {
         assert_eq!(arrowhead_glyph(EdgeSet::W), '<');
         assert_eq!(arrowhead_glyph(EdgeSet::S), 'v');
         assert_eq!(arrowhead_glyph(EdgeSet::N), '^');
+    }
+
+    #[test]
+    fn tip_glyphs_cover_all_styles() {
+        assert_eq!(tip_glyph(TipStyle::Bare, EdgeSet::E), None);
+        assert_eq!(tip_glyph(TipStyle::HollowArrow, EdgeSet::E), Some('>'));
+        assert_eq!(tip_glyph(TipStyle::HollowArrow, EdgeSet::N), Some('^'));
+        // Rhombi are direction-independent content (CR-008).
+        assert_eq!(tip_glyph(TipStyle::EmptyRhombus, EdgeSet::W), Some('◇'));
+        assert_eq!(tip_glyph(TipStyle::FilledRhombus, EdgeSet::S), Some('◆'));
+    }
+
+    /// The source tip stamps the second route cell, pointing along the first segment
+    /// (CR-008 / ADR 013 v5) — content only, edges untouched.
+    #[test]
+    fn source_tip_stamps_second_cell_pointing_along_first_segment() {
+        let mut d = Diagram::new();
+        d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
+        d.place_shape(box_at(1, 14, 0, 9, 5)).unwrap();
+        let id = ObjectId::generated(2);
+        d.connect(ConnectorInstance::new(
+            id.clone(),
+            AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
+            AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
+            ConnectorStyle::Solid,
+        ))
+        .unwrap();
+        d.set_tip(&id, ConnectorEnd::Source, TipStyle::HollowArrow)
+            .expect("sets source tip");
+
+        let g = place(&d, &ShapeRegistry::builtin()).expect("known shapes");
+        // Source tip '>' on the second route cell — content over W|E edges.
+        assert_eq!(g.cell(9, 2).edges, EdgeSet::W | EdgeSet::E);
+        assert_eq!(g.cell(9, 2).content, Some('>'));
+        // The default target arrow is still there.
+        assert_eq!(g.cell(13, 2).content, Some('>'));
+    }
+
+    /// Rhombus tips stamp direction-independent content on the cells adjacent to each
+    /// endpoint (CR-008 / ADR 013 v5).
+    #[test]
+    fn rhombus_tips_stamp_the_cells_adjacent_to_each_endpoint() {
+        let mut d = Diagram::new();
+        d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
+        d.place_shape(box_at(1, 14, 0, 9, 5)).unwrap();
+        let id = ObjectId::generated(2);
+        d.connect(ConnectorInstance::new(
+            id.clone(),
+            AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
+            AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
+            ConnectorStyle::Solid,
+        ))
+        .unwrap();
+        d.set_tip(&id, ConnectorEnd::Source, TipStyle::EmptyRhombus)
+            .expect("sets source tip");
+        d.set_tip(&id, ConnectorEnd::Target, TipStyle::FilledRhombus)
+            .expect("sets target tip");
+
+        let g = place(&d, &ShapeRegistry::builtin()).expect("known shapes");
+        assert_eq!(g.cell(9, 2).content, Some('◇'));
+        assert_eq!(g.cell(13, 2).content, Some('◆'));
+    }
+
+    /// A bare target tip stamps nothing — the route keeps its plain line (CR-008).
+    #[test]
+    fn bare_target_tip_stamps_nothing() {
+        let mut d = Diagram::new();
+        d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
+        d.place_shape(box_at(1, 14, 0, 9, 5)).unwrap();
+        let id = ObjectId::generated(2);
+        d.connect(ConnectorInstance::new(
+            id.clone(),
+            AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
+            AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
+            ConnectorStyle::Solid,
+        ))
+        .unwrap();
+        d.set_tip(&id, ConnectorEnd::Target, TipStyle::Bare)
+            .expect("clears target tip");
+
+        let g = place(&d, &ShapeRegistry::builtin()).expect("known shapes");
+        assert_eq!(g.cell(13, 2).edges, EdgeSet::W | EdgeSet::E);
+        assert_eq!(g.cell(13, 2).content, None);
+    }
+
+    /// With exactly three route cells both tips would claim the same middle cell — the
+    /// target wins (CR-008 / ADR 013 v5).
+    #[test]
+    fn coincident_tip_cells_the_target_wins() {
+        let mut d = Diagram::new();
+        // Anchor cells at x=8 and x=10 -> route (8,2) (9,2) (10,2): three cells.
+        d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
+        d.place_shape(box_at(1, 10, 0, 9, 5)).unwrap();
+        let id = ObjectId::generated(2);
+        d.connect(ConnectorInstance::new(
+            id.clone(),
+            AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
+            AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
+            ConnectorStyle::Solid,
+        ))
+        .unwrap();
+        d.set_tip(&id, ConnectorEnd::Source, TipStyle::HollowArrow)
+            .expect("sets source tip");
+        d.set_tip(&id, ConnectorEnd::Target, TipStyle::FilledRhombus)
+            .expect("sets target tip");
+
+        let g = place(&d, &ShapeRegistry::builtin()).expect("known shapes");
+        assert_eq!(
+            g.cell(9, 2).content,
+            Some('◆'),
+            "target wins the shared cell"
+        );
     }
 
     #[test]

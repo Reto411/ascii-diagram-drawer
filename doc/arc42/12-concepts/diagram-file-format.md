@@ -38,7 +38,9 @@ statement    = scale-stmt / shape-stmt / text-stmt / connect-stmt / unknown-stmt
 scale-stmt   = "scale", int        ; at most once; must precede every object statement
 shape-stmt   = "shape", type-id, string, "as", id, "at", int, int, "w", int, "h", int
 text-stmt    = "text", "as", id, string, "at", int, int
-connect-stmt = "connect", "as", id, "from", anchor-ref, "to", anchor-ref, [ "dashed" ]
+connect-stmt = "connect", "as", id, "from", anchor-ref, "to", anchor-ref, [ "dashed" ], [ "tip", tip-style, tip-style ], [ "via", via-cell ( "," via-cell )* ]
+tip-style    = "none" / "arrow" / "rhombus-open" / "rhombus-filled"
+via-cell     = int, int
 anchor-ref   = id, ".", anchor     ; split at the LAST dot (ids/anchors may contain dots); both parts non-empty
 type-id      = token / collection, "/", name ; bare = built-in shape; prefixed = user template
 id, anchor, token, collection, name = single token : 1+ chars, no whitespace, no leading/trailing space
@@ -51,7 +53,7 @@ int          = "0" / digit1to9, digit* ; canonical decimal — no leading zeros;
 
 - **`shape <type-id> "<label>" as <id> at <x> <y> w <width> <height>`** — a `ShapeInstance`. `type-id` is the only reference into the Shape Catalog context (built-in or `collection/name`). Label may be empty (`""`).
 - **`text`** — a `TextInstance`: `text as <id> "<content>" at <x> <y>`. Content must be non-empty (model invariant). No size: text occupies exactly the cells its (possibly multi-line) content needs.
-- **`connect as <id> from <obj>.<anchor> to <obj>.<anchor> [dashed]`** — a `ConnectorInstance`. Style omitted = solid (the model default); `dashed` = dashed. Endpoints must reference existing *shape* objects.
+- **`connect as <id> from <obj>.<anchor> to <obj>.<anchor> [dashed] [tip <src> <tgt>] [via <x> <y>, …]`** — a `ConnectorInstance`. Style omitted = solid (the model default); `dashed` = dashed. `tip <src> <tgt>` sets the per-end tip styles (CR-008): omitted = legacy default (source none, target arrow). `via` is the ordered list of manual waypoints in model-space cells (CR-007). Endpoints must reference existing *shape* objects.
 - **`scale <n>`** — whole-diagram scale (FR8), `n ≥ 1`; omitted means 1. The canonical serializer always emits it.
 
 ### Canonical serialization (Q1/NFR3)
@@ -60,7 +62,7 @@ The writer is deterministic; "canonical form" means:
 
 1. Header first, then the `scale` statement (always emitted, even `scale 1`), then all objects **in stored order** — shapes, text, and connectors interleaved exactly as in the model's object list (file order = z-order).
 2. Exactly one space between tokens; no leading indentation; no trailing whitespace; LF line endings; no blank lines; no comments (comments/blank lines are decoration, never model data).
-3. Integers in canonical decimal (no leading zeros); style keyword `dashed` emitted only for the non-default style.
+3. Integers in canonical decimal (no leading zeros); style keyword `dashed` emitted only for the non-default style; the `tip` clause only when the pair differs from the defaults; `via` only when non-empty.
 4. Property: `serialize(parse(serialize(d))) == serialize(d)` for all models `d`, and `parse` of a canonical file is byte-stable under re-serialization (QS7).
 
 ### Parsing rules (lenient in, strict out)

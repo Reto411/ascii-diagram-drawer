@@ -6,7 +6,9 @@
 use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
-use diagram_model::objects::{Object, ObjectId, ShapeInstance, TextInstance};
+use diagram_model::objects::{
+    ConnectorEnd, Object, ObjectId, ShapeInstance, TextInstance, TipStyle,
+};
 use ui_api::{AnchorInfo, ShapeCatalog};
 
 /// What the pointer is over (S-013). Computed by [`hit_target`] and consumed by the
@@ -43,6 +45,10 @@ pub enum HitTarget {
         prev: CellPos,
         next: CellPos,
     },
+    /// A tip cell of a connector (CR-008 AC2): pressing it cycles that end's tip
+    /// style. `end` is which endpoint the cell belongs to — same derivation as the
+    /// pipeline's stamping rule (ADR 013 v5).
+    Tip { id: ObjectId, end: ConnectorEnd },
 }
 
 /// Proportional per-axis mapping of a template coordinate onto an instance extent —
@@ -203,6 +209,14 @@ pub fn hit_target(
             };
         }
 
+        // Tip cells (CR-008 AC2) — the exact cells the pipeline stamps (ADR 013 v5).
+        if let Some(end) = tip_end_at(connector, route, pos) {
+            return HitTarget::Tip {
+                id: id.clone(),
+                end,
+            };
+        }
+
         for (segment, pair) in polyline_points(from, bends, to).windows(2).enumerate() {
             let (a, b) = (pair[0], pair[1]);
             if on_segment(a, b, pos) {
@@ -217,6 +231,42 @@ pub fn hit_target(
     }
 
     HitTarget::Empty
+}
+
+/// Which tip end (if any) is stamped at `pos` on this connector's route — mirrors the
+/// pipeline's stamping rule exactly (ADR 013 v5): the target tip sits on the cell
+/// adjacent to the endpoint, the source tip one cell in from its endpoint (skipped
+/// when it would collide with the target tip). Bare tips are not hit-testable.
+fn tip_end_at(
+    connector: &diagram_model::objects::ConnectorInstance,
+    route: &[CellPos],
+    pos: CellPos,
+) -> Option<ConnectorEnd> {
+    if connector.to_tip != TipStyle::Bare && route.len() >= 3 && *route.get(route.len() - 2)? == pos
+    {
+        return Some(ConnectorEnd::Target);
+    }
+    if connector.from_tip != TipStyle::Bare && route.len() > 3 && *route.get(1)? == pos {
+        return Some(ConnectorEnd::Source);
+    }
+    None
+}
+
+/// The arrow glyph for an anchor marker pointing outward from the shape's side
+/// (CR-008 AC3): `<`/`>` on the left/right edge, `^`/`v` on the top/bottom. An anchor
+/// not on any edge (or a degenerate 1-cell shape) falls back to a dot.
+pub fn anchor_glyph(position: CellPos, size: CellSize) -> char {
+    if position.x == 0 && size.width > 1 {
+        '<'
+    } else if position.x + 1 == size.width {
+        '>'
+    } else if position.y == 0 && size.height > 1 {
+        '^'
+    } else if position.y + 1 == size.height {
+        'v'
+    } else {
+        '·'
+    }
 }
 
 /// The polyline points of a connector's route in order — the resolved endpoints with
@@ -291,10 +341,11 @@ pub fn text_hit_extent(text: &TextInstance) -> (u32, u32) {
 /// "what gets highlighted" unit-testable headlessly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overlay {
-    /// Filled dot at a cell center: an anchor — of the selected shape, or of every
-    /// shape while a connection is in flight (the source's own dot is excluded; the
-    /// canvas draws it together with the drag line).
-    AnchorDot((u32, u32)),
+    /// An arrow glyph at an anchor cell pointing outward from the shape's side
+    /// (CR-008 AC3) — of the selected shape, or of every shape while a connection is
+    /// in flight (the source's own marker is excluded; the canvas draws it together
+    /// with the drag line).
+    AnchorArrow { cell: (u32, u32), glyph: char },
     /// Small square on the selection's bottom-right **cell** — the same cell
     /// [`hit_target`] answers with [`HitTarget::ResizeHandle`], so the marker and the
     /// gesture target coincide (the outer corner cell is reserved for the `s`/`e`
@@ -338,11 +389,15 @@ pub fn overlays(
         }
 
         if let Some(anchors) = catalog.anchors(&shape.type_id) {
+            let size = catalog.get(&shape.type_id).map(|t| t.size);
             for anchor in anchors {
                 let is_source = connecting_from
                     .is_some_and(|src| src.object() == &shape.id && src.anchor() == anchor.name);
                 if !is_source && let Some(cell) = anchor_cell(shape, catalog, &anchor) {
-                    out.push(Overlay::AnchorDot(cell));
+                    out.push(Overlay::AnchorArrow {
+                        cell,
+                        glyph: size.map_or('·', |s| anchor_glyph(anchor.position, s)),
+                    });
                 }
             }
         }
@@ -857,7 +912,7 @@ mod tests {
         let sel = overlays(&diagram, &catalog, Some(&s1), None);
         assert_eq!(
             sel.iter()
-                .filter(|o| matches!(o, Overlay::AnchorDot(_)))
+                .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
                 .count(),
             4,
             "the selected shape's four anchors"
@@ -866,10 +921,13 @@ mod tests {
         // `hit_target` answers with a resize gesture.
         assert!(sel.contains(&Overlay::ResizeHandle((8, 4))));
         // s2 (not selected) contributes nothing.
-        assert!(
-            !sel.iter()
-                .any(|o| matches!(o, Overlay::AnchorDot((20..=28, _))))
-        );
+        assert!(!sel.iter().any(|o| matches!(
+            o,
+            Overlay::AnchorArrow {
+                cell: (20..=28, _),
+                ..
+            }
+        )));
 
         // Connecting from s1's e: dots on both shapes, minus the source dot, no handle.
         let source = AnchorRef::new(s1.clone(), "e").expect("valid ref");
@@ -877,12 +935,15 @@ mod tests {
         assert_eq!(
             connecting
                 .iter()
-                .filter(|o| matches!(o, Overlay::AnchorDot(_)))
+                .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
                 .count(),
             7,
             "4 + 4 anchors minus the source dot"
         );
-        assert!(!connecting.contains(&Overlay::AnchorDot((8, 2))));
+        assert!(!connecting.contains(&Overlay::AnchorArrow {
+            cell: (8, 2),
+            glyph: '>'
+        }));
         assert!(
             connecting
                 .iter()
@@ -991,6 +1052,93 @@ mod tests {
         let (diagram, catalog, c, route) = bent_connector_scene();
         let routes = vec![(c.clone(), route)];
         // The bend cell itself is a Bend — even though it lies on two segments.
+        assert_eq!(
+            hit_target(&diagram, &catalog, None, None, (11, 6), &routes),
+            HitTarget::Bend {
+                id: c,
+                index: 0,
+                prev: pos(8, 2),
+                next: pos(14, 2)
+            }
+        );
+    }
+
+    /// CR-008 AC2/AC4: the cell adjacent to each endpoint is a tip cell when that end
+    /// has a visible tip; bare ends stay plain body cells.
+    #[test]
+    fn hit_target_reports_tip_cells_at_the_route_ends() {
+        use diagram_model::objects::{ConnectorInstance, ConnectorStyle};
+        let catalog = catalog();
+        let mut diagram = Diagram::new();
+        diagram.place_shape(box_at("s1", 0, 0)).expect("places");
+        diagram.place_shape(box_at("s2", 20, 0)).expect("places");
+        let c = ObjectId::new("c1").expect("valid id");
+        diagram
+            .connect(ConnectorInstance::new(
+                c.clone(),
+                AnchorRef::new(ObjectId::new("s1").expect("valid"), "e").expect("valid anchor"),
+                AnchorRef::new(ObjectId::new("s2").expect("valid"), "w").expect("valid anchor"),
+                ConnectorStyle::Solid,
+            ))
+            .expect("connects");
+        // The full route as the production seam provides it: every stamped cell.
+        let route: Vec<CellPos> = (8..=20).map(|x| pos(x, 2)).collect();
+        let routes = vec![(c.clone(), route)];
+
+        // Default tips: bare source, hollow arrow at the target — only the target's
+        // adjacent cell is a tip cell.
+        assert_eq!(
+            hit_target(&diagram, &catalog, None, None, (19, 2), &routes),
+            HitTarget::Tip {
+                id: c.clone(),
+                end: ConnectorEnd::Target
+            }
+        );
+        match hit_target(&diagram, &catalog, None, None, (9, 2), &routes) {
+            HitTarget::ConnectorBody { id, .. } => assert_eq!(id, c),
+            other => panic!("bare source end is body, got {other:?}"),
+        }
+
+        // Cycled source tip: the first cell after the endpoint becomes a tip cell.
+        diagram
+            .set_tip(&c, ConnectorEnd::Source, TipStyle::HollowArrow)
+            .expect("sets source tip");
+        assert_eq!(
+            hit_target(&diagram, &catalog, None, None, (9, 2), &routes),
+            HitTarget::Tip {
+                id: c,
+                end: ConnectorEnd::Source
+            }
+        );
+    }
+
+    /// CR-008: on bent routes the tip cells are the last/first stamped cells of the
+    /// outer segments; declared bends keep priority on their own cells.
+    #[test]
+    fn bent_route_tip_cells_sit_on_the_outer_segments() {
+        let (diagram, catalog, c, _waypoints) = bent_connector_scene();
+        // Production route: every stamped cell of the two diagonal segments.
+        let routes = vec![(
+            c.clone(),
+            vec![
+                pos(8, 2),
+                pos(9, 3),
+                pos(10, 4),
+                pos(11, 5),
+                pos(11, 6),
+                pos(12, 5),
+                pos(13, 4),
+                pos(14, 2),
+            ],
+        )];
+        assert_eq!(
+            hit_target(&diagram, &catalog, None, None, (13, 4), &routes),
+            HitTarget::Tip {
+                id: c.clone(),
+                end: ConnectorEnd::Target
+            }
+        );
+        // The declared bend still wins on its own cell.
         assert_eq!(
             hit_target(&diagram, &catalog, None, None, (11, 6), &routes),
             HitTarget::Bend {

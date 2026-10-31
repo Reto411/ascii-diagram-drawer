@@ -64,6 +64,50 @@ pub enum ConnectorStyle {
     Solid,
 }
 
+/// The tip style of one end of a connector (CR-008 / ADR 013 v5): what the end's
+/// last route cell looks like. Rendered as content at the cell adjacent to the
+/// endpoint — hollow arrows point along the segment, rhombi do not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TipStyle {
+    /// No tip — a bare line end (the default source end).
+    Bare,
+    /// Hollow arrow (`< > ^ v`), chosen by approach direction (the default target end).
+    HollowArrow,
+    /// Empty rhombus `◇` (content-only glyph, no direction).
+    EmptyRhombus,
+    /// Filled rhombus `◆` (content-only glyph, no direction).
+    FilledRhombus,
+}
+
+impl fmt::Display for TipStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Bare => "bare",
+            Self::HollowArrow => "hollow arrow",
+            Self::EmptyRhombus => "empty rhombus",
+            Self::FilledRhombus => "filled rhombus",
+        })
+    }
+}
+
+/// Which end of a connector an operation or tip style applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectorEnd {
+    /// The `from` end (where the line starts).
+    Source,
+    /// The `to` end (where the line ends).
+    Target,
+}
+
+impl fmt::Display for ConnectorEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Source => "source",
+            Self::Target => "target",
+        })
+    }
+}
+
 /// A placed instance of a shape type from the Shape Catalog context.
 ///
 /// `type_id` is the *only* reference into the catalog (Customer/Supplier mapping): this crate
@@ -176,20 +220,27 @@ pub struct ConnectorInstance {
     /// the polyline `[from-cell, bends…, to-cell]`; axis-aligned segments keep clean
     /// structural joins, explicit diagonals are stamped as `/` `\` content.
     pub bends: Vec<CellPos>,
+    /// Tip style of the source end (CR-008 / ADR 013 v5). Default: [`TipStyle::Bare`].
+    pub from_tip: TipStyle,
+    /// Tip style of the target end (CR-008 / ADR 013 v5). Default: [`TipStyle::HollowArrow`].
+    pub to_tip: TipStyle,
 }
 
 impl ConnectorInstance {
-    /// Creates a connector without manual bends (automatic routing). Endpoints are
-    /// pre-validated [`AnchorRef`]s; cross-object checks (both ends exist and are shapes)
-    /// happen in [`crate::Diagram::connect`].
+    /// Creates a connector without manual bends and with the default tips (source
+    /// bare, target hollow arrow — CR-008: existing diagrams render identically).
+    /// Endpoints are pre-validated [`AnchorRef`]s; cross-object checks (both ends exist
+    /// and are shapes) happen in [`crate::Diagram::connect`].
     #[must_use]
     pub const fn new(id: ObjectId, from: AnchorRef, to: AnchorRef, style: ConnectorStyle) -> Self {
         Self {
             bends: Vec::new(),
             from,
+            from_tip: TipStyle::Bare,
             id,
             style,
             to,
+            to_tip: TipStyle::HollowArrow,
         }
     }
 
@@ -197,6 +248,14 @@ impl ConnectorInstance {
     #[must_use]
     pub fn with_bends(mut self, bends: Vec<CellPos>) -> Self {
         self.bends = bends;
+        self
+    }
+
+    /// Returns a copy of this connector with explicit per-end tip styles (CR-008).
+    #[must_use]
+    pub const fn with_tips(mut self, from_tip: TipStyle, to_tip: TipStyle) -> Self {
+        self.from_tip = from_tip;
+        self.to_tip = to_tip;
         self
     }
 }

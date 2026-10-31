@@ -10,7 +10,8 @@ use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::objects::{
-    ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance,
+    ConnectorEnd, ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance,
+    TipStyle,
 };
 
 /// Initial content of a freshly placed text object (S-018) — the model rejects empty
@@ -69,6 +70,13 @@ pub enum EditOutcome {
     /// A dropped bend sat on the straight line between its neighbors and was removed
     /// (CR-007 AC6 — Visio-style cleanup).
     BendRemoved { id: ObjectId, index: usize },
+    /// A press on a tip cell cycled that end's tip style (CR-008 AC2) — `tip` is the
+    /// new value.
+    TipChanged {
+        id: ObjectId,
+        end: ConnectorEnd,
+        tip: TipStyle,
+    },
     /// The selected object (and its connectors) left the model.
     Deleted { id: ObjectId, removed: usize },
     /// An in-flight gesture or placement was cancelled without mutation.
@@ -316,10 +324,36 @@ impl EditorState {
                 });
                 EditOutcome::Selected(id)
             }
+            // CR-008 AC2 — pressing a tip cell cycles that end's tip style live.
+            HitTarget::Tip { id, end } => self.cycle_tip(id, end, diagram),
             HitTarget::Empty => {
                 self.selection = None;
                 EditOutcome::Deselected
             }
+        }
+    }
+
+    /// Cycles the pressed tip end through bare → hollow arrow → empty rhombus →
+    /// filled rhombus → bare (CR-008 AC2) and selects the connector so the change is
+    /// visible in context.
+    fn cycle_tip(&mut self, id: ObjectId, end: ConnectorEnd, diagram: &mut Diagram) -> EditOutcome {
+        let Some(Object::Connector(connector)) = diagram.get(&id) else {
+            return EditOutcome::Nothing; // defensive: stale hit
+        };
+        let current = match end {
+            ConnectorEnd::Source => connector.from_tip,
+            ConnectorEnd::Target => connector.to_tip,
+        };
+        let next = match current {
+            TipStyle::Bare => TipStyle::HollowArrow,
+            TipStyle::HollowArrow => TipStyle::EmptyRhombus,
+            TipStyle::EmptyRhombus => TipStyle::FilledRhombus,
+            TipStyle::FilledRhombus => TipStyle::Bare,
+        };
+        self.selection = Some(id.clone());
+        match diagram.set_tip(&id, end, next) {
+            Ok(()) => EditOutcome::TipChanged { id, end, tip: next },
+            Err(_) => EditOutcome::Nothing, // defensive: the hit was just computed
         }
     }
 

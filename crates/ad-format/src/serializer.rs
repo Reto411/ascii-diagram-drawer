@@ -6,7 +6,7 @@
 //! trailing whitespace.
 
 use diagram_model::Diagram;
-use diagram_model::objects::{ConnectorStyle, Object, ShapeInstance, TextInstance};
+use diagram_model::objects::{ConnectorStyle, Object, ShapeInstance, TextInstance, TipStyle};
 
 use crate::parser::{Document, Slot};
 
@@ -84,6 +84,14 @@ fn push_object(out: &mut String, object: &Object) {
             if connector.style == ConnectorStyle::Dashed {
                 out.push_str(" dashed");
             }
+            // Tip styles (CR-008): emitted only when they differ from the defaults
+            // (source bare, target hollow arrow) — pre-existing files stay byte-stable.
+            if (connector.from_tip, connector.to_tip) != (TipStyle::Bare, TipStyle::HollowArrow) {
+                out.push_str(" tip ");
+                out.push_str(tip_keyword(connector.from_tip));
+                out.push(' ');
+                out.push_str(tip_keyword(connector.to_tip));
+            }
             // Manual bends are emitted only when present (CR-007) — bend-free
             // connectors keep their historical statement shape.
             if !connector.bends.is_empty() {
@@ -99,6 +107,16 @@ fn push_object(out: &mut String, object: &Object) {
             }
             out.push('\n');
         }
+    }
+}
+
+/// The file keyword for a tip style (CR-008): `none`, `arrow`, `rhombus-open`, `rhombus-filled`.
+fn tip_keyword(style: TipStyle) -> &'static str {
+    match style {
+        TipStyle::Bare => "none",
+        TipStyle::HollowArrow => "arrow",
+        TipStyle::EmptyRhombus => "rhombus-open",
+        TipStyle::FilledRhombus => "rhombus-filled",
     }
 }
 
@@ -173,7 +191,7 @@ mod tests {
     use crate::parser::parse_document;
     use diagram_model::anchors::AnchorRef;
     use diagram_model::geometry::{CellPos, CellSize};
-    use diagram_model::objects::{ConnectorInstance, ObjectId, TextInstance};
+    use diagram_model::objects::{ConnectorEnd, ConnectorInstance, ObjectId, TextInstance};
 
     /// Builds a small multi-object diagram: shape + text + connector, scale 2.
     fn sample_diagram() -> Diagram {
@@ -272,6 +290,54 @@ mod tests {
             ))
             .expect("connect");
         assert!(serialize(&diagram).contains(" dashed\n"));
+    }
+
+    /// `tip` is emitted only when the styles differ from the defaults, in clause order
+    /// (after `dashed`, before `via`), and round-trips byte-stably (CR-008).
+    #[test]
+    fn tip_styles_serialize_and_round_trip() {
+        let mut diagram = sample_diagram();
+        let id = ObjectId::new("c1").expect("valid id");
+        diagram
+            .set_tip(&id, ConnectorEnd::Source, TipStyle::EmptyRhombus)
+            .expect("sets source tip");
+        diagram
+            .set_tip(&id, ConnectorEnd::Target, TipStyle::FilledRhombus)
+            .expect("sets target tip");
+
+        let out = serialize(&diagram);
+        assert!(
+            out.contains("connect as c1 from s1.e to s1.w tip rhombus-open rhombus-filled\n"),
+            "output: {out}"
+        );
+
+        let reparsed = crate::parser::parse(&out).expect("round-trips");
+        assert_eq!(serialize(&reparsed), out);
+    }
+
+    /// Default tips (source bare, target arrow) emit no `tip` clause — pre-existing files
+    /// stay byte-stable (CR-008).
+    #[test]
+    fn tip_defaults_are_not_emitted() {
+        let mut diagram = Diagram::new();
+        let s1 = ObjectId::new("s1").expect("valid id");
+        diagram
+            .place_shape(
+                ShapeInstance::new(s1.clone(), "box", "", CellPos::origin(), CellSize::unit())
+                    .expect("valid"),
+            )
+            .expect("place");
+        let from = AnchorRef::new(s1.clone(), "e").expect("valid anchor");
+        let to = AnchorRef::new(s1, "w").expect("valid anchor");
+        diagram
+            .connect(ConnectorInstance::new(
+                ObjectId::new("c1").expect("valid id"),
+                from,
+                to,
+                ConnectorStyle::Solid,
+            ))
+            .expect("connect");
+        assert!(!serialize(&diagram).contains(" tip "));
     }
 
     #[test]

@@ -18,7 +18,7 @@ use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::objects::{
-    ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance,
+    ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance, TipStyle,
 };
 use shape_registry::ShapeRegistry;
 
@@ -110,6 +110,29 @@ fn linked_bent(
     d
 }
 
+/// Adds one solid connector with explicit per-end tips (CR-008 / ADR 013 v5).
+fn linked_tips(
+    mut d: Diagram,
+    id: u32,
+    from_id: u32,
+    from_anchor: &str,
+    to_id: u32,
+    to_anchor: &str,
+    tips: (TipStyle, TipStyle),
+) -> Diagram {
+    d.connect(
+        ConnectorInstance::new(
+            ObjectId::generated(id),
+            AnchorRef::new(ObjectId::generated(from_id), from_anchor).expect("valid anchor"),
+            AnchorRef::new(ObjectId::generated(to_id), to_anchor).expect("valid anchor"),
+            ConnectorStyle::Solid,
+        )
+        .with_tips(tips.0, tips.1),
+    )
+    .expect("endpoints are placed shapes");
+    d
+}
+
 /// One golden scenario: a name plus the exact diagram it freezes.
 fn scenarios() -> Vec<(&'static str, Diagram)> {
     vec![
@@ -178,6 +201,36 @@ fn scenarios() -> Vec<(&'static str, Diagram)> {
             diagram(
                 2,
                 vec![box_obj(0, "AB", 0, 0, 9, 5), box_obj(1, "", 6, 0, 1, 7)],
+            ),
+        ),
+        // CR-008 / ADR 013 v5: per-end tips — a source hollow arrow + target filled
+        // rhombus on the horizontal route, and a source empty rhombus with a bare
+        // (tip-less) target end on the vertical one.
+        (
+            "connector-tips",
+            linked_tips(
+                linked_tips(
+                    diagram(
+                        1,
+                        vec![
+                            box_obj(0, "A", 0, 0, 9, 5),
+                            box_obj(1, "B", 14, 0, 9, 5),
+                            box_obj(2, "C", 0, 8, 9, 5),
+                        ],
+                    ),
+                    90,
+                    0,
+                    "e",
+                    1,
+                    "w",
+                    (TipStyle::HollowArrow, TipStyle::FilledRhombus),
+                ),
+                91,
+                0,
+                "s",
+                2,
+                "n",
+                (TipStyle::EmptyRhombus, TipStyle::Bare),
             ),
         ),
         // S-007 (ADR 013): straight horizontal route, T-junctions at both anchors,

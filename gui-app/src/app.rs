@@ -1446,8 +1446,19 @@ fn draw_overlays(
         app.editor.connecting_source(),
     ) {
         match overlay {
-            crate::canvas::Overlay::AnchorDot((col, row)) => {
-                painter.circle_filled(center_of(col, row), 3.0, ANCHOR_COLOR);
+            crate::canvas::Overlay::AnchorArrow {
+                cell: (col, row),
+                glyph,
+            } => {
+                // CR-008 AC3 — the anchor marker is an arrow pointing outward from
+                // the shape's side, drawn as a monospace glyph centered on the cell.
+                painter.text(
+                    center_of(col, row),
+                    Align2::CENTER_CENTER,
+                    glyph.to_string(),
+                    FontId::new((vp.cell_h * 0.85).max(9.0), FontFamily::Monospace),
+                    ANCHOR_COLOR,
+                );
             }
             crate::canvas::Overlay::ResizeHandle((col, row)) => {
                 // The marker sits on the handle cell's CENTER — exactly the cell
@@ -1497,7 +1508,18 @@ fn draw_overlays(
                 [center_of(col, row), off(cursor)],
                 egui::epaint::Stroke::new(1.5, CONNECT_LINE_COLOR),
             );
-            painter.circle_filled(center_of(col, row), 3.0, ANCHOR_COLOR);
+            // Same arrow glyph as the other anchor markers (CR-008 AC3).
+            let shape_size = shape.size;
+            let glyph = anchor_info
+                .map(|info| crate::canvas::anchor_glyph(info.position, shape_size))
+                .unwrap_or('·');
+            painter.text(
+                center_of(col, row),
+                Align2::CENTER_CENTER,
+                glyph.to_string(),
+                FontId::new((vp.cell_h * 0.85).max(9.0), FontFamily::Monospace),
+                ANCHOR_COLOR,
+            );
         }
     }
 }
@@ -2036,6 +2058,7 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
             Some(format!("Bend of {id} moved to ({}, {})", to.x, to.y))
         }
         EditOutcome::BendRemoved { id, .. } => Some(format!("Bend removed from {id}")),
+        EditOutcome::TipChanged { id, end, tip } => Some(format!("{id}: {end} tip set to {tip}")),
         EditOutcome::Deleted { id, removed } => {
             let connectors = removed.saturating_sub(1);
             Some(if connectors == 0 {

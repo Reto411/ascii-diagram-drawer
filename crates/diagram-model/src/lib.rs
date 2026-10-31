@@ -31,7 +31,9 @@ pub mod objects;
 use anchors::AnchorRef;
 use geometry::{CellPos, CellSize};
 use invariants::ModelError;
-use objects::{ConnectorInstance, Object, ObjectId, ShapeInstance, TextInstance};
+use objects::{
+    ConnectorEnd, ConnectorInstance, Object, ObjectId, ShapeInstance, TextInstance, TipStyle,
+};
 
 /// The Diagram aggregate: an ordered collection of objects on the cell grid plus diagram-level
 /// properties. Document order is z-order (later objects render on top).
@@ -116,6 +118,29 @@ impl Diagram {
             });
         }
         bends.remove(index);
+        Ok(())
+    }
+
+    /// Sets the tip style of one end of a connector (CR-008 / ADR 013 v5).
+    ///
+    /// # Errors
+    /// [`ModelError::UnknownObject`] when the id does not exist, or
+    /// [`ModelError::NotAConnector`] when it exists but is another object kind.
+    pub fn set_tip(
+        &mut self,
+        id: &ObjectId,
+        end: ConnectorEnd,
+        style: TipStyle,
+    ) -> Result<(), ModelError> {
+        let connector = match self.get_mut(id) {
+            Some(Object::Connector(connector)) => connector,
+            None => return Err(ModelError::UnknownObject(id.clone())),
+            Some(_) => return Err(ModelError::NotAConnector(id.clone())),
+        };
+        match end {
+            ConnectorEnd::Source => connector.from_tip = style,
+            ConnectorEnd::Target => connector.to_tip = style,
+        }
         Ok(())
     }
 
@@ -356,7 +381,8 @@ mod tests {
     use crate::anchors::AnchorRef;
     use crate::geometry::{CellPos, CellSize};
     use crate::objects::{
-        ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance,
+        ConnectorEnd, ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance,
+        TextInstance, TipStyle,
     };
 
     /// Builds a solid connector between two shapes' `e`/`w` anchors.
@@ -615,6 +641,51 @@ mod tests {
                 object: id,
                 index: 0
             })
+        );
+    }
+
+    /// New connectors carry the CR-008 defaults: source bare, target hollow arrow — so
+    /// every pre-existing diagram renders identically.
+    #[test]
+    fn connectors_start_with_default_tips() {
+        let diagram = diagram_with_connector();
+        let connector = diagram.objects().iter().find_map(|object| match object {
+            Object::Connector(connector) => Some(connector),
+            _ => None,
+        });
+        let Some(connector) = connector else {
+            panic!("test fixture lost its connector")
+        };
+        assert_eq!(connector.from_tip, TipStyle::Bare);
+        assert_eq!(connector.to_tip, TipStyle::HollowArrow);
+    }
+
+    /// `set_tip` updates exactly the addressed end; typed errors mirror the bend ops.
+    #[test]
+    fn set_tip_updates_the_addressed_end_and_reports_typed_errors() {
+        let mut diagram = diagram_with_connector();
+        let id = oid("c1");
+        let shape_id = oid("s1");
+
+        diagram
+            .set_tip(&id, ConnectorEnd::Target, TipStyle::FilledRhombus)
+            .expect("sets the target tip");
+        diagram
+            .set_tip(&id, ConnectorEnd::Source, TipStyle::EmptyRhombus)
+            .expect("sets the source tip");
+        let Object::Connector(connector) = diagram.get(&id).expect("still present") else {
+            panic!("test fixture lost its connector");
+        };
+        assert_eq!(connector.from_tip, TipStyle::EmptyRhombus);
+        assert_eq!(connector.to_tip, TipStyle::FilledRhombus);
+
+        assert_eq!(
+            diagram.set_tip(&oid("ghost"), ConnectorEnd::Source, TipStyle::Bare),
+            Err(ModelError::UnknownObject(oid("ghost")))
+        );
+        assert_eq!(
+            diagram.set_tip(&shape_id, ConnectorEnd::Target, TipStyle::Bare),
+            Err(ModelError::NotAConnector(shape_id))
         );
     }
 

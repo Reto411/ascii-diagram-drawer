@@ -18,7 +18,7 @@
 use crate::app::{DrawingApp, PathPrompt};
 use crate::config::Theme;
 use core_services::Services;
-use diagram_model::objects::Object;
+use diagram_model::objects::{ConnectorInstance, Object, TipStyle};
 // The app depends on eframe only; egui is reached through its re-export.
 use eframe::egui;
 use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Vec2};
@@ -423,19 +423,6 @@ fn stroked_rects(out: &egui::FullOutput) -> Vec<(Rect, Color32)> {
         .collect()
 }
 
-/// All filled circles as `(center, radius, fill)`.
-fn filled_circles(out: &egui::FullOutput) -> Vec<(Pos2, f32, Color32)> {
-    out.shapes
-        .iter()
-        .filter_map(|cs| match &cs.shape {
-            egui::epaint::Shape::Circle(c) if c.fill != Color32::TRANSPARENT => {
-                Some((c.center, c.radius, c.fill))
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 fn close(a: f32, b: f32, eps: f32) -> bool {
     (a - b).abs() <= eps
 }
@@ -819,7 +806,7 @@ fn resize_handle_marker_sits_on_the_inner_bottom_right_cell() {
 }
 
 #[test]
-fn anchor_dots_sit_at_the_edge_midpoints_of_the_selection() {
+fn anchor_arrows_point_outward_from_the_selection_edges() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let min = gui.canvas_min();
     gui.place_box_via_ui(min, 0, 0);
@@ -827,24 +814,26 @@ fn anchor_dots_sit_at_the_edge_midpoints_of_the_selection() {
     let out = gui.frame();
 
     let (x, y, w, h) = gui.first_box();
-    // Default box: 9 wide, 5 tall → anchors n(4,0) s(4,4) w(0,2) e(8,2).
+    // Default box: 9 wide, 5 tall → anchors n(4,0) s(4,4) w(0,2) e(8,2). CR-008 AC3:
+    // the markers are arrow glyphs pointing outward from each side.
     let expected = [
-        gui.cell_center(min, x + w / 2, y),
-        gui.cell_center(min, x + w / 2, y + h - 1),
-        gui.cell_center(min, x, y + h / 2),
-        gui.cell_center(min, x + w - 1, y + h / 2),
+        (gui.cell_center(min, x + w / 2, y), '^'),
+        (gui.cell_center(min, x + w / 2, y + h - 1), 'v'),
+        (gui.cell_center(min, x, y + h / 2), '<'),
+        (gui.cell_center(min, x + w - 1, y + h / 2), '>'),
     ];
-    let dots: Vec<Pos2> = filled_circles(&out)
+    let arrows: Vec<(char, Pos2)> = texts(&out)
         .into_iter()
-        .filter(|(_, r, c)| *c == ANCHOR && close(*r, 3.0, 0.5))
-        .map(|(p, _, _)| p)
+        .filter(|(t, _)| t.chars().count() == 1 && matches!(t.as_str(), "<" | ">" | "^" | "v"))
+        .map(|(t, r)| (t.chars().next().expect("single char"), r.center()))
         .collect();
-    assert_eq!(dots.len(), 4, "four anchor dots are drawn");
-    for e in expected {
+    assert_eq!(arrows.len(), 4, "four anchor arrows are drawn");
+    for (e, glyph) in expected {
         assert!(
-            dots.iter()
-                .any(|d| close(d.x, e.x, 2.0) && close(d.y, e.y, 2.0)),
-            "anchor dot at {e:?} (edge midpoint cell), dots: {dots:?}"
+            arrows
+                .iter()
+                .any(|(g, p)| *g == glyph && close(p.x, e.x, 2.0) && close(p.y, e.y, 2.0)),
+            "anchor arrow '{glyph}' at {e:?} (edge midpoint cell), arrows: {arrows:?}"
         );
     }
 }
@@ -1152,6 +1141,64 @@ fn anchor_drag_creates_a_connector_between_two_shapes() {
             .iter()
             .any(|o| matches!(o, Object::Connector(_))),
         "a connector object now links the two shapes"
+    );
+}
+
+/// CR-008 AC2/AC3: pressing the target tip cell of a straight connector cycles its
+/// style — hollow arrow → empty rhombus → filled rhombus → bare — and the canvas glyph
+/// follows each step.
+#[test]
+fn pressing_the_connector_tip_cycles_its_style() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 2, 1); // A: east anchor at (10, 3)
+    let out = gui.frame();
+    let label = find_text_exact(&out, "box").expect("sidebar lists box");
+    let _ = gui.click_at(label.center());
+    let _ = gui.click_at(gui.cell_center(min, 20, 1)); // B at (20, 1)
+    assert_eq!(gui.object_count(), 2);
+
+    // Drag A's east anchor onto B's west edge → straight connector (route row 3).
+    let (ax, ay, aw, ah) = gui.first_box();
+    let _ = gui.click_at(gui.cell_center(min, ax + aw / 2, ay + ah / 2));
+    let from = gui.cell_center(min, ax + aw - 1, ay + ah / 2);
+    let to = gui.cell_center(min, 20, 1 + 5 / 2);
+    let _ = gui.drag(from, to);
+
+    let tip_cell = gui.cell_center(min, 19, 3); // one cell before B's west anchor (20, 3)
+    // The connector starts with the default hollow arrow; each press advances it.
+    let expected_after_presses = [
+        TipStyle::EmptyRhombus,
+        TipStyle::FilledRhombus,
+        TipStyle::Bare,
+    ];
+
+    for next in &expected_after_presses {
+        let out = gui.click_at(tip_cell);
+        // The status bar names the new style.
+        assert_status(&out, &format!("target tip set to {next}"));
+        // The model follows.
+        let connector: &ConnectorInstance = gui
+            .app
+            .diagram
+            .objects()
+            .iter()
+            .find_map(|o| match o {
+                Object::Connector(c) => Some(c),
+                _ => None,
+            })
+            .expect("the connector exists");
+        assert_eq!(connector.to_tip, *next, "target tip cycled to {next}");
+    }
+
+    // The glyph on the canvas follows: bare stamps nothing, so the last press left no
+    // rhombus/arrow content on the tip cell — the row is plain dashes again.
+    let out = gui.frame();
+    assert!(
+        !texts(&out)
+            .iter()
+            .any(|(t, _)| t.contains('◇') || t.contains('◆')),
+        "no rhombus glyph remains after cycling to bare"
     );
 }
 
@@ -2089,6 +2136,10 @@ fn b002_scale_presses_render_exactly_one_expanded_copy() {
         1,
         "clicking the canvas placed one ellipse"
     );
+
+    // Deselect: anchor arrows are drawn as text on the selection (CR-008) and must
+    // not pollute the baseline rows.
+    let _ = gui.click_at(gui.cell_center(min, 30, 20));
 
     // Baseline: the exact rows drawn at scale 1.
     let baseline = canvas_lines(&gui.frame());
