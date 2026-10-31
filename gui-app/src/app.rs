@@ -210,6 +210,23 @@ impl DrawingApp {
         self.pan
     }
 
+    /// Test seam (S-025 AC2): install an in-flight PNG export — a job handle plus
+    /// its sink path and the "exporting" status — so GUI tests can drive the
+    /// exporting state deterministically instead of racing the worker thread.
+    #[cfg(test)]
+    pub fn set_inflight_png_export(&mut self, job: core_services::PngJob, path: PathBuf) {
+        self.png_export = Some(PngExport::from_job(job));
+        self.pending_png_path = Some(path);
+        self.status = "Exporting PNG…".to_owned();
+    }
+
+    /// True while a PNG export job is in flight (S-025 AC2; test support).
+    #[cfg(test)]
+    #[must_use]
+    pub fn png_export_inflight(&self) -> bool {
+        self.png_export.is_some()
+    }
+
     /// The user options (FR13 / CR-005).
     #[must_use]
     pub fn config(&self) -> &AppConfig {
@@ -1436,45 +1453,58 @@ impl DrawingApp {
             && self.editor.editing.is_none();
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Open…").clicked() {
-                    self.begin_path_prompt(PathPrompt::Open);
-                }
-                if ui.button("Save").clicked() || ctrl_s {
+                // FR6 (CR-002) — the flat button row is now a menu bar: every
+                // one-shot file action lives inside File ▾, grouped with separators
+                // (file ops | clipboard/output | export). The structure is
+                // extensible — a new feature area is one more menu_button call.
+                // Ctrl+S stays global: the menu closure only runs while the menu
+                // is open, so the shortcut must fire outside it.
+                if ctrl_s {
                     let _ = self.save_requested();
                 }
-                if ui.button("Save As…").clicked() {
-                    self.begin_path_prompt(PathPrompt::SaveAs);
-                }
-                // AC3 — copy the exact canvas bytes to the clipboard (WYSIWYG).
-                if ui.button("Copy").clicked() {
-                    match self.text_output() {
-                        Ok(text) => {
-                            let chars = text.chars().count();
-                            ui.ctx().copy_text(text);
-                            self.status = format!("Copied {chars} character(s) to clipboard");
+                ui.menu_button(RichText::new("File ▾"), |ui| {
+                    if ui.button("Open…").clicked() {
+                        self.begin_path_prompt(PathPrompt::Open);
+                    }
+                    if ui.button("Save").clicked() {
+                        let _ = self.save_requested();
+                    }
+                    if ui.button("Save As…").clicked() {
+                        self.begin_path_prompt(PathPrompt::SaveAs);
+                    }
+                    ui.separator();
+                    // AC3 (S-014) — copy the exact canvas bytes to the clipboard.
+                    if ui.button("Copy").clicked() {
+                        match self.text_output() {
+                            Ok(text) => {
+                                let chars = text.chars().count();
+                                ui.ctx().copy_text(text);
+                                self.status = format!("Copied {chars} character(s) to clipboard");
+                            }
+                            Err(e) => self.status = e,
                         }
-                        Err(e) => self.status = e,
                     }
-                }
-                if ui.button("Text .txt").clicked() {
-                    match self.save_text() {
-                        Ok(_) => {}
-                        Err(e) => self.status = e,
+                    if ui.button("Text .txt").clicked() {
+                        match self.save_text() {
+                            Ok(_) => {}
+                            Err(e) => self.status = e,
+                        }
                     }
-                }
-                // AC1 — SVG export (synchronous): the exact exporter bytes to file.
-                if ui.button("Export SVG…").clicked() {
-                    self.begin_path_prompt(PathPrompt::ExportSvg);
-                }
-                // AC2/RS4 — PNG export starts non-blocking (ADR 012); the status
-                // bar shows "exporting" until the worker's job completes.
-                let exporting = self.png_export.is_some();
-                if ui
-                    .add_enabled(!exporting, egui::Button::new("Export PNG…"))
-                    .clicked()
-                {
-                    self.begin_path_prompt(PathPrompt::ExportPng);
-                }
+                    ui.separator();
+                    // AC1 (S-015) — SVG export: the exact exporter bytes to file.
+                    if ui.button("Export SVG…").clicked() {
+                        self.begin_path_prompt(PathPrompt::ExportSvg);
+                    }
+                    // AC2/RS4 (S-015) — PNG export starts non-blocking (ADR 012);
+                    // the status bar shows "exporting" until the job completes.
+                    let exporting = self.png_export.is_some();
+                    if ui
+                        .add_enabled(!exporting, egui::Button::new("Export PNG…"))
+                        .clicked()
+                    {
+                        self.begin_path_prompt(PathPrompt::ExportPng);
+                    }
+                });
                 // FR13 (CR-005) — Options menu: the home for user preferences; the
                 // theme is its first option. Selections apply live and persist to
                 // the app config file.

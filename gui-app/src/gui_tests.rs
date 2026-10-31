@@ -293,11 +293,30 @@ impl Gui {
         self.click_at(rect.center())
     }
 
-    /// Open a path prompt (Save As / Open / Export …) and return its kind after it appears.
-    fn open_prompt(&mut self, button: &str) -> PathPrompt {
-        let _ = self.click_topbar_button(button);
+    /// Click an item inside a top-bar dropdown (FR6, S-025): open the menu by
+    /// clicking its button, settle a frame so the popup lays out, then click the
+    /// item. Returns the release frame of the item click.
+    fn click_menu_item(&mut self, menu: &str, item: &str) -> egui::FullOutput {
+        let _ = self.click_topbar_button(menu);
+        let out = self.frame();
+        let rect = find_text_exact(&out, item).unwrap_or_else(|| {
+            panic!(
+                "menu {menu:?} does not show item {item:?}; texts: {:?}",
+                texts(&out)
+            )
+        });
+        self.click_at(rect.center())
+    }
+
+    /// Open a path prompt (Save As / Open / Export …) via the File menu and return
+    /// its kind after it appears.
+    fn open_prompt(&mut self, item: &str) -> PathPrompt {
+        let _ = self.click_menu_item("File ▾", item);
         let prompt = self.app.path_prompt();
-        assert!(prompt.is_some(), "clicking {button:?} opens a path prompt");
+        assert!(
+            prompt.is_some(),
+            "clicking File ▾ → {item:?} opens a path prompt"
+        );
         prompt.expect("checked above")
     }
 
@@ -1288,9 +1307,12 @@ fn escape_while_prompt_opens_closes_the_prompt_not_the_edit() {
     let min = gui.canvas_min();
     place_text_object(&mut gui, min);
 
-    // Click Open…, but press Escape before the settle frame: both are open now.
+    // Click File ▾ → Open…, but press Escape before the settle frame: both are open now.
     let out = gui.frame();
-    let rect = find_text_exact(&out, "Open…").expect("top bar has Open…");
+    let file = find_text_exact(&out, "File ▾").expect("top bar has File ▾");
+    let _ = gui.click_at(file.center());
+    let out = gui.frame();
+    let rect = find_text_exact(&out, "Open…").expect("the File menu shows Open…");
     let _ = gui.pump(Gui::press_at(rect.center()));
     let _ = gui.pump(Gui::release_at(rect.center()));
     assert!(gui.app.path_prompt().is_some(), "the prompt opened");
@@ -1373,9 +1395,13 @@ fn copy_button_puts_the_exact_canvas_bytes_on_the_clipboard() {
 
     // The CopyText command is drained into the *release* frame's FullOutput (egui
     // takes it out of the context at end of pass), so capture that frame directly
-    // instead of going through `click_at`'s settle frame.
+    // instead of going through `click_at`'s settle frame. Copy lives in the File
+    // menu (S-025): open it first, then press/release on the item.
     let out = gui.frame();
-    let rect = find_text_exact(&out, "Copy").expect("top bar has Copy");
+    let file = find_text_exact(&out, "File ▾").expect("top bar has File ▾");
+    let _ = gui.click_at(file.center());
+    let out = gui.frame();
+    let rect = find_text_exact(&out, "Copy").expect("the File menu shows Copy");
     let _ = gui.pump(Gui::press_at(rect.center()));
     let out = gui.pump(Gui::release_at(rect.center()));
     let copied = out.platform_output.commands.iter().find_map(|c| match c {
@@ -1530,22 +1556,16 @@ fn template_editor_save_registers_a_placeable_template() {
     gui.frame();
     let _ = gui.click_at(first_cell.center()); // toggles an anchor at (0, 0)
 
-    // Save via the window's own Save button (the lower of the two "Save" labels).
+    // Save via the window's own Save button — the only visible "Save" (the
+    // top-bar one lives inside the closed File menu, S-025).
     let out = gui.frame();
     let saves: Vec<Rect> = texts(&out)
         .into_iter()
         .filter(|(t, _)| t == "Save")
         .map(|(_, r)| r)
         .collect();
-    assert!(
-        saves.len() >= 2,
-        "top-bar Save and window Save are both visible"
-    );
-    let window_save = saves
-        .iter()
-        .max_by(|a, b| a.min.y.total_cmp(&b.min.y))
-        .unwrap();
-    let out = gui.click_at(window_save.center());
+    assert_eq!(saves.len(), 1, "only the window's Save button is visible");
+    let out = gui.click_at(saves[0].center());
 
     // The template is registered under the default collection "myshapes".
     assert!(
@@ -1691,18 +1711,16 @@ fn template_editor_art_box_and_resize_rules_save_a_resizable_template() {
         .expect("the grid shows the box's top-left corner");
     let _ = gui.click_at(corner.center());
 
-    // Save via the window's own Save button (the lower of the two "Save" labels).
+    // Save via the window's own Save button — the only visible "Save" (the
+    // top-bar one lives inside the closed File menu, S-025).
     let out = gui.frame();
     let saves: Vec<Rect> = texts(&out)
         .into_iter()
         .filter(|(t, _)| t == "Save")
         .map(|(_, r)| r)
         .collect();
-    let window_save = *saves
-        .iter()
-        .max_by(|a, b| a.min.y.total_cmp(&b.min.y))
-        .expect("the window's Save button is visible");
-    let out = gui.click_at(window_save.center());
+    assert_eq!(saves.len(), 1, "only the window's Save button is visible");
+    let out = gui.click_at(saves[0].center());
 
     // The template is registered and — because it carries resize rules — the catalog
     // marks it resizable with a minimum extent (S-024 AC5/AC6).
@@ -1872,6 +1890,14 @@ fn visual_dump() {
         shot(&gui.ctx, &out, "08-inline-edit.png");
     }
 
+    // 9. File menu open (FR6 / CR-002): the grouped dropdown over the canvas.
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let _ = gui.click_topbar_button("File ▾");
+        let out = gui.frame();
+        shot(&gui.ctx, &out, "09-file-menu.png");
+    }
+
     eprintln!("visual dump written to {dir:?}");
 }
 
@@ -1882,7 +1908,7 @@ fn dbg_layout_dump() {
     }
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     if std::env::var("GUI_DEBUG_LAYOUT_PROMPT").is_ok() {
-        gui.click_topbar_button("Save As…");
+        let _ = gui.click_menu_item("File ▾", "Save As…");
     }
     let out = gui.frame();
     println!(
@@ -2191,6 +2217,136 @@ fn opening_a_document_resets_the_pan() {
         Vec2::ZERO,
         "opening a document resets the pan"
     );
+}
+
+// ─────────────────── menu bar (FR6 / CR-002, S-025) ───────────────────
+
+/// AC1 — the top bar is a menu bar: File ▾ and Options ▾ plus the Scale group; no
+/// flat action buttons remain while the menus are closed.
+#[test]
+fn toolbar_is_a_menu_bar_without_flat_action_buttons() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.frame();
+    for label in ["File ▾", "Options ▾", "Scale ×1"] {
+        assert!(
+            find_text_exact(&out, label).is_some(),
+            "top bar has {label:?}"
+        );
+    }
+    // The one-shot actions live inside the dropdowns, not on the bar itself.
+    for label in [
+        "Open…",
+        "Save As…",
+        "Copy",
+        "Text .txt",
+        "Export SVG…",
+        "Export PNG…",
+    ] {
+        assert!(
+            find_text_exact(&out, label).is_none(),
+            "{label:?} is a menu item, not a flat button"
+        );
+    }
+}
+
+/// AC1/AC3 — opening File ▾ lists all seven actions in group order.
+#[test]
+fn file_menu_lists_the_grouped_actions() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.click_topbar_button("File ▾");
+    let out = gui.frame();
+    let labels: Vec<&str> = [
+        "Open…",
+        "Save",
+        "Save As…",
+        "Copy",
+        "Text .txt",
+        "Export SVG…",
+        "Export PNG…",
+    ]
+    .into_iter()
+    .collect();
+    let mut last_y = f32::MIN;
+    for label in &labels {
+        let rect = find_text_exact(&out, label)
+            .unwrap_or_else(|| panic!("the File menu shows {label:?}; texts: {:?}", texts(&out)));
+        assert!(rect.min.y >= last_y, "{label:?} keeps group order");
+        last_y = rect.min.y;
+    }
+}
+
+/// AC2/AC3 — selecting a File item performs the action and closes the menu.
+#[test]
+fn file_menu_item_performs_and_closes_the_menu() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.click_menu_item("File ▾", "Save As…");
+    assert_eq!(gui.app.path_prompt(), Some(PathPrompt::SaveAs));
+    // The menu closed: its items are gone from the frame (the prompt is open instead).
+    for label in ["Open…", "Copy", "Export PNG…"] {
+        assert!(find_text_exact(&out, label).is_none(), "{label:?} is gone");
+    }
+}
+
+/// AC3 — Escape closes the File menu without performing anything.
+#[test]
+fn escape_closes_the_file_menu_without_performing() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.click_topbar_button("File ▾");
+    assert!(
+        find_text_exact(&gui.frame(), "Open…").is_some(),
+        "menu is open"
+    );
+
+    let _ = gui.key(Key::Escape);
+    let out = gui.frame();
+    assert!(gui.app.path_prompt().is_none(), "nothing was performed");
+    assert!(find_text_exact(&out, "Open…").is_none(), "the menu closed");
+}
+
+/// AC2 — while a PNG export is in flight, the Export PNG… item is disabled
+/// (clicking it does nothing); once the job completes the item is offered again.
+/// The in-flight state is driven deterministically through the S-015 test seam:
+/// a held reply channel keeps the job Pending until the test releases it.
+#[test]
+fn export_png_item_is_disabled_while_an_export_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.canvas_min();
+
+    // In-flight job: the sender is held, so every tick reports Pending.
+    let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<u8>, ui_api::ExportError>>();
+    gui.app.set_inflight_png_export(
+        core_services::PngJob::from_reply(rx),
+        tmp.path().join("held.png"),
+    );
+
+    // The File menu lists Export PNG…, but clicking it does nothing (disabled).
+    let _ = gui.click_topbar_button("File ▾");
+    let out = gui.frame();
+    let item = find_text_exact(&out, "Export PNG…").expect("the item is listed");
+    let _ = gui.click_at(item.center());
+    assert!(
+        gui.app.path_prompt().is_none(),
+        "no new export prompt while one is running"
+    );
+
+    // Release the job: the next frame ticks it to Done, writes the bytes and clears
+    // the exporting state — after which the item opens a prompt again.
+    let _ = tx.send(Ok(vec![0x89, b'P', b'N', b'G']));
+    let out = gui.frame();
+    assert!(
+        !gui.app.png_export_inflight(),
+        "the job was ticked to completion"
+    );
+    assert!(
+        tmp.path().join("held.png").exists(),
+        "the job's bytes were written"
+    );
+    assert!(
+        find_text(&out, "Exporting").is_none(),
+        "the exporting state is cleared"
+    );
+    assert_eq!(gui.open_prompt("Export PNG…"), PathPrompt::ExportPng);
 }
 
 // ─────────────── options menu + theme persistence (FR13 / CR-005, S-023) ───────────────
