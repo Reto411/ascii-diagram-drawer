@@ -2,7 +2,7 @@
 title: CR-004 - right-side SVG preview pane
 description: a resizable, hideable right-side pane showing the diagram's effectively rendered SVG (IDE-style split view), with a "Preview" bookmark at the right edge to re-open it
 scope: gui (preview pane) + export pipeline reuse
-status: accepted
+status: implemented
 priority: medium
 updated: 2026-10-31
 ---
@@ -58,4 +58,4 @@ User feedback: they want to see the **effectively rendered diagram** — the exa
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-026** — commit `fd9ce32` (2026-10-31). Right-side egui `SidePanel` showing the *effectively rendered* diagram: new `exporters::text_to_rgba` funnels the exact canvas text through the same `svg_from_text` → usvg/resvg pipeline as `to_svg`/`to_png`, so preview pixels are byte-derived from what Export writes (pixel-pinned test against a decoded PNG of the same grid); a hash gate on the canvas text makes unchanged models a no-op. New `core-services/src/preview.rs` re-exports the seam — gui-app never names the raster crates (ADR 009 discipline; no new `ui-api` trait, rasterization has one implementation per ADR 016). Drag-resize clamped 160–900 px (default 380, persisted across frames); collapse by dragging past the minimum or double-clicking the panel edge; re-open via a compact "Preview" bookmark at the window's right edge. Gotcha found & fixed along the way: egui 0.37 side panels are resizable *by default* — the panel's own `__resize` handle overlays its content and wins hit-testing, so the bookmark panel is marked non-resizable (the re-open test failed until this). Empty diagram → "Nothing to preview yet" placeholder; raster failure / feature-off `Unsupported` → explanatory message inside the pane while canvas + toolbar keep working. 9 new tests (4 exporters unit + 5 tier-0b); workspace fmt/clippy(0)/test green (486 passed); tarpaulin 94.23% ≥ 80%; arc42 §8 records the preview seam + pane.
