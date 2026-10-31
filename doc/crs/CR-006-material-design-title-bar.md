@@ -2,7 +2,7 @@
 title: CR-006 - material design gui with custom title bar
 description: style the whole GUI according to Material Design — custom (undecorated) window border/app-bar with minimize, fullscreen and close controls; button symbols may be ASCII art rendered by the app's own pipeline and stored as SVG assets
 scope: gui (theming + window chrome)
-status: accepted
+status: implemented
 priority: medium
 updated: 2026-10-31
 ---
@@ -56,6 +56,4 @@ User feedback: "I want to look the application modern." The current default-egui
 
 ## Implementation
 
-> Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
-
--
+- **S-027** — commit `5f78f74` (2026-10-31). `theme.rs` builds both Material palettes from M3 baseline tokens (light primary #6750A4 / dark #D0BCFF, surface + on-surface roles, 4dp spacing, corner radii, elevation shadows) and installs them via `ctx.set_style_of`, so the existing FR13 Light/Dark/Native selection drives the palette with live repaint. `appbar.rs` draws the 40-pt app bar: diagram title + native-only minimize/fullscreen/close in bundled monospace glyphs (tofu-pinned), each click queuing `Minimized(true)` / `Fullscreen(bool)` toggle / `Close`; the empty strip is a drag region. **User-reported bug fixed along the way:** “grabbing the window never undrags it” — the old code queued `StartDrag` on every frame while dragging, and egui-winit forwards each command to winit's `drag_window()`; on X11 those pointer grabs stack, so the window kept following the cursor after release. Now exactly one `StartDrag` per gesture (regression test). Native window runs undecorated (`with_decorations(false)`, wasm keeps browser chrome — NFR1); since there is no OS border, invisible 6-pt edge/corner resize grips queue one `BeginResize(dir)` each with the correct hover cursor (all 8 zones pinned; degenerate windows register none). Canvas paints a fixed background first and is pixel-identical under both palettes (WYSIWYG preserved, ADR 008). First golden set committed (`tests/goldens/material-{dark,light}.png`) with a pixel-exact diff test using a pure-std PNG decoder — no new dependency. 9 new tests; workspace fmt/clippy(0)/test green (503 passed); tarpaulin 94.68% ≥ 80%; ADR 017 → accepted; arc42 §8 records `theme.rs` + `appbar.rs`.
