@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use diagram_model::Diagram;
+use diagram_model::{Diagram, geometry::CellPos, objects::ObjectId};
 use render_pipeline::{RenderError, ResolvedGrid};
 use ui_api::{
     AnchorInfo, CatalogError, DiagramStore, Exporter, LoadedDocument, NewTemplate, Renderer,
@@ -86,13 +86,26 @@ impl DiagramStore for FakeStore {
 #[derive(Debug)]
 pub struct FakeRenderer {
     outcome: Result<ResolvedGrid, RenderError>,
+    /// Configured connector routes for `connector_routes` (CR-007) — empty by
+    /// default, so GUI tests opt in when they exercise connector hit-testing.
+    routes: Vec<(ObjectId, Vec<CellPos>)>,
 }
 
 impl FakeRenderer {
     /// Always renders `grid`, whatever the input.
     #[must_use]
     pub fn with_grid(grid: ResolvedGrid) -> Self {
-        Self { outcome: Ok(grid) }
+        Self {
+            outcome: Ok(grid),
+            routes: Vec::new(),
+        }
+    }
+
+    /// Sets the connector routes served by [`Renderer::connector_routes`].
+    #[must_use]
+    pub fn with_routes(mut self, routes: Vec<(ObjectId, Vec<CellPos>)>) -> Self {
+        self.routes = routes;
+        self
     }
 
     /// Always fails with `UnknownShapeType` — for GUI error-path tests.
@@ -102,6 +115,7 @@ impl FakeRenderer {
             outcome: Err(RenderError::UnknownShapeType {
                 type_id: type_id.into(),
             }),
+            routes: Vec::new(),
         }
     }
 }
@@ -109,6 +123,14 @@ impl FakeRenderer {
 impl Renderer for FakeRenderer {
     fn render(&self, _diagram: &Diagram) -> Result<ResolvedGrid, RenderError> {
         self.outcome.clone()
+    }
+
+    /// The configured routes, whatever the input (CR-007).
+    fn connector_routes(
+        &self,
+        _diagram: &Diagram,
+    ) -> Result<Vec<(ObjectId, Vec<CellPos>)>, RenderError> {
+        Ok(self.routes.clone())
     }
 
     /// The fake preview is the configured grid's text with the pattern rows

@@ -60,6 +60,15 @@ pub enum EditOutcome {
     Connecting { from: AnchorRef },
     /// A connector was created between two anchors.
     Connected { id: ObjectId },
+    /// A new bend entered the model at the dragged cell (CR-007 AC5) — live, on the
+    /// first displacement of a body drag.
+    BendAdded { id: ObjectId, at: CellPos },
+    /// A bend followed the pointer (CR-007 AC5) — live during the drag; also reported
+    /// after [`EditOutcome::BendAdded`] for the same gesture's later moves.
+    BendMoved { id: ObjectId, to: CellPos },
+    /// A dropped bend sat on the straight line between its neighbors and was removed
+    /// (CR-007 AC6 — Visio-style cleanup).
+    BendRemoved { id: ObjectId, index: usize },
     /// The selected object (and its connectors) left the model.
     Deleted { id: ObjectId, removed: usize },
     /// An in-flight gesture or placement was cancelled without mutation.
@@ -80,6 +89,28 @@ enum Gesture {
     Resize { id: ObjectId, min_size: CellSize },
     /// Connect drag from a source anchor to wherever the pointer drops.
     Connect { from: AnchorRef },
+    /// Dragging an existing bend (CR-007 AC5): `move_bend` live on every move; a drop
+    /// on the straight line between its neighbors removes it (AC6). `prev`/`next` are
+    /// the adjacent polyline points — fixed for the whole gesture. `moved` is false
+    /// until the first cell crossing, so a press without movement never removes.
+    BendMove {
+        id: ObjectId,
+        index: usize,
+        prev: CellPos,
+        next: CellPos,
+        moved: bool,
+    },
+    /// Dragging from a connector's body to add a new bend (CR-007 AC5): the bend is
+    /// created at the first displacement (inserted at `segment`) and moved live after;
+    /// a drop on the straight line between its neighbors removes it again (AC6).
+    BendAdd {
+        id: ObjectId,
+        segment: usize,
+        prev: CellPos,
+        next: CellPos,
+        pressed: CellPos,
+        added: bool,
+    },
 }
 
 /// What a canvas click will place — the tool picked in the sidebar (S-012 shapes,
@@ -245,6 +276,46 @@ impl EditorState {
             }
             // Press on a shape or text body: select + start the move gesture (AC2).
             HitTarget::Body(id) => self.grab(col, row, id, diagram),
+            // CR-007 AC4 — pressing a connector (bend or body) selects it.
+            HitTarget::Bend {
+                id,
+                index,
+                prev,
+                next,
+            } => {
+                let Some(Object::Connector(_)) = diagram.get(&id) else {
+                    return EditOutcome::Nothing; // defensive: stale hit
+                };
+                self.selection = Some(id.clone());
+                self.gesture = Some(Gesture::BendMove {
+                    id: id.clone(),
+                    index,
+                    prev,
+                    next,
+                    moved: false,
+                });
+                EditOutcome::Selected(id)
+            }
+            HitTarget::ConnectorBody {
+                id,
+                segment,
+                prev,
+                next,
+            } => {
+                let Some(Object::Connector(_)) = diagram.get(&id) else {
+                    return EditOutcome::Nothing; // defensive: stale hit
+                };
+                self.selection = Some(id.clone());
+                self.gesture = Some(Gesture::BendAdd {
+                    id: id.clone(),
+                    segment,
+                    prev,
+                    next,
+                    pressed: CellPos::new(col, row),
+                    added: false,
+                });
+                EditOutcome::Selected(id)
+            }
             HitTarget::Empty => {
                 self.selection = None;
                 EditOutcome::Deselected
@@ -394,6 +465,70 @@ impl EditorState {
             // Connect drags are pure hover until release (the highlight is drawn by the
             // canvas from the same hit computation).
             Gesture::Connect { .. } => EditOutcome::Nothing,
+            Gesture::BendMove {
+                id,
+                index,
+                prev,
+                next,
+                ..
+            } => {
+                // AC5 — free 2-D drag on the discrete grid: sharing a row/column with a
+                // neighbor is exact, so axis-alignment needs no pull; a diagonal to a
+                // neighbor appears exactly when the pointer is off both of its axes.
+                let snapped = CellPos::new(col, row);
+                if diagram.move_bend(&id, index, snapped).is_ok() {
+                    // Persist the flag: this gesture is live until release (AC6's
+                    // "moved" check reads it on drop).
+                    self.gesture = Some(Gesture::BendMove {
+                        id: id.clone(),
+                        index,
+                        prev,
+                        next,
+                        moved: true,
+                    });
+                    EditOutcome::BendMoved { id, to: snapped }
+                } else {
+                    EditOutcome::Nothing
+                }
+            }
+            Gesture::BendAdd {
+                id,
+                segment,
+                prev,
+                next,
+                pressed,
+                added,
+            } => {
+                // AC5 — see the BendMove arm: on a cell grid the axis-snap rule is
+                // exact, so the waypoint lands where the pointer is.
+                let snapped = CellPos::new(col, row);
+                if !added && snapped == pressed {
+                    // Still on the pressed cell — nothing moved yet (AC6). Once the bend
+                    // exists, moving back over the press point is a normal live move.
+                    return EditOutcome::Nothing;
+                }
+                if !added {
+                    match diagram.add_bend(&id, segment, snapped) {
+                        Ok(()) => {
+                            self.gesture = Some(Gesture::BendAdd {
+                                id: id.clone(),
+                                segment,
+                                prev,
+                                next,
+                                pressed,
+                                added: true,
+                            });
+                            EditOutcome::BendAdded { id, at: snapped }
+                        }
+                        Err(_) => EditOutcome::Nothing,
+                    }
+                } else if diagram.move_bend(&id, segment, snapped).is_ok() {
+                    // The inserted bend sits at `segment` for the rest of the gesture.
+                    EditOutcome::BendMoved { id, to: snapped }
+                } else {
+                    EditOutcome::Nothing
+                }
+            }
         }
     }
 
@@ -411,6 +546,58 @@ impl EditorState {
                 match diagram.connect(connector) {
                     Ok(()) => EditOutcome::Connected { id },
                     Err(_) => EditOutcome::Nothing, // defensive: endpoints were just hit-tested
+                }
+            }
+            // CR-007 AC6 — dropping a *moved* bend on the straight line between its
+            // neighbors removes it (Visio-style cleanup); otherwise it stays where the
+            // live moves left it. A press without movement never removes.
+            (
+                Some(Gesture::BendMove {
+                    id,
+                    index,
+                    prev,
+                    next,
+                    moved,
+                }),
+                _,
+            ) => {
+                if moved
+                    && let Some(Object::Connector(connector)) = diagram.get(&id)
+                    && let Some(bend) = connector.bends.get(index)
+                    && crate::canvas::on_segment(prev, next, *bend)
+                {
+                    match diagram.remove_bend(&id, index) {
+                        Ok(()) => EditOutcome::BendRemoved { id, index },
+                        Err(_) => EditOutcome::Nothing,
+                    }
+                } else {
+                    EditOutcome::Nothing
+                }
+            }
+            // Same rule for a bend added by the drag: dropped on the line between its
+            // neighbors it is removed again; a press without movement added nothing.
+            (
+                Some(Gesture::BendAdd {
+                    id,
+                    segment,
+                    prev,
+                    next,
+                    added,
+                    ..
+                }),
+                _,
+            ) => {
+                if added
+                    && let Some(Object::Connector(connector)) = diagram.get(&id)
+                    && let Some(bend) = connector.bends.get(segment)
+                    && crate::canvas::on_segment(prev, next, *bend)
+                {
+                    match diagram.remove_bend(&id, segment) {
+                        Ok(()) => EditOutcome::BendRemoved { id, index: segment },
+                        Err(_) => EditOutcome::Nothing,
+                    }
+                } else {
+                    EditOutcome::Nothing
                 }
             }
             // Dropping anywhere else cancels the gesture without mutation (AC2).
@@ -480,13 +667,20 @@ mod tests {
 
     /// Runs the same hit computation `app.rs` uses, so gesture tests exercise the real
     /// target a press on that cell would carry.
-    fn down(editor: &mut EditorState, diagram: &mut Diagram, col: u32, row: u32) -> EditOutcome {
+    fn down(
+        editor: &mut EditorState,
+        diagram: &mut Diagram,
+        col: u32,
+        row: u32,
+        routes: &[(ObjectId, Vec<CellPos>)],
+    ) -> EditOutcome {
         let target = hit_target(
             diagram,
             &catalog(),
             editor.selection.as_ref(),
             None,
             (col, row),
+            routes,
         );
         editor.on_pointer(
             PointerEvent::Down {
@@ -497,13 +691,20 @@ mod tests {
         )
     }
 
-    fn move_to(editor: &mut EditorState, diagram: &mut Diagram, col: u32, row: u32) -> EditOutcome {
+    fn move_to(
+        editor: &mut EditorState,
+        diagram: &mut Diagram,
+        col: u32,
+        row: u32,
+        routes: &[(ObjectId, Vec<CellPos>)],
+    ) -> EditOutcome {
         let target = hit_target(
             diagram,
             &catalog(),
             editor.selection.as_ref(),
             None,
             (col, row),
+            routes,
         );
         editor.on_pointer(
             PointerEvent::Move {
@@ -519,9 +720,17 @@ mod tests {
         diagram: &mut Diagram,
         col: u32,
         row: u32,
+        routes: &[(ObjectId, Vec<CellPos>)],
         connecting_from: Option<&AnchorRef>,
     ) -> EditOutcome {
-        let target = hit_target(diagram, &catalog(), None, connecting_from, (col, row));
+        let target = hit_target(
+            diagram,
+            &catalog(),
+            None,
+            connecting_from,
+            (col, row),
+            routes,
+        );
         editor.on_pointer(PointerEvent::Up { target }, diagram)
     }
 
@@ -563,7 +772,7 @@ mod tests {
         editor.select_template(info("box", "Box", 9, 5));
         // `new_object_id()` hands out ids starting at obj-1.
         assert_eq!(
-            down(&mut editor, &mut diagram, 3, 4),
+            down(&mut editor, &mut diagram, 3, 4, &[]),
             EditOutcome::Placed {
                 id: ObjectId::generated(1),
                 type_id: "box".to_owned()
@@ -591,7 +800,7 @@ mod tests {
         assert_eq!(star.collection.as_deref(), Some("stars"));
         editor.select_template(star);
         assert_eq!(
-            down(&mut editor, &mut diagram, 10, 2),
+            down(&mut editor, &mut diagram, 10, 2, &[]),
             EditOutcome::Placed {
                 id: ObjectId::generated(1),
                 type_id: "stars/star".to_owned()
@@ -611,9 +820,9 @@ mod tests {
         let mut diagram = Diagram::new();
 
         editor.select_template(info("box", "Box", 9, 5));
-        down(&mut editor, &mut diagram, 0, 0);
+        down(&mut editor, &mut diagram, 0, 0, &[]);
         editor.select_template(info("ellipse", "Ellipse", 9, 5));
-        down(&mut editor, &mut diagram, 12, 0);
+        down(&mut editor, &mut diagram, 12, 0, &[]);
 
         let ids: Vec<ObjectId> = diagram.objects().iter().map(Object::id).cloned().collect();
         assert_eq!(ids, vec![ObjectId::generated(1), ObjectId::generated(2)]);
@@ -623,9 +832,9 @@ mod tests {
     fn clicking_an_empty_cell_deselects() {
         let mut editor = EditorState::default();
         let mut diagram = diagram_with_box();
-        down(&mut editor, &mut diagram, 2, 1);
+        down(&mut editor, &mut diagram, 2, 1, &[]);
         assert_eq!(
-            down(&mut editor, &mut diagram, 30, 20),
+            down(&mut editor, &mut diagram, 30, 20, &[]),
             EditOutcome::Deselected
         );
         assert!(editor.selection.is_none());
@@ -654,7 +863,7 @@ mod tests {
         }
 
         assert_eq!(
-            down(&mut editor, &mut diagram, 5, 2),
+            down(&mut editor, &mut diagram, 5, 2, &[]),
             EditOutcome::Selected(ObjectId::generated(2))
         );
     }
@@ -666,13 +875,13 @@ mod tests {
 
         // Press on cell (2,1) — inside the box, grab offset (2,1).
         assert_eq!(
-            down(&mut editor, &mut diagram, 2, 1),
+            down(&mut editor, &mut diagram, 2, 1, &[]),
             EditOutcome::Selected(ObjectId::generated(1))
         );
 
         // Drag to cell (10,7): the box's top-left follows with the offset preserved.
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 10, 7),
+            move_to(&mut editor, &mut diagram, 10, 7, &[]),
             EditOutcome::Moved {
                 id: ObjectId::generated(1),
                 to: CellPos::new(8, 6)
@@ -685,14 +894,14 @@ mod tests {
 
         // Moving within the same cell is a no-op — no redundant model mutation.
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 10, 7),
+            move_to(&mut editor, &mut diagram, 10, 7, &[]),
             EditOutcome::Nothing
         );
 
         // Release ends the drag; further moves do nothing.
-        up(&mut editor, &mut diagram, 10, 7, None);
+        up(&mut editor, &mut diagram, 10, 7, &[], None);
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 20, 7),
+            move_to(&mut editor, &mut diagram, 20, 7, &[]),
             EditOutcome::Nothing
         );
     }
@@ -724,7 +933,7 @@ mod tests {
         ); // offset (2,1)
         // Drag far to the top-left corner: (1,0) - (2,1) saturates to (0,0).
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 1, 0),
+            move_to(&mut editor, &mut diagram, 1, 0, &[]),
             EditOutcome::Moved {
                 id,
                 to: CellPos::new(0, 0)
@@ -737,7 +946,7 @@ mod tests {
         let mut editor = EditorState::default();
         let mut diagram = diagram_with_box();
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 4, 2),
+            move_to(&mut editor, &mut diagram, 4, 2, &[]),
             EditOutcome::Nothing
         );
         assert_eq!(
@@ -753,16 +962,16 @@ mod tests {
         let mut diagram = diagram_with_box(); // 9×5 at (0,0)
 
         // Move gesture: press inside, hover the same cell again.
-        down(&mut editor, &mut diagram, 1, 1);
+        down(&mut editor, &mut diagram, 1, 1, &[]);
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 1, 1),
+            move_to(&mut editor, &mut diagram, 1, 1, &[]),
             EditOutcome::Nothing
         );
 
         // Resize gesture: press the handle, hover it again.
-        down(&mut editor, &mut diagram, 8, 4);
+        down(&mut editor, &mut diagram, 8, 4, &[]);
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 8, 4),
+            move_to(&mut editor, &mut diagram, 8, 4, &[]),
             EditOutcome::Nothing
         );
         assert_eq!(first_shape(&diagram).size, CellSize::new(9, 5).unwrap());
@@ -775,8 +984,8 @@ mod tests {
         let mut diagram = two_boxes(); // s1 at (0,0), s2 elsewhere
         assert!(editor.connecting_source().is_none());
 
-        down(&mut editor, &mut diagram, 1, 1); // select s1 + start move
-        down(&mut editor, &mut diagram, 8, 2); // its e anchor → connect gesture
+        down(&mut editor, &mut diagram, 1, 1, &[]); // select s1 + start move
+        down(&mut editor, &mut diagram, 8, 2, &[]); // its e anchor → connect gesture
         let from = editor.connecting_source().expect("in flight");
         assert_eq!(from.object(), &ObjectId::generated(1));
         assert_eq!(from.anchor(), "e");
@@ -794,7 +1003,7 @@ mod tests {
         assert_eq!(editor.on_escape(), EditOutcome::Cancelled);
         // Back in selection mode: an empty-cell press only deselects.
         assert_eq!(
-            down(&mut editor, &mut diagram, 1, 1),
+            down(&mut editor, &mut diagram, 1, 1, &[]),
             EditOutcome::Deselected
         );
         assert_eq!(diagram.len(), 0);
@@ -807,7 +1016,10 @@ mod tests {
 
         // Whitespace in the type id violates the model invariant — placement is refused.
         editor.select_template(info("bad id", "Bad", 3, 3));
-        assert_eq!(down(&mut editor, &mut diagram, 1, 1), EditOutcome::Nothing);
+        assert_eq!(
+            down(&mut editor, &mut diagram, 1, 1, &[]),
+            EditOutcome::Nothing
+        );
         assert_eq!(diagram.len(), 0);
     }
 
@@ -820,16 +1032,19 @@ mod tests {
 
         // Select first (handles are only offered on the selection)…
         assert_eq!(
-            down(&mut editor, &mut diagram, 1, 1),
+            down(&mut editor, &mut diagram, 1, 1, &[]),
             EditOutcome::Selected(ObjectId::generated(1))
         );
         // …then press the bottom-right cell (8,4): that is the resize handle, not a move.
-        assert_eq!(down(&mut editor, &mut diagram, 8, 4), EditOutcome::Nothing);
+        assert_eq!(
+            down(&mut editor, &mut diagram, 8, 4, &[]),
+            EditOutcome::Nothing
+        );
         assert_eq!(first_shape(&diagram).size, CellSize::new(9, 5).unwrap());
 
         // Drag to (12,7): extent becomes 13×8.
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 12, 7),
+            move_to(&mut editor, &mut diagram, 12, 7, &[]),
             EditOutcome::Resized {
                 id: ObjectId::generated(1),
                 to: CellSize::new(13, 8).unwrap()
@@ -845,7 +1060,7 @@ mod tests {
 
         // Shrinking works too.
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 4, 2),
+            move_to(&mut editor, &mut diagram, 4, 2, &[]),
             EditOutcome::Resized {
                 id: ObjectId::generated(1),
                 to: CellSize::new(5, 3).unwrap()
@@ -873,14 +1088,14 @@ mod tests {
 
         // Select first (the handle only exists for the selected shape)…
         assert_eq!(
-            down(&mut editor, &mut diagram, 6, 6),
+            down(&mut editor, &mut diagram, 6, 6, &[]),
             EditOutcome::Selected(id.clone())
         );
         // …then press the bottom-right cell (13,9) and drag far past the top-left:
         // the extent saturates at 1×1.
-        down(&mut editor, &mut diagram, 13, 9);
+        down(&mut editor, &mut diagram, 13, 9, &[]);
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 5, 5),
+            move_to(&mut editor, &mut diagram, 5, 5, &[]),
             EditOutcome::Resized {
                 id,
                 to: CellSize::new(1, 1).unwrap()
@@ -983,11 +1198,11 @@ mod tests {
 
         // Select s1, then press its e anchor (8,2) — the connection starts.
         assert_eq!(
-            down(&mut editor, &mut diagram, 1, 1),
+            down(&mut editor, &mut diagram, 1, 1, &[]),
             EditOutcome::Selected(s1.clone())
         );
         assert_eq!(
-            down(&mut editor, &mut diagram, 8, 2),
+            down(&mut editor, &mut diagram, 8, 2, &[]),
             EditOutcome::Connecting {
                 from: AnchorRef::new(s1.clone(), "e").unwrap()
             }
@@ -995,7 +1210,7 @@ mod tests {
 
         // Hover mid-gap: pure hover, no mutation.
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 14, 3),
+            move_to(&mut editor, &mut diagram, 14, 3, &[]),
             EditOutcome::Nothing
         );
         assert_eq!(diagram.len(), 2);
@@ -1003,7 +1218,7 @@ mod tests {
         // Release over s2's w anchor (20,2): the connector lands.
         let source = AnchorRef::new(s1.clone(), "e").unwrap();
         assert_eq!(
-            up(&mut editor, &mut diagram, 20, 2, Some(&source)),
+            up(&mut editor, &mut diagram, 20, 2, &[], Some(&source)),
             EditOutcome::Connected {
                 id: ObjectId::generated(3)
             }
@@ -1029,23 +1244,23 @@ mod tests {
         let s1 = ObjectId::generated(1);
 
         assert_eq!(
-            down(&mut editor, &mut diagram, 1, 1),
+            down(&mut editor, &mut diagram, 1, 1, &[]),
             EditOutcome::Selected(s1.clone())
         );
-        down(&mut editor, &mut diagram, 8, 2); // start connecting from e
+        down(&mut editor, &mut diagram, 8, 2, &[]); // start connecting from e
         let source = AnchorRef::new(s1, "e").unwrap();
 
         // Drop on empty space — no connector, gesture over.
         assert_eq!(
-            up(&mut editor, &mut diagram, 14, 9, Some(&source)),
+            up(&mut editor, &mut diagram, 14, 9, &[], Some(&source)),
             EditOutcome::Nothing
         );
         assert_eq!(diagram.len(), 2);
 
         // A second attempt dropped on a shape body (not an anchor) also cancels.
-        down(&mut editor, &mut diagram, 8, 2);
+        down(&mut editor, &mut diagram, 8, 2, &[]);
         assert_eq!(
-            up(&mut editor, &mut diagram, 24, 1, Some(&source)),
+            up(&mut editor, &mut diagram, 24, 1, &[], Some(&source)),
             EditOutcome::Nothing
         );
         assert_eq!(diagram.len(), 2);
@@ -1058,15 +1273,15 @@ mod tests {
         let s1 = ObjectId::generated(1);
 
         assert_eq!(
-            down(&mut editor, &mut diagram, 1, 1),
+            down(&mut editor, &mut diagram, 1, 1, &[]),
             EditOutcome::Selected(s1.clone())
         );
-        down(&mut editor, &mut diagram, 8, 2); // start connecting from e
+        down(&mut editor, &mut diagram, 8, 2, &[]); // start connecting from e
         let source = AnchorRef::new(s1, "e").unwrap();
 
         // The source anchor is never reported as a target (hit_target excludes it)…
         assert_eq!(
-            up(&mut editor, &mut diagram, 8, 2, Some(&source)),
+            up(&mut editor, &mut diagram, 8, 2, &[], Some(&source)),
             EditOutcome::Nothing
         );
         assert_eq!(diagram.len(), 2);
@@ -1100,7 +1315,7 @@ mod tests {
         assert_eq!(diagram.len(), 4);
 
         assert_eq!(
-            down(&mut editor, &mut diagram, 1, 1),
+            down(&mut editor, &mut diagram, 1, 1, &[]),
             EditOutcome::Selected(s1.clone())
         );
         assert_eq!(
@@ -1133,10 +1348,10 @@ mod tests {
 
         // Cancels an in-flight connection.
         assert_eq!(
-            down(&mut editor, &mut diagram, 1, 1),
+            down(&mut editor, &mut diagram, 1, 1, &[]),
             EditOutcome::Selected(s1.clone())
         );
-        down(&mut editor, &mut diagram, 8, 2);
+        down(&mut editor, &mut diagram, 8, 2, &[]);
         assert_eq!(editor.on_escape(), EditOutcome::Cancelled);
 
         // Cancels placement mode.
@@ -1146,7 +1361,7 @@ mod tests {
 
         // Deselects: the press also starts a move gesture, so the first escape drops
         // the gesture and the second clears the selection.
-        down(&mut editor, &mut diagram, 1, 1);
+        down(&mut editor, &mut diagram, 1, 1, &[]);
         assert_eq!(editor.on_escape(), EditOutcome::Cancelled);
         assert_eq!(editor.on_escape(), EditOutcome::Deselected);
         // And is a no-op when there is nothing to cancel.
@@ -1325,7 +1540,7 @@ mod tests {
         );
         assert_eq!(editor.selection, Some(id.clone())); // stays selected
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 9, 9),
+            move_to(&mut editor, &mut diagram, 9, 9, &[]),
             EditOutcome::Nothing
         );
         let text = match diagram.get(&id) {
@@ -1360,12 +1575,12 @@ mod tests {
 
         // Press inside the text: select + grab (offset (1,0)).
         assert_eq!(
-            down(&mut editor, &mut diagram, 3, 3),
+            down(&mut editor, &mut diagram, 3, 3, &[]),
             EditOutcome::Selected(id.clone())
         );
         // Drag two cells right: grid-aligned move (AC2).
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 5, 3),
+            move_to(&mut editor, &mut diagram, 5, 3, &[]),
             EditOutcome::Moved {
                 id,
                 to: CellPos::new(4, 3)
@@ -1380,7 +1595,7 @@ mod tests {
         let id = ObjectId::generated(1);
 
         assert_eq!(
-            down(&mut editor, &mut diagram, 2, 3),
+            down(&mut editor, &mut diagram, 2, 3, &[]),
             EditOutcome::Selected(id.clone())
         );
         assert_eq!(
@@ -1391,5 +1606,213 @@ mod tests {
             }
         );
         assert_eq!(diagram.len(), 0);
+    }
+
+    // ---- CR-007: bend gestures -----------------------------------------------
+
+    /// `two_boxes` plus one solid connector s1.e (8,2) → s2.w (20,2); with an optional
+    /// seed bend. Returns the diagram, the connector id and its route polyline.
+    fn bent_scene(bend: Option<CellPos>) -> (Diagram, ObjectId, Vec<CellPos>) {
+        let mut diagram = two_boxes();
+        let c = diagram.new_object_id(); // obj-3
+        diagram
+            .connect(ConnectorInstance::new(
+                c.clone(),
+                AnchorRef::new(ObjectId::generated(1), "e").expect("valid anchor"),
+                AnchorRef::new(ObjectId::generated(2), "w").expect("valid anchor"),
+                ConnectorStyle::Solid,
+            ))
+            .expect("connects");
+        if let Some(b) = bend {
+            diagram.add_bend(&c, 0, b).expect("inserts the bend");
+        }
+        let route = match bend {
+            Some(b) => vec![CellPos::new(8, 2), b, CellPos::new(20, 2)],
+            None => vec![CellPos::new(8, 2), CellPos::new(20, 2)],
+        };
+        (diagram, c, route)
+    }
+
+    fn bends_of(diagram: &Diagram, id: &ObjectId) -> Vec<CellPos> {
+        match diagram.get(id).expect("the connector exists") {
+            Object::Connector(c) => c.bends.clone(),
+            _ => panic!("expected a connector"),
+        }
+    }
+
+    #[test]
+    fn pressing_a_bend_selects_the_connector_and_moves_it_live() {
+        let (mut diagram, c, route) = bent_scene(Some(CellPos::new(14, 6)));
+        let mut editor = EditorState::default();
+        let routes = [(c.clone(), route)];
+
+        // Press the bend cell: selects the connector and starts a live move.
+        assert_eq!(
+            down(&mut editor, &mut diagram, 14, 6, &routes),
+            EditOutcome::Selected(c.clone())
+        );
+
+        // Live moves land where the pointer is (AC5 free drag on a cell grid).
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 15, 5, &routes),
+            EditOutcome::BendMoved {
+                id: c.clone(),
+                to: CellPos::new(15, 5)
+            }
+        );
+        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(15, 5)]);
+
+        // Drop off the straight line between the neighbors: the bend stays.
+        assert_eq!(
+            up(&mut editor, &mut diagram, 16, 7, &routes, None),
+            EditOutcome::Nothing
+        );
+        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(15, 5)]);
+    }
+
+    #[test]
+    fn dropping_a_moved_bend_on_the_neighbor_line_removes_it() {
+        let (mut diagram, c, route) = bent_scene(Some(CellPos::new(14, 6)));
+        let mut editor = EditorState::default();
+        let routes = [(c.clone(), route)];
+
+        down(&mut editor, &mut diagram, 14, 6, &routes); // Selected + BendMove
+        // Drag it back onto the straight line between (8,2) and (20,2).
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 14, 2, &routes),
+            EditOutcome::BendMoved {
+                id: c.clone(),
+                to: CellPos::new(14, 2)
+            }
+        );
+        // Drop: collinear with both neighbors → removed (AC6).
+        assert_eq!(
+            up(&mut editor, &mut diagram, 14, 2, &routes, None),
+            EditOutcome::BendRemoved {
+                id: c.clone(),
+                index: 0
+            }
+        );
+        assert!(bends_of(&diagram, &c).is_empty());
+    }
+
+    #[test]
+    fn pressing_a_bend_without_moving_changes_nothing() {
+        // Seed bend on the straight line between its neighbors: a press+release on the
+        // same cell must not remove it (AC6 — only *moved* bends are cleaned up).
+        let (mut diagram, c, route) = bent_scene(Some(CellPos::new(14, 2)));
+        let mut editor = EditorState::default();
+        let routes = [(c.clone(), route)];
+
+        assert_eq!(
+            down(&mut editor, &mut diagram, 14, 2, &routes),
+            EditOutcome::Selected(c.clone())
+        );
+        assert_eq!(
+            up(&mut editor, &mut diagram, 14, 2, &routes, None),
+            EditOutcome::Nothing
+        );
+        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(14, 2)]);
+    }
+
+    #[test]
+    fn pressing_a_connector_body_and_dragging_adds_a_bend_at_the_drop() {
+        let (mut diagram, c, route) = bent_scene(None); // single segment (8,2)-(20,2)
+        let mut editor = EditorState::default();
+        let routes = [(c.clone(), route)];
+
+        // Press a body cell on the segment: selects + BendAdd gesture.
+        assert_eq!(
+            down(&mut editor, &mut diagram, 11, 2, &routes),
+            EditOutcome::Selected(c.clone())
+        );
+        // Still on the pressed cell: nothing added yet (AC6).
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 11, 2, &routes),
+            EditOutcome::Nothing
+        );
+        assert!(bends_of(&diagram, &c).is_empty());
+
+        // First displacement creates the bend; later moves drag it live.
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 11, 6, &routes),
+            EditOutcome::BendAdded {
+                id: c.clone(),
+                at: CellPos::new(11, 6)
+            }
+        );
+        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(11, 6)]);
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 13, 8, &routes),
+            EditOutcome::BendMoved {
+                id: c.clone(),
+                to: CellPos::new(13, 8)
+            }
+        );
+        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(13, 8)]);
+
+        // Drop off the neighbor line: stays.
+        assert_eq!(
+            up(&mut editor, &mut diagram, 13, 8, &routes, None),
+            EditOutcome::Nothing
+        );
+        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(13, 8)]);
+    }
+
+    #[test]
+    fn dragging_from_a_body_and_dropping_back_on_the_line_adds_nothing() {
+        let (mut diagram, c, route) = bent_scene(None);
+        let mut editor = EditorState::default();
+        let routes = [(c.clone(), route)];
+
+        down(&mut editor, &mut diagram, 11, 2, &routes);
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 11, 5, &routes),
+            EditOutcome::BendAdded {
+                id: c.clone(),
+                at: CellPos::new(11, 5)
+            }
+        );
+        // Drag it back onto the straight segment and drop: removed again (AC6).
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 11, 2, &routes),
+            EditOutcome::BendMoved {
+                id: c.clone(),
+                to: CellPos::new(11, 2)
+            }
+        );
+        assert_eq!(
+            up(&mut editor, &mut diagram, 11, 2, &routes, None),
+            EditOutcome::BendRemoved {
+                id: c.clone(),
+                index: 0
+            }
+        );
+        assert!(bends_of(&diagram, &c).is_empty());
+    }
+
+    #[test]
+    fn bend_dragging_is_free_with_exact_axis_alignment() {
+        let (mut diagram, c, route) = bent_scene(Some(CellPos::new(14, 6)));
+        let mut editor = EditorState::default();
+        let routes = [(c.clone(), route)];
+
+        down(&mut editor, &mut diagram, 14, 6, &routes);
+        // Pointer on the neighbors' shared row (y=2): both segments axis-aligned.
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 9, 2, &routes),
+            EditOutcome::BendMoved {
+                id: c.clone(),
+                to: CellPos::new(9, 2)
+            }
+        );
+        // Pointer off both axes of both neighbors: diagonals on both sides.
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 15, 5, &routes),
+            EditOutcome::BendMoved {
+                id: c.clone(),
+                to: CellPos::new(15, 5)
+            }
+        );
     }
 }

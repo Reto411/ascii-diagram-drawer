@@ -57,6 +57,81 @@ impl Diagram {
         Ok(())
     }
 
+    /// Inserts a manual bend (waypoint, model-space cell) into the connector at `index`
+    /// (0..=bends.len()) — CR-007 / ADR 013 v4. Bends are plain coordinates: no
+    /// referential integrity applies.
+    ///
+    /// # Errors
+    /// [`ModelError::UnknownObject`], [`ModelError::NotAConnector`] or
+    /// [`ModelError::BendIndexOutOfRange`].
+    pub fn add_bend(
+        &mut self,
+        id: &ObjectId,
+        index: usize,
+        cell: CellPos,
+    ) -> Result<(), ModelError> {
+        let bends = self.connector_mut(id)?;
+        if index > bends.len() {
+            return Err(ModelError::BendIndexOutOfRange {
+                object: id.clone(),
+                index,
+            });
+        }
+        bends.insert(index, cell);
+        Ok(())
+    }
+
+    /// Moves the connector's bend at `index` to `cell` (CR-007 / ADR 013 v4).
+    ///
+    /// # Errors
+    /// [`ModelError::UnknownObject`], [`ModelError::NotAConnector`] or
+    /// [`ModelError::BendIndexOutOfRange`].
+    pub fn move_bend(
+        &mut self,
+        id: &ObjectId,
+        index: usize,
+        cell: CellPos,
+    ) -> Result<(), ModelError> {
+        let bends = self.connector_mut(id)?;
+        *bends
+            .get_mut(index)
+            .ok_or_else(|| ModelError::BendIndexOutOfRange {
+                object: id.clone(),
+                index,
+            })? = cell;
+        Ok(())
+    }
+
+    /// Removes the connector's bend at `index` (CR-007 / ADR 013 v4).
+    ///
+    /// # Errors
+    /// [`ModelError::UnknownObject`], [`ModelError::NotAConnector`] or
+    /// [`ModelError::BendIndexOutOfRange`].
+    pub fn remove_bend(&mut self, id: &ObjectId, index: usize) -> Result<(), ModelError> {
+        let bends = self.connector_mut(id)?;
+        if index >= bends.len() {
+            return Err(ModelError::BendIndexOutOfRange {
+                object: id.clone(),
+                index,
+            });
+        }
+        bends.remove(index);
+        Ok(())
+    }
+
+    /// Mutable access to a connector's bend list (aggregate-internal).
+    ///
+    /// # Errors
+    /// [`ModelError::UnknownObject`] when the id does not exist, or
+    /// [`ModelError::NotAConnector`] when it exists but is another object kind.
+    fn connector_mut(&mut self, id: &ObjectId) -> Result<&mut Vec<CellPos>, ModelError> {
+        match self.get_mut(id) {
+            Some(Object::Connector(connector)) => Ok(&mut connector.bends),
+            None => Err(ModelError::UnknownObject(id.clone())),
+            Some(_) => Err(ModelError::NotAConnector(id.clone())),
+        }
+    }
+
     /// Rejects an id that is already taken.
     ///
     /// # Errors
@@ -450,6 +525,96 @@ mod tests {
         assert_eq!(
             diagram.remove(&oid("ghost")),
             Err(ModelError::UnknownObject(oid("ghost")))
+        );
+    }
+
+    /// A diagram with two boxes and one solid connector between them.
+    fn diagram_with_connector() -> Diagram {
+        let mut diagram = Diagram::new();
+        diagram.place_shape(shape("s1", "box")).expect("places");
+        diagram.place_shape(shape("s2", "circle")).expect("places");
+        diagram
+            .connect(connector("c1", "s1", "s2"))
+            .expect("connects");
+        diagram
+    }
+
+    /// Connectors start without manual bends (automatic routing — CR-007).
+    #[test]
+    fn connectors_start_bend_free() {
+        let diagram = diagram_with_connector();
+        let Object::Connector(connector) = diagram.get(&oid("c1")).expect("present") else {
+            panic!("expected connector")
+        };
+        assert!(connector.bends.is_empty());
+    }
+
+    /// add/move/remove bend round-trip through the aggregate (CR-007 / ADR 013 v4).
+    #[test]
+    fn bend_operations_round_trip() {
+        let mut diagram = diagram_with_connector();
+        let id = oid("c1");
+
+        // Insert at both ends and in the middle — index is a position, not a key.
+        diagram
+            .add_bend(&id, 0, CellPos::new(3, 2))
+            .expect("inserts first");
+        diagram
+            .add_bend(&id, 1, CellPos::new(6, 4))
+            .expect("inserts second");
+        let Object::Connector(connector) = diagram.get(&id).expect("present") else {
+            panic!("expected connector")
+        };
+        assert_eq!(
+            connector.bends,
+            vec![CellPos::new(3, 2), CellPos::new(6, 4)]
+        );
+
+        diagram
+            .move_bend(&id, 0, CellPos::new(3, 9))
+            .expect("moves");
+        diagram.remove_bend(&id, 1).expect("removes");
+        let Object::Connector(connector) = diagram.get(&id).expect("present") else {
+            panic!("expected connector")
+        };
+        assert_eq!(connector.bends, vec![CellPos::new(3, 9)]);
+    }
+
+    /// Bend ops fail with typed errors for unknown ids, wrong kinds and bad indices.
+    #[test]
+    fn bend_operations_report_typed_errors() {
+        let mut diagram = diagram_with_connector();
+        let shape_id = oid("s1");
+
+        assert_eq!(
+            diagram.add_bend(&oid("ghost"), 0, CellPos::origin()),
+            Err(ModelError::UnknownObject(oid("ghost")))
+        );
+        assert_eq!(
+            diagram.move_bend(&shape_id, 0, CellPos::origin()),
+            Err(ModelError::NotAConnector(shape_id.clone()))
+        );
+        let id = oid("c1");
+        assert_eq!(
+            diagram.add_bend(&id, 1, CellPos::origin()),
+            Err(ModelError::BendIndexOutOfRange {
+                object: id.clone(),
+                index: 1
+            })
+        );
+        assert_eq!(
+            diagram.move_bend(&id, 0, CellPos::origin()),
+            Err(ModelError::BendIndexOutOfRange {
+                object: id.clone(),
+                index: 0
+            })
+        );
+        assert_eq!(
+            diagram.remove_bend(&id, 0),
+            Err(ModelError::BendIndexOutOfRange {
+                object: id,
+                index: 0
+            })
         );
     }
 

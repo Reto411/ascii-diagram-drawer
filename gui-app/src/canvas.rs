@@ -5,7 +5,7 @@
 
 use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
-use diagram_model::geometry::CellSize;
+use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::objects::{Object, ObjectId, ShapeInstance, TextInstance};
 use ui_api::{AnchorInfo, ShapeCatalog};
 
@@ -23,6 +23,26 @@ pub enum HitTarget {
     /// The resize handle of the selected shape (its bottom-right cell) plus the
     /// smallest size an instance may reach — the gesture's clamp (S-024 AC5).
     ResizeHandle { id: ObjectId, min_size: CellSize },
+    /// A declared bend of a connector (CR-007 AC4/AC5) — `index` is its position in
+    /// the connector's bend list; `prev`/`next` are the adjacent polyline points
+    /// (endpoints or neighboring bends), needed for axis snapping and the collinear
+    /// drop check.
+    Bend {
+        id: ObjectId,
+        index: usize,
+        prev: CellPos,
+        next: CellPos,
+    },
+    /// A cell of a connector's body — not an anchor or bend (CR-007 AC4/AC5) — where
+    /// a drag adds a new bend. `segment` is the index of the polyline segment the
+    /// cell lies on, i.e. the position the new bend would be inserted at; `prev`/
+    /// `next` are that segment's endpoints.
+    ConnectorBody {
+        id: ObjectId,
+        segment: usize,
+        prev: CellPos,
+        next: CellPos,
+    },
 }
 
 /// Proportional per-axis mapping of a template coordinate onto an instance extent —
@@ -66,7 +86,9 @@ pub fn anchor_cell(
 /// - **Connecting** (`connecting_from` set): every anchor except the source itself is a
 ///   valid drop target — that is what makes "drop outside an anchor cancels" work.
 /// - **Otherwise**: the selected shape's anchors and its bottom-right resize cell first,
-///   then the topmost shape body (document order = z-order, C5).
+///   then the topmost shape body (document order = z-order, C5), then connector bends
+///   and bodies (CR-007) — below shapes and text so a shape painted over a route
+///   still wins.
 #[must_use]
 pub fn hit_target(
     diagram: &Diagram,
@@ -74,6 +96,7 @@ pub fn hit_target(
     selection: Option<&ObjectId>,
     connecting_from: Option<&AnchorRef>,
     cell: (u32, u32),
+    connector_routes: &[(ObjectId, Vec<CellPos>)],
 ) -> HitTarget {
     let (col, row) = cell;
     if let Some(source) = connecting_from {
@@ -123,7 +146,7 @@ pub fn hit_target(
         }
     }
 
-    diagram
+    let body = diagram
         .objects()
         .iter()
         .rev()
@@ -145,8 +168,108 @@ pub fn hit_target(
                 within.then(|| HitTarget::Body(text.id.clone()))
             }
             Object::Connector(_) => None,
-        })
-        .unwrap_or(HitTarget::Empty)
+        });
+    if let Some(hit) = body {
+        return hit;
+    }
+
+    // Connectors (CR-007 AC4) — below shapes and text, topmost first. A declared bend
+    // at the cell wins over body cells: a bend lies on two segments and the explicit
+    // waypoint must be draggable.
+    let pos = CellPos::new(col, row);
+    for (id, route) in connector_routes.iter().rev() {
+        let Some(Object::Connector(connector)) = diagram.get(id) else {
+            continue; // stale read-model entry — trust the model
+        };
+        if route.len() < 2 {
+            continue; // degenerate route: nothing to grab (ADR 013)
+        }
+        let bends = &connector.bends;
+        let from = route[0];
+        let to = *route.last().expect("length checked above");
+
+        if let Some(index) = bends.iter().position(|bend| *bend == pos) {
+            let prev = if index == 0 { from } else { bends[index - 1] };
+            let next = if index + 1 == bends.len() {
+                to
+            } else {
+                bends[index + 1]
+            };
+            return HitTarget::Bend {
+                id: id.clone(),
+                index,
+                prev,
+                next,
+            };
+        }
+
+        for (segment, pair) in polyline_points(from, bends, to).windows(2).enumerate() {
+            let (a, b) = (pair[0], pair[1]);
+            if on_segment(a, b, pos) {
+                return HitTarget::ConnectorBody {
+                    id: id.clone(),
+                    segment,
+                    prev: a,
+                    next: b,
+                };
+            }
+        }
+    }
+
+    HitTarget::Empty
+}
+
+/// The polyline points of a connector's route in order — the resolved endpoints with
+/// the declared bends between (ADR 013 v4).
+fn polyline_points(from: CellPos, bends: &[CellPos], to: CellPos) -> Vec<CellPos> {
+    let mut points = Vec::with_capacity(bends.len() + 2);
+    points.push(from);
+    points.extend_from_slice(bends);
+    points.push(to);
+    points
+}
+
+/// Whether `cell` lies on the route segment from `a` to `b` — axis-aligned segments by
+/// exact row/column containment, diagonals by walking the same integer line the
+/// pipeline stamps. The diagonal walk is a copy of
+/// `render-pipeline::connectors::diagonal_line` (gui-app may not depend on that crate,
+/// §8.3) — like [`map_proportional`] vs `route`, a change to either Bresenham must land
+/// in both.
+pub(crate) fn on_segment(a: CellPos, b: CellPos, cell: CellPos) -> bool {
+    if a == b {
+        return cell == a;
+    }
+    if a.x == b.x || a.y == b.y {
+        let (lo_x, hi_x) = (a.x.min(b.x), a.x.max(b.x));
+        let (lo_y, hi_y) = (a.y.min(b.y), a.y.max(b.y));
+        return (a.y == b.y && cell.y == a.y && (lo_x..=hi_x).contains(&cell.x))
+            || (a.x == b.x && cell.x == a.x && (lo_y..=hi_y).contains(&cell.y));
+    }
+    // Diagonal — walk the identical integer line and test membership.
+    let (mut x, mut y) = (a.x as i64, a.y as i64);
+    let (ex, ey) = (b.x as i64, b.y as i64);
+    let dx = (ex - x).abs();
+    let dy = (ey - y).abs();
+    let sx = i64::from(ex > x) - i64::from(ex < x);
+    let sy = i64::from(ey > y) - i64::from(ey < y);
+    let mut err = dx - dy;
+    loop {
+        if (x, y) == (cell.x as i64, cell.y as i64) {
+            return true;
+        }
+        if (x, y) == (ex, ey) {
+            return false;
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            y += sy;
+        }
+    }
 }
 
 /// The rendered extent of a free-text object in cells (S-018 hit-testing): the bounding
@@ -177,12 +300,15 @@ pub enum Overlay {
     /// gesture target coincide (the outer corner cell is reserved for the `s`/`e`
     /// anchor dots of many shapes).
     ResizeHandle((u32, u32)),
+    /// Small square at a waypoint of the selected connector (CR-007 AC7) — the same
+    /// cell [`hit_target`] answers with [`HitTarget::Bend`].
+    BendHandle((u32, u32)),
 }
 
-/// The overlay primitives for the current model + view state (S-013 AC1/AC2):
-/// anchor dots on the selected shape — or on every shape while connecting — and the
-/// resize handle of the selection. Empty when nothing is selected and no connection
-/// is in flight.
+/// The overlay primitives for the current model + view state (S-013 AC1/AC2, CR-007
+/// AC7): anchor dots on the selected shape — or on every shape while connecting — the
+/// resize handle of a selected shape, and bend handles on a selected connector. Empty
+/// when nothing is selected and no connection is in flight.
 #[must_use]
 pub fn overlays(
     diagram: &Diagram,
@@ -191,6 +317,17 @@ pub fn overlays(
     connecting_from: Option<&AnchorRef>,
 ) -> Vec<Overlay> {
     let mut out = Vec::new();
+
+    // A selected connector shows a handle at each declared waypoint (CR-007 AC7).
+    if let Some(selected_id) = selection
+        && let Some(Object::Connector(connector)) = diagram.get(selected_id)
+        && connecting_from.is_none()
+    {
+        for bend in &connector.bends {
+            out.push(Overlay::BendHandle((bend.x, bend.y)));
+        }
+    }
+
     for object in diagram.objects() {
         let Object::Shape(shape) = object else {
             continue;
@@ -557,13 +694,13 @@ mod tests {
 
         // e anchor of the selected s1 at (8,2) — an anchor even though the body is there.
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (8, 2)),
+            hit_target(&diagram, &catalog, Some(&s1), None, (8, 2), &[]),
             HitTarget::Anchor(ObjectId::new("s1").expect("valid"), "e".to_owned())
         );
         // Bottom-right cell of s1 = the resize handle with the catalog's minimum
         // extent (the same cell the overlay draws its marker on).
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (8, 4)),
+            hit_target(&diagram, &catalog, Some(&s1), None, (8, 4), &[]),
             HitTarget::ResizeHandle {
                 id: s1.clone(),
                 min_size: CellSize::new(1, 1).expect("valid"),
@@ -571,19 +708,19 @@ mod tests {
         );
         // Interior body cell → the shape itself.
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (3, 2)),
+            hit_target(&diagram, &catalog, Some(&s1), None, (3, 2), &[]),
             HitTarget::Body(s1.clone())
         );
         // Empty space.
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (40, 40)),
+            hit_target(&diagram, &catalog, Some(&s1), None, (40, 40), &[]),
             HitTarget::Empty
         );
 
         // s2 is not selected: its e anchor cell (13,2) offers no handle → plain body.
         let s2 = ObjectId::new("s2").expect("valid id");
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (13, 2)),
+            hit_target(&diagram, &catalog, Some(&s1), None, (13, 2), &[]),
             HitTarget::Body(s2.clone())
         );
     }
@@ -595,7 +732,7 @@ mod tests {
         // s2 overlaps s1 at columns 5..8; nothing selected → plain body hit.
         let diagram = diagram_with(&[("s1", 0, 0), ("s2", 5, 0)]);
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (6, 2)),
+            hit_target(&diagram, &catalog, None, None, (6, 2), &[]),
             HitTarget::Body(ObjectId::new("s2").expect("valid id"))
         );
     }
@@ -610,17 +747,17 @@ mod tests {
 
         // s2's w anchor at (20,2) is a valid target…
         assert_eq!(
-            hit_target(&diagram, &catalog, None, Some(&source), (20, 2)),
+            hit_target(&diagram, &catalog, None, Some(&source), (20, 2), &[]),
             HitTarget::Anchor(ObjectId::new("s2").expect("valid"), "w".to_owned())
         );
         // …the source anchor itself is not…
         assert_eq!(
-            hit_target(&diagram, &catalog, None, Some(&source), (8, 2)),
+            hit_target(&diagram, &catalog, None, Some(&source), (8, 2), &[]),
             HitTarget::Empty
         );
         // …nor are plain body cells.
         assert_eq!(
-            hit_target(&diagram, &catalog, None, Some(&source), (3, 2)),
+            hit_target(&diagram, &catalog, None, Some(&source), (3, 2), &[]),
             HitTarget::Empty
         );
     }
@@ -684,7 +821,7 @@ mod tests {
 
         // Plain custom: its bottom-right cell (4,2) selects the body — no handle…
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&a1), None, (4, 2)),
+            hit_target(&diagram, &catalog, Some(&a1), None, (4, 2), &[]),
             HitTarget::Body(a1.clone())
         );
         let ov = overlays(&diagram, &catalog, Some(&a1), None);
@@ -694,7 +831,7 @@ mod tests {
         // Rule-bearing custom: its bottom-right cell (14,2) is a resize handle with
         // its min size…
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (14, 2)),
+            hit_target(&diagram, &catalog, Some(&s1), None, (14, 2), &[]),
             HitTarget::ResizeHandle {
                 id: s1.clone(),
                 min_size: CellSize::new(2, 2).expect("valid size"),
@@ -764,5 +901,190 @@ mod tests {
         // Left/above the grid origin (margin region) is not.
         assert_eq!(vp.screen_to_model_cell(7.0, 7.0), None);
         assert_eq!(vp.screen_to_model_cell(-1.0, 40.0), None);
+    }
+
+    // ---- CR-007: connector geometry -----------------------------------------
+
+    fn pos(x: u32, y: u32) -> CellPos {
+        CellPos::new(x, y)
+    }
+
+    #[test]
+    fn on_segment_axis_aligned() {
+        let a = pos(1, 2);
+        let b = pos(9, 2);
+        assert!(on_segment(a, b, pos(5, 2)));
+        assert!(on_segment(a, b, pos(1, 2))); // endpoints included
+        assert!(on_segment(a, b, pos(9, 2)));
+        assert!(!on_segment(a, b, pos(5, 3)));
+        assert!(!on_segment(a, b, pos(0, 2)));
+        assert!(!on_segment(a, b, pos(10, 2)));
+
+        let v = pos(4, 0);
+        let w = pos(4, 7);
+        assert!(on_segment(v, w, pos(4, 5)));
+        assert!(!on_segment(v, w, pos(3, 5)));
+    }
+
+    #[test]
+    fn on_segment_diagonal_walks_the_bresenham_line() {
+        // (8,2) → (11,6): the pipeline's integer Bresenham stamps exactly these cells.
+        let a = pos(8, 2);
+        let b = pos(11, 6);
+        for cell in [pos(8, 2), pos(9, 3), pos(9, 4), pos(10, 5), pos(11, 6)] {
+            assert!(on_segment(a, b, cell), "{cell:?} is on the stamped line");
+        }
+        // Off-line cells are not reported — including the bounding-box interior.
+        assert!(!on_segment(a, b, pos(10, 3)));
+        assert!(!on_segment(a, b, pos(8, 6)));
+        assert!(!on_segment(a, b, pos(9, 2)));
+
+        // A rising segment: (11,6) → (14,2).
+        let c = pos(11, 6);
+        let d = pos(14, 2);
+        for cell in [pos(11, 6), pos(12, 5), pos(12, 4), pos(13, 3), pos(14, 2)] {
+            assert!(on_segment(c, d, cell), "{cell:?} is on the stamped line");
+        }
+        assert!(!on_segment(c, d, pos(13, 5)));
+    }
+
+    #[test]
+    fn on_segment_degenerate_point() {
+        let a = pos(3, 3);
+        assert!(on_segment(a, a, a));
+        assert!(!on_segment(a, a, pos(4, 3)));
+    }
+
+    /// Two 9×5 boxes with one bent connector between them — the canonical CR-007
+    /// scene. s1 at (0,0) offers `e` at (8,2); s2 at (14,0) offers `w` at (14,2).
+    /// The bend at (11,6) sits in open space; both route segments are diagonal and
+    /// their stamped cells are all free of shape bodies.
+    fn bent_connector_scene() -> (
+        Diagram,
+        core_services::fakes::FakeCatalog,
+        ObjectId,
+        Vec<CellPos>,
+    ) {
+        use diagram_model::objects::{ConnectorInstance, ConnectorStyle};
+        let catalog = catalog();
+        let mut diagram = Diagram::new();
+        diagram.place_shape(box_at("s1", 0, 0)).expect("places");
+        diagram.place_shape(box_at("s2", 14, 0)).expect("places");
+        let c = ObjectId::new("c1").expect("valid id");
+        diagram
+            .connect(ConnectorInstance::new(
+                c.clone(),
+                AnchorRef::new(ObjectId::new("s1").expect("valid"), "e").expect("valid anchor"),
+                AnchorRef::new(ObjectId::new("s2").expect("valid"), "w").expect("valid anchor"),
+                ConnectorStyle::Solid,
+            ))
+            .expect("connects");
+        diagram
+            .add_bend(&c, 0, pos(11, 6))
+            .expect("inserts the bend");
+        let route = vec![pos(8, 2), pos(11, 6), pos(14, 2)];
+        (diagram, catalog, c, route)
+    }
+
+    #[test]
+    fn hit_target_reports_a_bend_on_its_cell() {
+        let (diagram, catalog, c, route) = bent_connector_scene();
+        let routes = vec![(c.clone(), route)];
+        // The bend cell itself is a Bend — even though it lies on two segments.
+        assert_eq!(
+            hit_target(&diagram, &catalog, None, None, (11, 6), &routes),
+            HitTarget::Bend {
+                id: c,
+                index: 0,
+                prev: pos(8, 2),
+                next: pos(14, 2)
+            }
+        );
+    }
+
+    #[test]
+    fn hit_target_reports_body_cells_with_segment_endpoints() {
+        let (diagram, catalog, c, route) = bent_connector_scene();
+        let routes = vec![(c.clone(), route)];
+        // Segment 0 is the diagonal (8,2)-(11,6): a cell on its stamped line.
+        match hit_target(&diagram, &catalog, None, None, (9, 3), &routes) {
+            HitTarget::ConnectorBody {
+                id,
+                segment,
+                prev,
+                next,
+            } => {
+                assert_eq!(id, c);
+                assert_eq!(segment, 0);
+                assert_eq!((prev, next), (pos(8, 2), pos(11, 6)));
+            }
+            other => panic!("expected ConnectorBody on (9,3), got {other:?}"),
+        }
+        // Segment 1 is the rising diagonal (11,6)-(14,2).
+        match hit_target(&diagram, &catalog, None, None, (12, 5), &routes) {
+            HitTarget::ConnectorBody {
+                id,
+                segment,
+                prev,
+                next,
+            } => {
+                assert_eq!(id, c);
+                assert_eq!(segment, 1);
+                assert_eq!((prev, next), (pos(11, 6), pos(14, 2)));
+            }
+            other => panic!("expected ConnectorBody on (12,5), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hit_target_shapes_win_over_connector_bodies() {
+        let (mut diagram, catalog, c, route) = bent_connector_scene();
+        let routes = vec![(c.clone(), route)];
+        // A shape added after the connector covers a route cell: the body wins.
+        let s3 = ObjectId::new("s3").expect("valid id");
+        diagram.place_shape(box_at("s3", 9, 3)).expect("places");
+        assert_eq!(
+            hit_target(&diagram, &catalog, None, None, (9, 3), &routes),
+            HitTarget::Body(s3)
+        );
+    }
+
+    #[test]
+    fn hit_target_ignores_connectors_off_route_and_while_connecting() {
+        let (diagram, catalog, c, route) = bent_connector_scene();
+        let routes = vec![(c.clone(), route)];
+        // Empty cell off the route stays empty.
+        assert_eq!(
+            hit_target(&diagram, &catalog, None, None, (0, 9), &routes),
+            HitTarget::Empty
+        );
+        // While connecting, connector cells are not drop targets (anchors only).
+        let source =
+            AnchorRef::new(ObjectId::new("s1").expect("valid"), "e").expect("valid anchor");
+        assert_eq!(
+            hit_target(&diagram, &catalog, None, Some(&source), (9, 3), &routes),
+            HitTarget::Empty
+        );
+    }
+
+    #[test]
+    fn overlays_show_bend_handles_only_for_the_selected_connector() {
+        let (diagram, catalog, c, _route) = bent_connector_scene();
+        // Not selected: no bend handles.
+        assert!(
+            overlays(&diagram, &catalog, None, None)
+                .iter()
+                .all(|o| !matches!(o, Overlay::BendHandle(_)))
+        );
+        // Selected: one handle at the declared waypoint — same cell `hit_target`
+        // answers with a Bend.
+        let handles = overlays(&diagram, &catalog, Some(&c), None);
+        assert_eq!(
+            handles
+                .iter()
+                .filter(|o| matches!(o, Overlay::BendHandle((11, 6))))
+                .count(),
+            1
+        );
     }
 }

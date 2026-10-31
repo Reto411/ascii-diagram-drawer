@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use diagram_model::Diagram;
+use diagram_model::{Diagram, geometry::CellPos, objects::ObjectId};
 
 pub mod error;
 pub mod types;
@@ -46,6 +46,16 @@ pub trait DiagramStore {
 pub trait Renderer {
     /// Places and resolves `diagram` against the bound catalog.
     fn render(&self, diagram: &Diagram) -> Result<ResolvedGrid, RenderError>;
+
+    /// The route cells of every connector in model space (CR-007 / ADR 013 v4), in
+    /// document order: each connector's id paired with the ordered cells its route
+    /// stamps — endpoints and declared bends for bent connectors, the automatic
+    /// straight/L route otherwise. The GUI uses this for connector body/bend
+    /// hit-testing without linking render-pipeline (ADR 009).
+    fn connector_routes(
+        &self,
+        diagram: &Diagram,
+    ) -> Result<Vec<(ObjectId, Vec<CellPos>)>, RenderError>;
 
     /// Renders an as-yet-unregistered template pattern through the full pipeline —
     /// the live preview of the template editor (S-017 AC1). The pattern is placed at

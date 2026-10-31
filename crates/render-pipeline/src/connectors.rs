@@ -1,19 +1,20 @@
 //! Connector placement (ADR 013): resolve both endpoint anchors to cells, route a
-//! straight or single-corner L between them, and stamp the route as structural edges
-//! with an arrowhead at the target end.
+//! straight or single-corner L between them (or the declared manual-bend polyline,
+//! CR-007 / ADR 013 v4), and stamp the route with an arrowhead at the target end.
 //!
 //! A connector stores no geometry — its endpoints are anchor *references* re-resolved on
 //! every render (FR9), so moving or resizing a shape moves its connectors for free and
 //! rendering `{model, then move_object}` is byte-identical to rendering the moved model.
-//! Route cells are stamped in document order like any other object: edges OR-merge with
-//! border/art neighbors (C1 F2), structural stamps claim the top so later objects can
-//! still cover this connector (F1), and the arrowhead is content stamped last — it never
-//! changes edge resolution of neighboring cells.
+//! Route cells are stamped in document order like any other object: axis-aligned segments
+//! stamp structural edges that OR-merge with border/art neighbors (C1 F2), claiming the
+//! top so later objects can still cover this connector (F1); diagonal segments stamp `/`
+//! `\` **content** — they never change edge resolution; and the arrowhead is content
+//! stamped last — it never changes edge resolution of neighboring cells either.
 
 use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
-use diagram_model::objects::{ConnectorInstance, Object};
+use diagram_model::objects::{ConnectorInstance, Object, ObjectId};
 use shape_registry::{GeometryKind, ShapeRegistry, min_size};
 
 use crate::RenderError;
@@ -140,10 +141,12 @@ fn resolve_endpoint(
     })
 }
 
-/// The route cells between two endpoints (ADR 013): straight when they share a row or
-/// column, otherwise a single-corner L — the target's side preference wins, then the
-/// source's, then vertical-first. Both endpoint cells are included; coincident endpoints
-/// produce an empty route (nothing is drawn).
+/// The automatic route cells between two endpoints (ADR 013): straight when they share a
+/// row or column, otherwise a single-corner L — the target's side preference wins, then
+/// the source's, then vertical-first. Both endpoint cells are included; coincident
+/// endpoints produce an empty route (nothing is drawn).
+///
+/// Used only for bend-free connectors; manual bends take over via [`bent_route`].
 fn route(
     from: CellPos,
     to: CellPos,
@@ -167,6 +170,80 @@ fn route(
         return cells;
     }
     straight_line(from, to)
+}
+
+/// The polyline points of a bent route (CR-007 / ADR 013 v4): `from`, the declared
+/// bends in order, then `to`. Degenerate (coincident) consecutive points are kept —
+/// their segments stamp nothing.
+fn bend_points(from: CellPos, to: CellPos, bends: &[CellPos]) -> Vec<CellPos> {
+    let mut points = vec![from];
+    points.extend_from_slice(bends);
+    points.push(to);
+    points
+}
+
+/// The concatenated route cells of a bent polyline (CR-007): each segment contributes its
+/// inclusive cells — straight when axis-aligned, Bresenham otherwise — with the shared
+/// endpoints deduplicated. Pure function of the three inputs (NFR3).
+fn bent_route(from: CellPos, to: CellPos, bends: &[CellPos]) -> Vec<CellPos> {
+    let mut cells = Vec::new();
+    for window in bend_points(from, to, bends).windows(2) {
+        let skip = usize::from(!cells.is_empty()); // the shared endpoint is already in
+        cells.extend(segment_cells(window[0], window[1]).into_iter().skip(skip));
+    }
+    cells
+}
+
+/// Inclusive cells of one segment: axis-aligned or diagonal (CR-007).
+fn segment_cells(a: CellPos, b: CellPos) -> Vec<CellPos> {
+    if a == b {
+        return vec![a];
+    }
+    if a.x == b.x || a.y == b.y {
+        straight_line(a, b)
+    } else {
+        diagonal_line(a, b)
+    }
+}
+
+/// Inclusive cells of a diagonal segment — integer Bresenham (pure arithmetic, NFR3).
+fn diagonal_line(a: CellPos, b: CellPos) -> Vec<CellPos> {
+    debug_assert!(
+        a.x != b.x && a.y != b.y,
+        "diagonal_line needs an oblique segment"
+    );
+    let (mut x, mut y) = (a.x as i64, a.y as i64);
+    let (ex, ey) = (b.x as i64, b.y as i64);
+    let dx = (ex - x).abs();
+    let dy = (ey - y).abs();
+    let sx = i64::from(ex > x) - i64::from(ex < x);
+    let sy = i64::from(ey > y) - i64::from(ey < y);
+    let mut err = dx - dy;
+    let mut cells = Vec::new();
+    loop {
+        cells.push(CellPos::new(x as u32, y as u32));
+        if x == ex && y == ey {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            x += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            y += sy;
+        }
+    }
+    cells
+}
+
+/// The content glyph of a diagonal segment (C9): `\` when the segment falls as it goes
+/// right, `/` when it rises — in grid coordinates (rows grow downward).
+fn diagonal_glyph(a: CellPos, b: CellPos) -> char {
+    let dx = b.x as i64 - a.x as i64;
+    let dy = b.y as i64 - a.y as i64;
+    if dx * dy > 0 { '\\' } else { '/' }
 }
 
 /// Inclusive cells of a horizontal or vertical segment.
@@ -213,6 +290,44 @@ fn direction_toward(from: CellPos, to: CellPos) -> EdgeSet {
 }
 
 /// Stamps one connector into the place-stage grid (called in document order from `place`).
+/// The route cells of one connector in model space — the automatic straight/L route
+/// when it declares no bends, or its declared polyline otherwise (CR-007 / ADR 013 v4:
+/// the declared polyline wins over automatic routing; side preferences do not apply).
+fn connector_route_cells(
+    diagram: &Diagram,
+    registry: &ShapeRegistry,
+    connector: &ConnectorInstance,
+) -> Result<Vec<CellPos>, RenderError> {
+    let from = resolve_endpoint(diagram, registry, &connector.from)?;
+    let to = resolve_endpoint(diagram, registry, &connector.to)?;
+    Ok(if connector.bends.is_empty() {
+        route(from.cell, to.cell, from.side, to.side)
+    } else {
+        bent_route(from.cell, to.cell, &connector.bends)
+    })
+}
+
+/// The route cells of every connector in `diagram` (CR-007 / ADR 013 v4), in document
+/// order: each connector's id paired with the ordered cells its route stamps —
+/// endpoints and declared bends for bent connectors, the automatic straight/L route
+/// otherwise. The GUI seam exposes this so the canvas can hit-test connector bodies
+/// and bends without linking render-pipeline (ADR 009).
+pub fn connector_routes(
+    diagram: &Diagram,
+    registry: &ShapeRegistry,
+) -> Result<Vec<(ObjectId, Vec<CellPos>)>, RenderError> {
+    let mut routes = Vec::new();
+    for object in diagram.objects() {
+        if let Object::Connector(connector) = object {
+            routes.push((
+                connector.id.clone(),
+                connector_route_cells(diagram, registry, connector)?,
+            ));
+        }
+    }
+    Ok(routes)
+}
+
 pub(crate) fn place_connector(
     grid: &mut PlacedGrid,
     diagram: &Diagram,
@@ -220,16 +335,43 @@ pub(crate) fn place_connector(
     connector: &ConnectorInstance,
 ) -> Result<(), RenderError> {
     // `style` (solid/dashed) is not honored in v1 — dashed rendering is an ADR 013 follow-up.
-    let from = resolve_endpoint(diagram, registry, &connector.from)?;
-    let to = resolve_endpoint(diagram, registry, &connector.to)?;
-    let route = route(from.cell, to.cell, from.side, to.side);
+    let route = connector_route_cells(diagram, registry, connector)?;
     if route.len() < 2 {
-        return Ok(()); // coincident endpoints: nothing to draw (ADR 013)
+        return Ok(()); // degenerate endpoints: nothing to draw (ADR 013)
+    }
+
+    // Diagonal segments exist only on bent routes (automatic routing is always
+    // axis-aligned, ADR 013). Their cells are content (`/` `\`) — they take no part in
+    // edge resolution (C9). Each diagonal's leading shared endpoint stays with its
+    // axis-aligned neighbor, so junctions keep structural edges.
+    let oblique_segments: Vec<(CellPos, CellPos)> = if connector.bends.is_empty() {
+        Vec::new()
+    } else {
+        // The route's endpoints are the resolved anchor cells — both route builders
+        // include them.
+        bend_points(
+            route[0],
+            *route.last().expect("length checked above"),
+            &connector.bends,
+        )
+        .windows(2)
+        .map(|window| (window[0], window[1]))
+        .filter(|&(a, b)| a != b && a.x != b.x && a.y != b.y)
+        .collect()
+    };
+    let mut diagonal_cells = std::collections::BTreeSet::new();
+    for (a, b) in &oblique_segments {
+        for cell in segment_cells(*a, *b).into_iter().skip(1) {
+            diagonal_cells.insert(cell);
+        }
     }
 
     // Structural edges toward the route's neighbors — OR-merged with border/art cells
     // (F2), claiming the top so later objects can still cover this connector (F1).
     for (i, cell) in route.iter().enumerate() {
+        if diagonal_cells.contains(cell) {
+            continue;
+        }
         let mut edges = EdgeSet::NONE;
         if i > 0 {
             edges |= direction_toward(*cell, route[i - 1]);
@@ -238,6 +380,15 @@ pub(crate) fn place_connector(
             edges |= direction_toward(*cell, route[i + 1]);
         }
         grid.with_cell(cell.x, cell.y, |state| state.stamp_edges(edges));
+    }
+
+    // Diagonal segments: `/` `\` content (CR-007 / C9) — stamped before the arrowhead
+    // so a diagonal final segment still ends in an arrow.
+    for (a, b) in oblique_segments {
+        let glyph = diagonal_glyph(a, b);
+        for cell in segment_cells(a, b).into_iter().skip(1) {
+            grid.with_cell(cell.x, cell.y, |state| state.stamp_content(glyph));
+        }
     }
 
     // Arrowhead: content on the second-to-last cell, pointing at the target (ADR 013).
@@ -637,5 +788,171 @@ mod tests {
         assert_eq!(g.cell(1, 0).edges, EdgeSet::ALL);
         assert_eq!(g.cell(0, 0).content, None, "no arrowhead on a 2-cell route");
         assert_eq!(g.cell(1, 0).content, None);
+    }
+
+    // ── CR-007: manual bends ────────────────────────────────────────────────
+
+    #[test]
+    fn bent_route_concatenates_segments_deduplicating_shared_endpoints() {
+        // (8,2) → (8,5) vertical, (8,5) → (12,8) diagonal, (12,8) → (14,8) horizontal.
+        let cells = bent_route(
+            MPos::new(8, 2),
+            MPos::new(14, 8),
+            &[MPos::new(8, 5), MPos::new(12, 8)],
+        );
+        assert_eq!(
+            cells,
+            vec![
+                MPos::new(8, 2),
+                MPos::new(8, 3),
+                MPos::new(8, 4),
+                MPos::new(8, 5),
+                MPos::new(9, 6),
+                MPos::new(10, 6),
+                MPos::new(11, 7),
+                MPos::new(12, 8),
+                MPos::new(13, 8),
+                MPos::new(14, 8),
+            ]
+        );
+    }
+
+    #[test]
+    fn bent_route_without_bends_is_the_direct_polyline() {
+        // No bends: one segment from→to (diagonal here) — same cells as the diagonal.
+        let cells = bent_route(MPos::new(0, 0), MPos::new(2, 2), &[]);
+        assert_eq!(
+            cells,
+            vec![MPos::new(0, 0), MPos::new(1, 1), MPos::new(2, 2)]
+        );
+    }
+
+    #[test]
+    fn diagonal_line_is_integer_bresenham() {
+        // Exact 45°: one cell per step.
+        assert_eq!(
+            diagonal_line(MPos::new(0, 0), MPos::new(3, 3)),
+            vec![
+                MPos::new(0, 0),
+                MPos::new(1, 1),
+                MPos::new(2, 2),
+                MPos::new(3, 3),
+            ]
+        );
+        // Shallow diagonal (dx=4, dy=3): stays within one row of the ideal line.
+        assert_eq!(
+            diagonal_line(MPos::new(0, 0), MPos::new(4, 3)),
+            vec![
+                MPos::new(0, 0),
+                MPos::new(1, 1),
+                MPos::new(2, 1),
+                MPos::new(3, 2),
+                MPos::new(4, 3),
+            ]
+        );
+        // Rising diagonal (y decreases) — symmetric.
+        assert_eq!(
+            diagonal_line(MPos::new(0, 3), MPos::new(4, 0)),
+            vec![
+                MPos::new(0, 3),
+                MPos::new(1, 2),
+                MPos::new(2, 2),
+                MPos::new(3, 1),
+                MPos::new(4, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn diagonal_glyph_follows_the_segment_slope() {
+        // Grid rows grow downward: falling-right is `\`, rising-right is `/`.
+        assert_eq!(diagonal_glyph(MPos::new(0, 0), MPos::new(3, 2)), '\\');
+        assert_eq!(diagonal_glyph(MPos::new(0, 2), MPos::new(3, 0)), '/');
+        // Left-going segments mirror: falling-left (y up as x down) is `/`.
+        assert_eq!(diagonal_glyph(MPos::new(3, 0), MPos::new(0, 2)), '/');
+    }
+
+    #[test]
+    fn segment_cells_dispatches_on_alignment() {
+        assert_eq!(
+            segment_cells(MPos::new(1, 0), MPos::new(4, 0)),
+            vec![
+                MPos::new(1, 0),
+                MPos::new(2, 0),
+                MPos::new(3, 0),
+                MPos::new(4, 0),
+            ]
+        );
+        assert_eq!(
+            segment_cells(MPos::new(1, 0), MPos::new(1, 0)),
+            vec![MPos::new(1, 0)]
+        );
+    }
+
+    #[test]
+    fn bent_route_stamps_edges_and_diagonal_content() {
+        // A.e=(8,2) → (8,5) vertical → (12,8) diagonal → B.w=(14,8).
+        let mut d = Diagram::new();
+        d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
+        d.place_shape(box_at(1, 14, 6, 9, 5)).unwrap();
+        d.connect(
+            ConnectorInstance::new(
+                ObjectId::generated(2),
+                AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
+                AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
+                ConnectorStyle::Solid,
+            )
+            .with_bends(vec![MPos::new(8, 5), MPos::new(12, 8)]),
+        )
+        .unwrap();
+        let g = place(&d, &ShapeRegistry::builtin()).expect("known shapes");
+
+        // Axis-aligned run: structural edges, no content.
+        assert_eq!(g.cell(8, 3).edges, EdgeSet::N | EdgeSet::S);
+        assert_eq!(g.cell(8, 3).content, None);
+        // Diagonal cells: `\` content and NO structural edges (C9).
+        for cell in [
+            MPos::new(9, 6),
+            MPos::new(10, 6),
+            MPos::new(11, 7),
+            MPos::new(12, 8),
+        ] {
+            assert_eq!(
+                g.cell(cell.x, cell.y).content,
+                Some('\\'),
+                "diagonal content at {cell:?}"
+            );
+            assert_eq!(
+                g.cell(cell.x, cell.y).edges,
+                EdgeSet::NONE,
+                "diagonal cells take no part in edge resolution: {cell:?}"
+            );
+        }
+        // Final horizontal segment into B.w; the arrowhead overwrites second-to-last.
+        assert_eq!(
+            g.cell(13, 8).content,
+            Some('>'),
+            "arrowhead on the bent route"
+        );
+    }
+
+    #[test]
+    fn bends_coincident_with_endpoints_are_ignored() {
+        // Degenerate segments (coincident consecutive points) stamp nothing.
+        let cells = bent_route(
+            MPos::new(0, 0),
+            MPos::new(4, 0),
+            &[MPos::new(0, 0), MPos::new(4, 0)],
+        );
+        assert_eq!(
+            cells,
+            vec![
+                MPos::new(0, 0),
+                MPos::new(1, 0),
+                MPos::new(2, 0),
+                MPos::new(3, 0),
+                MPos::new(4, 0),
+            ]
+        );
     }
 }

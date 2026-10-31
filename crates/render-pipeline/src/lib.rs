@@ -21,6 +21,7 @@ mod grid;
 mod place;
 mod resolve;
 
+pub use connectors::connector_routes;
 pub use grid::{GridError, ResolvedGrid, expand};
 
 use diagram_model::Diagram;

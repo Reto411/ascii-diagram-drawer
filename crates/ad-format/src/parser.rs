@@ -162,6 +162,10 @@ fn tokenize(raw: &str, line_no: usize) -> Result<Vec<Token>, ParseError> {
             ' ' | '\t' => {}
             '#' => return Ok(tokens),
             '"' => tokens.push(read_string(&mut stream, line_no, col)?),
+            // A comma is its own token (list separator — e.g. `connect … via 3 4, 5 6`).
+            ',' => {
+                tokens.push(Token::word(",".to_owned(), col));
+            }
             _ => tokens.push(read_word(&mut stream, c, col)),
         }
     }
@@ -173,7 +177,7 @@ fn read_word(stream: &mut CharStream, first: char, column: usize) -> Token {
     let mut text = String::new();
     text.push(first);
     while let Some(next) = stream.peek_char() {
-        if matches!(next, ' ' | '\t' | '"' | '#') {
+        if matches!(next, ' ' | '\t' | '"' | '#' | ',') {
             break;
         }
         if let Some((_, c)) = stream.next() {
@@ -439,25 +443,71 @@ fn parse_connect(cursor: &mut Cursor, line_no: usize) -> Result<ConnectorInstanc
     )?;
     cursor.expect_keyword("to", line_no)?;
     let to = parse_anchor_ref(cursor.expect_word("the 'to' anchor-ref", line_no)?, line_no)?;
+    // Optional clauses in fixed order: `[dashed] [via <x> <y>, …]` (CR-007).
     let style = match cursor.peek() {
         Some(dashed) if dashed.as_str() == "dashed" => {
             cursor.next();
             ConnectorStyle::Dashed
+        }
+        _ => ConnectorStyle::Solid,
+    };
+    let bends = match cursor.peek() {
+        Some(via) if via.as_str() == "via" => {
+            cursor.next();
+            parse_via_list(cursor, line_no)?
+        }
+        Some(extra) if style == ConnectorStyle::Dashed => {
+            return Err(ParseError::new(
+                line_no,
+                extra.column,
+                format!(
+                    "unexpected token '{}' — only 'via …' may follow 'dashed'",
+                    extra.as_str()
+                ),
+            ));
         }
         Some(extra) => {
             return Err(ParseError::new(
                 line_no,
                 extra.column,
                 format!(
-                    "unexpected token '{}' — only 'dashed' may follow the endpoints",
+                    "unexpected token '{}' — only 'dashed' or 'via …' may follow the endpoints",
                     extra.as_str()
                 ),
             ));
         }
-        None => ConnectorStyle::Solid,
+        None => Vec::new(),
     };
     let object_id = ObjectId::new(&id).map_err(|e| model_error(e, line_no, 1))?;
-    Ok(ConnectorInstance::new(object_id, from, to, style))
+    Ok(ConnectorInstance::new(object_id, from, to, style).with_bends(bends))
+}
+
+/// Parses the optional `via <x> <y>, …` manual-bend waypoint list (CR-007 / ADR 013 v4).
+/// Waypoints are bare non-negative cell coordinates in model space, comma-separated.
+fn parse_via_list(cursor: &mut Cursor, line_no: usize) -> Result<Vec<CellPos>, ParseError> {
+    let mut bends = Vec::new();
+    loop {
+        let x = cursor.expect_int("a via x coordinate", line_no)?;
+        let y = cursor.expect_int("a via y coordinate", line_no)?;
+        bends.push(CellPos::new(x, y));
+        match cursor.peek() {
+            Some(comma) if comma.as_str() == "," => {
+                cursor.next();
+            }
+            Some(extra) => {
+                return Err(ParseError::new(
+                    line_no,
+                    extra.column,
+                    format!(
+                        "unexpected token '{}' — a via list is '<x> <y>' pairs separated by ','",
+                        extra.as_str()
+                    ),
+                ));
+            }
+            None => break,
+        }
+    }
+    Ok(bends)
 }
 
 /// Parses `<id>.<anchor>` split at the LAST dot (ids and anchors may themselves contain dots).
@@ -1117,6 +1167,88 @@ mod tests {
         let err = assert_error(input, 4, 33);
         assert!(
             err.message.contains("only 'dashed'"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    /// `via` waypoints parse into the connector's bend list (CR-007) — with or without `dashed`.
+    #[test]
+    fn via_waypoints_parse_into_bends() {
+        let input = "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nshape box \"b\" as s2 at 5 0 w 2 h 2\nconnect as c1 from s1.e to s2.w dashed via 3 1, 4 4\n";
+        let diagram = parse(input).expect("valid");
+        let Object::Connector(connector) = &diagram.objects()[2] else {
+            panic!("expected connector")
+        };
+        assert_eq!(connector.style, ConnectorStyle::Dashed);
+        assert_eq!(
+            connector.bends,
+            vec![CellPos::new(3, 1), CellPos::new(4, 4)]
+        );
+    }
+
+    /// A `via` list needs complete `<x> <y>` pairs — truncation and garbage are line/column errors.
+    #[test]
+    fn via_list_errors_are_positioned() {
+        // Truncated pair (missing y) — error at the statement end.
+        let err = assert_error(
+            "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w via 3\n",
+            3,
+            1,
+        );
+        assert!(
+            err.message.contains("via y coordinate"),
+            "message: {}",
+            err.message
+        );
+
+        // Dangling comma separator (missing the next pair).
+        let err = assert_error(
+            "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w via 3 4,\n",
+            3,
+            1,
+        );
+        assert!(
+            err.message.contains("via x coordinate"),
+            "message: {}",
+            err.message
+        );
+
+        // Non-integer waypoint — error at the offending token.
+        let err = assert_error(
+            "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w via x 4\n",
+            3,
+            37,
+        );
+        assert!(
+            err.message.contains("via x coordinate"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    /// `dashed` without `via` still parses (bends stay empty) — no behavior change for v1 files.
+    #[test]
+    fn dashed_without_via_keeps_empty_bends() {
+        let input = "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w dashed\n";
+        let diagram = parse(input).expect("valid");
+        let Object::Connector(connector) = &diagram.objects()[1] else {
+            panic!("expected connector")
+        };
+        assert_eq!(connector.style, ConnectorStyle::Dashed);
+        assert!(connector.bends.is_empty());
+    }
+
+    /// A token after `dashed` that is not `via` is an error naming the clause order.
+    #[test]
+    fn token_after_dashed_must_be_via() {
+        let err = assert_error(
+            "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w dashed junk\n",
+            3,
+            40,
+        );
+        assert!(
+            err.message.contains("'via …' may follow 'dashed'"),
             "message: {}",
             err.message
         );

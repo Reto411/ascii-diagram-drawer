@@ -2,7 +2,7 @@
 title: CR-007 - user-modifiable arrow shapes (manual bends)
 description: pressing onto an arrow selects it and dragging adds/moves intermediate bends (Visio-style), so users can manually route connectors for readable diagrams
 scope: connectors (model + routing + GUI gestures)
-status: accepted
+status: implemented
 priority: medium
 updated: 2026-10-31
 ---
@@ -57,4 +57,4 @@ User need: "The user needs the possibility to shape the arrows to make nicely re
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-028** (commit `pending`): `bends: Vec<CellPos>` on `ConnectorInstance` + aggregate ops (`add_bend`/`move_bend`/`remove_bend`, typed errors); `.ad` `connect … via <x> <y>, …` clause (parse + canonical serialize, byte-stable round-trip); pipeline polyline routing — axis-aligned segments structural, oblique segments integer-Bresenham `/` `\` content (two new goldens; bend-free connectors byte-identical to before); seam `Renderer::connector_routes` so gui-app stays off render-pipeline (§8.3); GUI: `HitTarget::{Bend, ConnectorBody}` below shapes/text, `BendMove`/`BendAdd` gestures with live model updates, collinear-drop removal (Visio-style), waypoint handles on the selected connector.

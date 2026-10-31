@@ -37,6 +37,13 @@ impl fmt::Display for TokenField {
 pub enum ModelError {
     /// Anchor names must be single tokens (no whitespace).
     AnchorNameContainsWhitespace(String),
+    /// A connector bend index is out of range for that connector.
+    BendIndexOutOfRange {
+        /// The id of the affected connector.
+        object: ObjectId,
+        /// The rejected index.
+        index: usize,
+    },
     /// Connectors cannot be moved or resized (only their bound shapes can).
     ConnectorNotMovable(ObjectId),
     /// Object ids must be unique within a diagram.
@@ -51,6 +58,8 @@ pub enum ModelError {
     EmptyText,
     /// Object ids must be single tokens (no whitespace).
     IdContainsWhitespace(String),
+    /// An operation requires a connector, but the object is another kind.
+    NotAConnector(ObjectId),
     /// An operation requires a shape, but the object is another kind.
     NotAShape(ObjectId),
     /// An operation requires a free text object, but the object is another kind.
@@ -80,6 +89,9 @@ impl fmt::Display for ModelError {
                 f,
                 "anchor name must be a single token (no whitespace): '{name}'"
             ),
+            Self::BendIndexOutOfRange { object, index } => {
+                write!(f, "bend index out of range for connector {object}: {index}")
+            }
             Self::ConnectorNotMovable(id) => {
                 write!(f, "connectors cannot be moved or resized: {id}")
             }
@@ -92,6 +104,12 @@ impl fmt::Display for ModelError {
                 f,
                 "object id must be a single token (no whitespace): '{id}'"
             ),
+            Self::NotAConnector(id) => {
+                write!(
+                    f,
+                    "expected a connector but found another object kind: {id}"
+                )
+            }
             Self::NotAShape(id) => {
                 write!(f, "expected a shape but found another object kind: {id}")
             }

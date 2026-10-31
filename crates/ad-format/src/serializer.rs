@@ -84,6 +84,19 @@ fn push_object(out: &mut String, object: &Object) {
             if connector.style == ConnectorStyle::Dashed {
                 out.push_str(" dashed");
             }
+            // Manual bends are emitted only when present (CR-007) — bend-free
+            // connectors keep their historical statement shape.
+            if !connector.bends.is_empty() {
+                out.push_str(" via ");
+                for (i, bend) in connector.bends.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    push_int(out, bend.x);
+                    out.push(' ');
+                    push_int(out, bend.y);
+                }
+            }
             out.push('\n');
         }
     }
@@ -212,6 +225,30 @@ mod tests {
             text as t1 \"hi\" at 3 2\n\
             connect as c1 from s1.e to s1.w\n";
         assert_eq!(out, expected);
+    }
+
+    /// `via` is emitted only when bends exist, and the statement round-trips byte-stably (CR-007).
+    #[test]
+    fn via_bends_serialize_and_round_trip() {
+        let mut diagram = sample_diagram();
+        let id = ObjectId::new("c1").expect("valid id");
+        diagram
+            .add_bend(&id, 0, CellPos::new(3, 1))
+            .expect("adds bend");
+        diagram
+            .add_bend(&id, 1, CellPos::new(4, 4))
+            .expect("adds bend");
+
+        let out = serialize(&diagram);
+        let expected = "ad 1.0\n\
+            scale 2\n\
+            shape box \"Server A\" as s1 at 1 1 w 8 h 4\n\
+            text as t1 \"hi\" at 3 2\n\
+            connect as c1 from s1.e to s1.w via 3 1, 4 4\n";
+        assert_eq!(out, expected);
+
+        let reparsed = crate::parser::parse(&out).expect("round-trips");
+        assert_eq!(serialize(&reparsed), out);
     }
 
     #[test]

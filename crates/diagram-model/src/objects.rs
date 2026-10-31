@@ -170,19 +170,34 @@ pub struct ConnectorInstance {
     pub style: ConnectorStyle,
     /// Ending endpoint (an anchor on a shape).
     pub to: AnchorRef,
+    /// Optional ordered manual bends (waypoints, model-space cells) — CR-007 / ADR 013 v4.
+    ///
+    /// Empty = automatic routing (straight / single-corner L). Non-empty = the route is
+    /// the polyline `[from-cell, bends…, to-cell]`; axis-aligned segments keep clean
+    /// structural joins, explicit diagonals are stamped as `/` `\` content.
+    pub bends: Vec<CellPos>,
 }
 
 impl ConnectorInstance {
-    /// Creates a connector. Endpoints are pre-validated [`AnchorRef`]s; cross-object checks
-    /// (both ends exist and are shapes) happen in [`crate::Diagram::connect`].
+    /// Creates a connector without manual bends (automatic routing). Endpoints are
+    /// pre-validated [`AnchorRef`]s; cross-object checks (both ends exist and are shapes)
+    /// happen in [`crate::Diagram::connect`].
     #[must_use]
     pub const fn new(id: ObjectId, from: AnchorRef, to: AnchorRef, style: ConnectorStyle) -> Self {
         Self {
+            bends: Vec::new(),
             from,
             id,
             style,
             to,
         }
+    }
+
+    /// Returns a copy of this connector with the given manual bend waypoints (CR-007).
+    #[must_use]
+    pub fn with_bends(mut self, bends: Vec<CellPos>) -> Self {
+        self.bends = bends;
+        self
     }
 }
 

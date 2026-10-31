@@ -88,6 +88,28 @@ fn linked(mut d: Diagram, from_id: u32, from_anchor: &str, to_id: u32, to_anchor
     d
 }
 
+/// Adds one solid connector with manual bends (CR-007 / ADR 013 v4) — id 90.
+fn linked_bent(
+    mut d: Diagram,
+    from_id: u32,
+    from_anchor: &str,
+    to_id: u32,
+    to_anchor: &str,
+    bends: Vec<CellPos>,
+) -> Diagram {
+    d.connect(
+        ConnectorInstance::new(
+            ObjectId::generated(90),
+            AnchorRef::new(ObjectId::generated(from_id), from_anchor).expect("valid anchor"),
+            AnchorRef::new(ObjectId::generated(to_id), to_anchor).expect("valid anchor"),
+            ConnectorStyle::Solid,
+        )
+        .with_bends(bends),
+    )
+    .expect("endpoints are placed shapes");
+    d
+}
+
 /// One golden scenario: a name plus the exact diagram it freezes.
 fn scenarios() -> Vec<(&'static str, Diagram)> {
     vec![
@@ -198,6 +220,38 @@ fn scenarios() -> Vec<(&'static str, Diagram)> {
                 "e",
                 1,
                 "w",
+            ),
+        ),
+        // CR-007: manual bends — vertical run, a `\` diagonal (Bresenham content), then a
+        // horizontal final segment into B.w with the arrowhead.
+        (
+            "connector-bent",
+            linked_bent(
+                diagram(
+                    1,
+                    vec![box_obj(0, "A", 0, 0, 9, 5), box_obj(1, "B", 14, 6, 9, 5)],
+                ),
+                0,
+                "e",
+                1,
+                "w",
+                vec![CellPos::new(8, 5), CellPos::new(12, 8)],
+            ),
+        ),
+        // CR-007: a diagonal FIRST segment — the departure cell keeps structural edges
+        // (junction with A.e) while the rest of the segment is `/` content.
+        (
+            "connector-bent-diagonal-first",
+            linked_bent(
+                diagram(
+                    1,
+                    vec![box_obj(0, "A", 0, 0, 9, 5), box_obj(1, "B", 14, 6, 9, 5)],
+                ),
+                0,
+                "e",
+                1,
+                "w",
+                vec![CellPos::new(12, 8), CellPos::new(14, 8)],
             ),
         ),
         // S-007: anchors on the same column — straight vertical route down A.s into B.n.

@@ -1,7 +1,11 @@
 //! Renderer backend (ADR 009): a thin wrapper over `render-pipeline`'s pure
 //! functions with the shape registry bound at construction.
 
-use diagram_model::{Diagram, geometry::CellPos, objects::ShapeInstance};
+use diagram_model::{
+    Diagram,
+    geometry::CellPos,
+    objects::{ObjectId, ShapeInstance},
+};
 use render_pipeline::{RenderError, ResolvedGrid};
 use shape_registry::{
     AnchorSet, Collection, GeometryKind, ShapeRegistry, ShapeType, TemplateGrid, min_size,
@@ -38,6 +42,13 @@ impl PipelineRenderer {
 impl Renderer for PipelineRenderer {
     fn render(&self, diagram: &Diagram) -> Result<ResolvedGrid, RenderError> {
         render_pipeline::render(diagram, &self.state.snapshot())
+    }
+
+    fn connector_routes(
+        &self,
+        diagram: &Diagram,
+    ) -> Result<Vec<(ObjectId, Vec<CellPos>)>, RenderError> {
+        render_pipeline::connector_routes(diagram, &self.state.snapshot())
     }
 
     fn preview_pattern(&self, rows: &[String]) -> Result<ResolvedGrid, RenderError> {

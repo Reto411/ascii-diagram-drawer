@@ -942,6 +942,15 @@ impl DrawingApp {
             })
             .map(|p| (p - rect.min).to_pos2());
         let hover_cell = cursor.and_then(|p| vp.screen_to_model_cell(p.x, p.y));
+        // CR-007 — connector routes for body/bend hit-testing: the seam read-model,
+        // recomputed per frame exactly like the text itself (pure arithmetic over the
+        // diagram). A failure degrades to "no connector hits" and never to a canvas
+        // error — rendering above already reported it in the status bar.
+        let routes = self
+            .services
+            .renderer
+            .connector_routes(&self.diagram)
+            .unwrap_or_default();
         let hit: Option<((u32, u32), HitTarget)> = hover_cell.map(|(col, row)| {
             (
                 (col, row),
@@ -951,6 +960,7 @@ impl DrawingApp {
                     self.editor.selection.as_ref(),
                     self.editor.connecting_source(),
                     (col, row),
+                    &routes,
                 ),
             )
         });
@@ -1450,6 +1460,20 @@ fn draw_overlays(
                     ),
                     0.0,
                     ANCHOR_COLOR,
+                );
+            }
+            crate::canvas::Overlay::BendHandle((col, row)) => {
+                // CR-007 AC7 — the marker sits on the bend cell's CENTER, exactly the
+                // cell `hit_target` answers with a Bend (same convention as the resize
+                // handle).
+                let c = center_of(col, row);
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        Pos2::new(c.x - 3.0, c.y - 3.0),
+                        Pos2::new(c.x + 3.0, c.y + 3.0),
+                    ),
+                    0.0,
+                    SELECTION_COLOR,
                 );
             }
         }
@@ -2005,6 +2029,13 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
             from.object()
         )),
         EditOutcome::Connected { id } => Some(format!("Connector added as {id}")),
+        EditOutcome::BendAdded { id, at } => {
+            Some(format!("Bend added to {id} at ({}, {})", at.x, at.y))
+        }
+        EditOutcome::BendMoved { id, to } => {
+            Some(format!("Bend of {id} moved to ({}, {})", to.x, to.y))
+        }
+        EditOutcome::BendRemoved { id, .. } => Some(format!("Bend removed from {id}")),
         EditOutcome::Deleted { id, removed } => {
             let connectors = removed.saturating_sub(1);
             Some(if connectors == 0 {
@@ -2463,6 +2494,31 @@ mod tests {
             })
             .unwrap()
             .contains("obj-9")
+        );
+        let at = CellPos::new(6, 2);
+        assert!(
+            status_for(EditOutcome::BendAdded {
+                id: ObjectId::generated(9),
+                at
+            })
+            .unwrap()
+            .contains("(6, 2)")
+        );
+        assert!(
+            status_for(EditOutcome::BendMoved {
+                id: ObjectId::generated(9),
+                to: at
+            })
+            .unwrap()
+            .contains("obj-9")
+        );
+        assert_eq!(
+            status_for(EditOutcome::BendRemoved {
+                id: ObjectId::generated(9),
+                index: 0
+            })
+            .as_deref(),
+            Some("Bend removed from obj-9")
         );
         assert_eq!(
             status_for(EditOutcome::Deleted {
