@@ -2,9 +2,9 @@
 title: CR-017 - multi-select-group-move
 description: select several shapes with Ctrl/Shift+click and move them as a group — standard editor behavior for working with related elements
 scope: gui/interaction
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-017: Multi-select (Ctrl/Shift+click) and group move
@@ -56,9 +56,9 @@ On acceptance, one commit:
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-017 as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-035** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

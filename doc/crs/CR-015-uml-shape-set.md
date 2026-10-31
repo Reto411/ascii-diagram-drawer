@@ -2,9 +2,9 @@
 title: CR-015 - uml-shape-set
 description: built-in catalog ships the core UML shape set (class/use-case/sequence/component/deployment/state/activity) — the requester's daily standard as a system architect
 scope: shapes/templates
-status: proposed
+status: accepted
 priority: high
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-015: UML shape set in the built-in catalog
@@ -57,9 +57,9 @@ On acceptance, one commit:
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-015 as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** Requester (2026-10-30): "This will require CR-003 since it has a huge impact on shape definition!" — recorded as a hard dependency above.
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-036** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board. Geometry-only scope per FR18; compartment text arrives with S-037 (CR-016).Requester (2026-10-30): "This will require CR-003 since it has a huge impact on shape definition!" — recorded as a hard dependency above.
 
 ## Implementation
 

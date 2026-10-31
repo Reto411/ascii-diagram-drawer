@@ -2,9 +2,9 @@
 title: CR-012 - shape filter in the template sidebar
 description: a text filter narrows the shape list in the template sidebar by name — keeps selection usable as the number of native shapes grows
 scope: gui (template sidebar)
-status: proposed
+status: accepted
 priority: low
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-012: Shape filter in the template sidebar
@@ -50,9 +50,9 @@ Note: CR-002 and CR-011 (both pending) also reword FR6. If all are accepted, the
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-033** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

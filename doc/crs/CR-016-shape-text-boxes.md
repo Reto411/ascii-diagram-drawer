@@ -2,9 +2,9 @@
 title: CR-016 - shape-text-boxes
 description: shape templates can declare named text regions (text boxes) with position/extent that belong to the shape — definable in file and editor; generalizes the single label
 scope: shapes/templates/format
-status: proposed
+status: accepted
 priority: high
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-016: Shape-owned text boxes (definable text regions on templates)
@@ -58,9 +58,9 @@ On acceptance, one commit:
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-016 as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-037** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board. ADR 004 → v4; `region` declarations join the `.adc`/`.ad` minor-version 1.1 batch.
 
 ## Implementation
 

@@ -2,9 +2,9 @@
 title: CR-002 - grouped dropdown menus in the toolbar
 description: replace the flat toolbar with a menu bar of dropdown menus grouping actions by category (e.g. File) — less clutter as features grow
 scope: gui (toolbar / menu structure)
-status: proposed
+status: accepted
 priority: low
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-002: Grouped dropdown menus in the toolbar
@@ -49,9 +49,9 @@ User feedback: the toolbar is already a long flat row and will keep growing as f
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-025** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

@@ -2,9 +2,9 @@
 title: CR-001 - native file dialogs for open, save and export
 description: Open/Save/Save As use a system file dialog (Save As can write the .ad document or the rendered .txt); Export becomes one system dialog with SVG/PNG format choice
 scope: gui (file I/O + export UX)
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-001: Native file dialogs for Open, Save and Export
@@ -51,9 +51,9 @@ User feedback while using the GUI: the inline path prompt (typed file path + OK)
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-039** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board. The S-014 "no native file dialog in v1" note is superseded by this story (native targets).
 
 ## Implementation
 

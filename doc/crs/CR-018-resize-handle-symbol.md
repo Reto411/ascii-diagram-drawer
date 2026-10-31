@@ -2,9 +2,9 @@
 title: CR-018 - resize-handle-symbol
 description: the shape's resize hook is drawn with a dedicated resize symbol (distinct from anchor dots) so users can see it as the drag-to-resize affordance
 scope: gui/interaction
-status: proposed
+status: accepted
 priority: low
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-018: Resize symbol on the shape's resize hook
@@ -55,9 +55,9 @@ On acceptance, one commit:
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-018 as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-038** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

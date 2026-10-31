@@ -2,9 +2,9 @@
 title: CR-006 - material design gui with custom title bar
 description: style the whole GUI according to Material Design — custom (undecorated) window border/app-bar with minimize, fullscreen and close controls; button symbols may be ASCII art rendered by the app's own pipeline and stored as SVG assets
 scope: gui (theming + window chrome)
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-006: Material Design GUI with custom title bar
@@ -50,9 +50,9 @@ User feedback: "I want to look the application modern." The current default-egui
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-027** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board. New [ADR 017](../adr/017-material-design-title-bar.md) (`proposed` until S-027 implements it).
 
 ## Implementation
 

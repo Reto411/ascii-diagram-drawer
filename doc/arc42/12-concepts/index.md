@@ -3,7 +3,7 @@ title: "arc42-12-concepts"
 description: index of architecture concepts (C1+) — each concept has a full doc in doc/arc42/12-concepts/
 scope: architecture
 status: draft
-updated: 2026-10-28
+updated: 2026-10-31
 ---
 
 # 12. Concepts
@@ -55,23 +55,23 @@ updated: 2026-10-28
 ## Concept C6: Diagram File Format (`.ad`)
 
 - **ID:** C6
-- **Purpose:** the canonical lossless serialization of a `Diagram` — versioned, line-based, one statement per line with explicit cell coordinates; deterministic, byte-stable on re-save (QS7)
-- **Details:** [`doc/arc42/12-concepts/diagram-file-format.md`](diagram-file-format.md) · decided in [ADR 004](../../adr/004-diagram-file-format.md); grammar settled by S-003
+- **Purpose:** the canonical lossless serialization of a `Diagram` — versioned, line-based, one statement per line with explicit cell coordinates; deterministic, byte-stable on re-save (QS7); minor version 1.1 extensions accepted 2026-10-31 (CR batch: tips/bends/endpoints/colors/regions)
+- **Details:** [`doc/arc42/12-concepts/diagram-file-format.md`](diagram-file-format.md) · decided in [ADR 004](../../adr/004-diagram-file-format.md) (v4); grammar settled by S-003
 - **Interfaces (provided/required):** `ad-format` crate (S-004): parser + canonical serializer over the C4 aggregate
 - **Dependencies:** C4 (serializes the aggregate 1:1), C5 (cell coordinates + scale), C7/C8 (`collection/name` type-ids resolve into collections)
 
 ## Concept C7: Shape Template
 
 - **ID:** C7
-- **Purpose:** a user-defined diagram object — named fixed-size grid of svgbob-alphabet characters with declared anchor cells; the unit of user content (FR3), stamped opaquely except at anchors
-- **Details:** [`doc/arc42/12-concepts/shape-template.md`](shape-template.md) · decided in [ADR 007](../../adr/007-user-defined-diagram-objects.md); syntax settled by S-003
+- **Purpose:** a user-defined diagram object — named grid of svgbob-alphabet characters with declared anchor cells and optional resize rules (C10); the unit of user content (FR3), stamped opaquely except at anchors
+- **Details:** [`doc/arc42/12-concepts/shape-template.md`](shape-template.md) · decided in [ADR 007](../../adr/007-user-defined-diagram-objects.md) (v6); syntax settled by S-003
 - **Interfaces (provided/required):** template definition (grid + anchors) → consumed by the Shape Catalog (C3) and rendering (C2)
 - **Dependencies:** C8 (lives in collections), C6 (`collection/name` reference form), C1 (cells use the svgbob alphabet), C5 (instances occupy a cell rectangle)
 
 ## Concept C8: Collection
 
 - **ID:** C8
-- **Purpose:** a named plain-text file (`.adc`) grouping shape templates — the shareable unit of user content; identity = filename stem, `collection/name` resolution rule lives here
+- **Purpose:** a named plain-text file (`.adc`) grouping shape templates — the shareable unit of user content; identity = filename stem, `collection/name` resolution rule lives here; sidebar shows pre-rendered WYSIWYG previews (FR16)
 - **Details:** [`doc/arc42/12-concepts/collection.md`](collection.md) · decided in [ADR 007](../../adr/007-user-defined-diagram-objects.md); syntax settled by S-003
 - **Interfaces (provided/required):** collection file → `shape-registry` (S-005) loads it; type-id resolution for `.ad` files (C6)
 - **Dependencies:** C7 (content unit), C6 (shared versioning scheme + reference form), C3 (Shape Catalog context)
@@ -79,7 +79,15 @@ updated: 2026-10-28
 ## Concept C9: Connector Routing
 
 - **ID:** C9
-- **Purpose:** how anchor-bound connectors become routed lines in the resolved grid — endpoints re-resolve from anchor references on every render, straight or single-corner L of structural edges, arrowhead at the target end; joins are clean by construction (C1 rule table)
-- **Details:** [`doc/arc42/12-concepts/connector-routing.md`](connector-routing.md) · decided in [ADR 013](../../adr/013-connector-routing.md); implemented in S-007
+- **Purpose:** how connectors become routed lines in the resolved grid — endpoints are anchor-bound or free, re-resolve on every render; automatic straight/single-corner L of structural edges, manual waypoint polylines, selectable per-end tips (arrow/rhombus); joins clean by construction (C1 rule table)
+- **Details:** [`doc/arc42/12-concepts/connector-routing.md`](connector-routing.md) · decided in [ADR 013](../../adr/013-connector-routing.md) (v6); implemented in S-007
+
+## Concept C10: Resize Rules
+
+- **ID:** C10
+- **Purpose:** how custom shape templates declare per-edge grow/shrink character patterns (+ even/odd parity variants) so their instances can be resized — re-rasterization is a pure function of (template, rules, target size)
+- **Details:** [`doc/arc42/12-concepts/resize-rules.md`](resize-rules.md) · decided in [ADR 007](../../adr/007-user-defined-diagram-objects.md) v6 (CR-003, accepted 2026-10-31)
+- **Interfaces (provided/required):** `resize` statements in `.adc` template blocks (C8); `rasterize()` consumed by the render pipeline's place stage (C2)
+- **Dependencies:** C7 (rules are part of the template definition), C5 (target sizes are cell extents), C2 (re-stamped at render time)
 - **Interfaces (provided/required):** place stage of `render-pipeline` (C2) stamps routes; catalog anchor sets (C7) supply template-space coordinates
-- **Dependencies:** C2 (pipeline stage), C1 (structural-edge resolution), C4 (`ConnectorInstance`/`AnchorRef`), C7 (anchor sets)
+- **Dependencies:** C2 (pipeline stage), C1 (structural-edge resolution), C4 (`ConnectorInstance`/endpoint refs), C7 (anchor sets)

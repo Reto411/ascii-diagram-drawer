@@ -2,9 +2,9 @@
 title: CR-010 - standalone arrows with attachable/detachable ends
 description: arrows that need not be bound to shapes — each end either attached to a shape anchor or free at an explicit position, attachable and detachable interactively
 scope: model + format + render pipeline + GUI
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-010: Standalone arrows with attachable/detachable ends
@@ -50,9 +50,9 @@ User: "this is needed" for more advanced diagrams — annotation arrows, flows b
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-031** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board. ADR 013 → v6 (free endpoints).
 
 ## Implementation
 

@@ -2,9 +2,9 @@
 title: CR-007 - user-modifiable arrow shapes (manual bends)
 description: pressing onto an arrow selects it and dragging adds/moves intermediate bends (Visio-style), so users can manually route connectors for readable diagrams
 scope: connectors (model + routing + GUI gestures)
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-007: User-modifiable arrow shapes (manual bends)
@@ -49,9 +49,9 @@ User need: "The user needs the possibility to shape the arrows to make nicely re
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-028** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board. ADR 013 → v4 (manual waypoint polylines; axis-aligned segments keep clean joins, explicit diagonals are `/` `\` content).
 
 ## Implementation
 

@@ -2,9 +2,9 @@
 title: CR-008 - selectable arrow tips on both ends + arrow-shaped anchor markers
 description: each connector end can carry a selectable tip (none / hollow arrow / empty rhombus / filled rhombus), changed by pressing onto the tip; GUI anchor dots become small arrow symbols (svgbob-rendered asset) to signal "connecting adds an arrow"
 scope: connectors (tips + GUI affordances)
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-008: Selectable arrow tips on both ends + arrow-shaped anchor markers
@@ -51,9 +51,9 @@ Usability: users need to control what each end of a connection *means* (e.g. one
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-029** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board. ADR 013 → v5. Rhombus tips `◇`/`◆` are content-only glyphs — verified against the ADR 001 alphabet machinery (`is_svgbob_glyph` stays unchanged), so no ADR 001 bump is needed.
 
 ## Implementation
 

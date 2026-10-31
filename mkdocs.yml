@@ -26,6 +26,7 @@ nav:
           - Shape template: arc42/12-concepts/shape-template.md
           - Collection: arc42/12-concepts/collection.md
           - Connector routing: arc42/12-concepts/connector-routing.md
+          - Resize rules: arc42/12-concepts/resize-rules.md
       - "13. Building Blocks (Detail)": arc42/13-building-blocks-detail.md
       - "14. Important Requirements": arc42/14-important-requirements.md
       - "15. Risks and Technical Risks": arc42/15-risks.md
@@ -49,6 +50,7 @@ nav:
       - "014 Egress isolation (Squid proxy)": adr/014-egress-isolation-squid-proxy.md
       - "015 Apache-2.0 project license": adr/015-apache-2-0-license.md
       - "016 PNG rasterizer (resvg)": adr/016-png-rasterizer.md
+      - "017 Material Design GUI + custom title bar": adr/017-material-design-title-bar.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md

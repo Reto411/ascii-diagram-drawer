@@ -2,9 +2,9 @@
 title: CR-014 - canvas-panning
 description: user can pan the canvas to navigate diagrams that extend beyond the visible area (at 1x large diagrams are clipped and off-screen parts unreachable)
 scope: gui
-status: proposed
+status: accepted
 priority: high
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-014: Canvas panning for diagram navigation
@@ -59,9 +59,9 @@ On acceptance, one commit:
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-014 as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-022** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

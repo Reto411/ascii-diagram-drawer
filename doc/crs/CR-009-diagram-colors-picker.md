@@ -2,9 +2,9 @@
 title: CR-009 - diagram colors via color picker (svgbob settings)
 description: background, shape fill and line/text colors per diagram — chosen with a color picker remembering the last 16 used colors; rendered on canvas and in SVG/PNG via svgbob Settings
 scope: rendering (color) + model/format + exporters + GUI
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-009: Diagram colors with color picker
@@ -64,9 +64,9 @@ Colored diagrams are more readable (emphasis, grouping, semantics per region) an
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-030** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

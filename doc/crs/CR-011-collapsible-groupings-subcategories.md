@@ -2,9 +2,9 @@
 title: CR-011 - collapsible groupings with subcategories
 description: UI groupings (menu bar dropdowns, template sidebar) become collapsible and support subcategory nesting — tidier selection as the number of actions and shape types grows
 scope: gui (menu / sidebar structure)
-status: proposed
+status: accepted
 priority: low
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-011: Collapsible groupings with subcategories
@@ -52,9 +52,9 @@ Note: CR-002 (pending) proposes its own FR6 rewording (menu bar); if both are ac
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-032** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

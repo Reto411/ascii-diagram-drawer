@@ -3,7 +3,7 @@ title: story-board
 description: persistent story board — backlog / in-progress / blocked / done; the single source of truth for what to work on next
 scope: delivery
 status: stable
-updated: 2026-10-29
+updated: 2026-10-31
 ---
 
 # Story Board
@@ -15,6 +15,24 @@ updated: 2026-10-29
 | S-019 | web/wasm milestone — bundle build + core tests on wasm32 (QS4) | High | S-012…S-018, S-011 | 5 | [S-019](S-019-wasm-web-milestone.md) |
 | S-020 | performance benchmarks + determinism invariants (QS1/QS12) | Low | S-008, S-011 | 4 | [S-020](S-020-performance-benchmarks.md) |
 | S-021 | documentation completion (§4/§7/§10/§11/§13/§15/§16 + tracker) | Medium | S-019, S-020 | 4 | [S-021](S-021-docs-completion.md) |
+| S-022 | gui-app — canvas panning for diagram navigation (FR17) | High | none beyond done stories | — | [S-022](S-022-canvas-panning.md) |
+| S-023 | gui-app — Options menu: theme selection + config persistence (FR13) | Low | none beyond done stories | — | [S-023](S-023-options-menu-theme-config.md) |
+| S-024 | shape-registry + render-pipeline + gui-app — resize rules for custom templates (FR3, ADR 007 v6, C10) | High | none beyond done stories | — | [S-024](S-024-template-resize-rules.md) |
+| S-025 | gui-app — menu bar with grouped dropdown menus (FR6) | Low | none beyond done stories | — | [S-025](S-025-grouped-dropdown-menus.md) |
+| S-026 | gui-app — right-side SVG preview pane (FR6) | Medium | none beyond done stories | — | [S-026](S-026-svg-preview-pane.md) |
+| S-027 | gui-app — Material Design theme + custom title bar (FR14, ADR 017) | Medium | S-023/S-025/S-026 | — | [S-027](S-027-material-design-title-bar.md) |
+| S-028 | render-pipeline + gui-app — manual bend waypoints for connectors (FR9, ADR 013 v4) | Medium | none beyond done stories | — | [S-028](S-028-connector-manual-bends.md) |
+| S-029 | render-pipeline + gui-app — selectable per-end tips + arrow anchor markers (FR9, ADR 013 v5) | Medium | S-028 | — | [S-029](S-029-connector-selectable-tips.md) |
+| S-030 | model + ad-format + exporters + gui-app — diagram colors via color picker (FR15) | Medium | none beyond done stories | — | [S-030](S-030-diagram-colors-picker.md) |
+| S-031 | model + ad-format + render-pipeline + gui-app — standalone arrows, attachable/detachable ends (FR9, ADR 013 v6) | Medium | S-028/S-029 | — | [S-031](S-031-connector-free-endpoints.md) |
+| S-032 | gui-app — collapsible menu/sidebar groups + subcategories (FR6) | Low | S-025 | — | [S-032](S-032-collapsible-groupings-subcategories.md) |
+| S-033 | gui-app — name filter in the template sidebar (FR6) | Low | none beyond done stories | — | [S-033](S-033-shape-filter.md) |
+| S-034 | gui-app — pre-rendered WYSIWYG shape previews (FR16) | Medium | none beyond done stories | — | [S-034](S-034-prerendered-shape-previews.md) |
+| S-035 | gui-app — Ctrl/Shift+click multi-select + group move (FR20) | Medium | none beyond done stories | — | [S-035](S-035-multi-select-group-move.md) |
+| S-036 | shape-registry — core UML shape set in the built-in catalog (FR18) | High | none beyond done stories; compartment text via S-037 | — | [S-036](S-036-uml-shape-set.md) |
+| S-037 | model + format + pipeline + gui-app — shape-owned text regions (FR19, ADR 004 v4) | High | none beyond done stories | — | [S-037](S-037-shape-text-regions.md) |
+| S-038 | gui-app — dedicated resize symbol on the resize handle (FR21) | Low | none beyond done stories | — | [S-038](S-038-resize-handle-symbol.md) |
+| S-039 | gui-app — system file dialogs for open/save/export + Save As .txt (FR2/FR4/FR5) | Medium | S-025 (preferred) | — | [S-039](S-039-native-file-dialogs.md) |
 
 ## In progress
 

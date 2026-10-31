@@ -2,9 +2,9 @@
 title: CR-003 - template creation via text box + resize-rule toolset
 description: custom template authoring = hand-typed ASCII art in a text box, plus a second toolset declaring resize behavior (per-edge insert/remove characters, parity variants for ellipses)
 scope: shapes/templates (custom object authoring + resize rules)
-status: proposed
+status: accepted
 priority: high
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-003: Template creation via text box + resize-rule toolset
@@ -49,9 +49,9 @@ User feedback: painting the object cell-by-cell in the graphical grid editor is 
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-024** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board. ADR 007 → v6; new concept C10 [resize-rules](../arc42/12-concepts/resize-rules.md); `resize` statements join the `.adc` minor-version 1.1 batch.
 
 ## Implementation
 

@@ -2,9 +2,9 @@
 title: CR-005 - options menu with theme selection and config persistence
 description: an Options menu to modify application settings — starting with UI theme (light / dark / native-inherited, default) — persisted in the application's config file across sessions
 scope: gui (options/settings + theming)
-status: proposed
+status: accepted
 priority: low
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-005: Options menu with theme selection and config persistence
@@ -50,9 +50,9 @@ User feedback: the UI is currently fixed to a dark theme with no way to adapt it
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-023** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

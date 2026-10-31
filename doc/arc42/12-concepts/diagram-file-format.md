@@ -3,7 +3,7 @@ title: diagram-file-format
 description: the .ad diagram file grammar — versioned, line-based, one statement per line with explicit cell coordinates; read before implementing or changing ad-format (S-004)
 scope: format
 status: stable
-updated: 2026-10-23
+updated: 2026-10-31
 ---
 
 # Concept: Diagram File Format (`.ad`)
@@ -81,6 +81,21 @@ Header `ad <major>.<minor>`; v1 ships as `ad 1.0`. A reader of version `M.m` han
 - `f.M = M`, `f.m ≤ m` → every statement must be a known, well-formed one (an older writer cannot emit unknowns).
 
 Preserved unknown statements are re-emitted byte-for-byte at their original position between known statements on save — QS7 holds across minor-version upgrades too.
+
+### Decided extensions (minor version 1.1, accepted 2026-10-31)
+
+The CR batch (CR-001…CR-018) extends the family to `ad 1.1` / `adc 1.1`. The existing versioning + skip-and-preserve rules apply unchanged; each extension below lands in its story's commit, where the normative grammar section of this doc (and C7/C8 for `.adc`) is updated with the exact statement syntax. Writers never emit statements they don't understand, so intermediate builds stay legal.
+
+| Extension | Encoding sketch | Story |
+|-----------|-----------------|-------|
+| Connector manual bends (CR-007) | `connect` gains an optional ordered waypoint list (`via <x> <y>, …`) in model-space cells | S-028 |
+| Per-end connector tips (CR-008) | `connect` gains optional per-end tip keywords (none / arrow / rhombus open / rhombus filled); absent = old default (source none, target arrow) | S-029 |
+| Free connector endpoints (CR-010) | a `connect` endpoint may be a bare cell position (`at <x> <y>`) instead of `<id>.<anchor>`; attach/detach is GUI-only | S-031 |
+| Diagram colors (CR-009) | diagram-level statements for background / shape-fill / line-text color as `#RRGGBB`; absent = current monochrome rendering | S-030 |
+| Shape-owned text regions (CR-016, ADR 004 v4) | `region` declarations inside `.adc` template blocks (name + cell rect); `shape` statements gain per-region quoted content; the existing single label is preserved as-is | S-037 |
+| Template resize rules (CR-003, ADR 007 v6) | `resize` statements inside `.adc` template blocks — grammar normative in [resize-rules](resize-rules.md) (C10), exact syntax settled by S-024 | S-024 |
+
+Round-trip (QS7) and byte-stability extend to every new field: each model field gets exactly one representation, and `serialize(parse(serialize(d))) == serialize(d)` keeps holding proptest-enforced.
 
 ## Field mapping (QS7: exactly one representation per model field)
 

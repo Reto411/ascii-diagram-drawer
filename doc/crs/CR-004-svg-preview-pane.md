@@ -2,9 +2,9 @@
 title: CR-004 - right-side SVG preview pane
 description: a resizable, hideable right-side pane showing the diagram's effectively rendered SVG (IDE-style split view), with a "Preview" bookmark at the right edge to re-open it
 scope: gui (preview pane) + export pipeline reuse
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-004: Right-side SVG preview pane
@@ -50,9 +50,9 @@ User feedback: they want to see the **effectively rendered diagram** — the exa
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-026** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 

@@ -2,9 +2,9 @@
 title: CR-013 - prerendered-shape-previews
 description: shape selection shows a pre-rendered visual preview of each shape (same bytes as stamped on the canvas) instead of name + tiny text snippet — WYSIWYG picking
 scope: gui
-status: proposed
+status: accepted
 priority: medium
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # CR-013: Pre-rendered shape previews in the template sidebar
@@ -58,9 +58,9 @@ On acceptance, one commit:
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-013 as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-10-31
+- **Reason / notes:** Bulk acceptance per user directive (2026-10-31 session: implement all change requests). Story **S-034** — the decision plan's provisional story number collided with the existing backlog (S-019–S-021 already allocated); the final allocation for the whole batch is recorded on the board.
 
 ## Implementation
 
