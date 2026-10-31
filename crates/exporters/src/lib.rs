@@ -12,7 +12,7 @@ mod png;
 mod svg;
 mod text;
 
-pub use png::to_png;
+pub use png::{RgbaImage, text_to_rgba, to_png};
 pub use svg::to_svg;
 pub use text::to_text;
 

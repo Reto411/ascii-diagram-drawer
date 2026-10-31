@@ -7,9 +7,12 @@
 //! events, run file-IO flows on menu actions, and report what happened in the status
 //! bar.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use core_services::Services;
+use core_services::{RgbaImage, Services};
 use diagram_model::geometry::CellSize;
 use diagram_model::{Diagram, objects::Object};
 use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense, Vec2};
@@ -27,9 +30,15 @@ const FONT_SIZE: f32 = 14.0;
 const MARGIN_PX: f32 = 8.0;
 /// Fixed width of the template sidebar.
 const SIDEBAR_PX: f32 = 180.0;
+/// SVG preview pane (S-026 / CR-004): default width and the drag-resize range (AC2).
+const PREVIEW_DEFAULT_PX: f32 = 380.0;
+const PREVIEW_MIN_PX: f32 = 160.0;
+const PREVIEW_MAX_PX: f32 = 900.0;
+/// Width of the “Preview” bookmark strip shown when the pane is collapsed (AC3).
+const PREVIEW_BOOKMARK_PX: f32 = 24.0;
 
 const TEXT_COLOR: Color32 = Color32::from_rgb(222, 226, 232);
-const GRID_LINE_COLOR: Color32 = Color32::from_rgb(44, 47, 54);
+pub(crate) const GRID_LINE_COLOR: Color32 = Color32::from_rgb(44, 47, 54);
 const SELECTION_COLOR: Color32 = Color32::from_rgb(90, 160, 255);
 const GHOST_COLOR: Color32 = Color32::from_rgb(140, 200, 140);
 const ERROR_COLOR: Color32 = Color32::from_rgb(255, 96, 96);
@@ -37,6 +46,36 @@ const ANCHOR_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
 const CONNECT_LINE_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
 /// Muted hint text on an empty canvas (first-run affordance).
 const HINT_COLOR: Color32 = Color32::from_rgb(96, 102, 114);
+
+/// Right-side SVG preview pane (S-026 / CR-004): a live view of exactly what FR5 would
+/// export — the canvas text rasterized through the same `svg_from_text` → resvg
+/// pipeline as the PNG export. The raster is cached against a hash of the rendered
+/// grid, so it re-runs only when the diagram actually changes (AC1).
+#[derive(Debug)]
+struct PreviewPane {
+    /// Expanded (visible) or collapsed to the “Preview” bookmark. Visible by default
+    /// (CR assumption); egui's collapsible side panel animates the transition.
+    expanded: bool,
+    /// Hash of the canvas text the current raster was made from — `None` until the
+    /// first refresh; the gate that keeps unchanged models free (AC1).
+    grid_hash: Option<u64>,
+    /// The rasterized preview (`Arc`: cheap to hand to egui's texture cache each frame,
+    /// which re-uploads only when it actually changes).
+    image: Option<Arc<egui::ColorImage>>,
+    /// Why no image can be shown — rasterizer unavailable or a pipeline error (AC4).
+    problem: Option<String>,
+}
+
+impl Default for PreviewPane {
+    fn default() -> Self {
+        Self {
+            expanded: true, // CR-004 assumption: the pane is visible by default.
+            grid_hash: None,
+            image: None,
+            problem: None,
+        }
+    }
+}
 
 /// The eframe app state. Everything user-visible is derived from `diagram` (the model)
 /// plus transient view state in `editor` — ADR 009.
@@ -110,6 +149,8 @@ pub struct DrawingApp {
     /// The theme preference currently active in the egui context — applied once
     /// per change (incl. at startup, when `None`).
     applied_theme: Option<Theme>,
+    /// Right-side SVG preview pane (S-026 / CR-004) — see [`PreviewPane`].
+    preview: PreviewPane,
 }
 
 /// Builds the app from services, an optional startup fixture (the visual test tiers
@@ -178,6 +219,7 @@ impl DrawingApp {
             config,
             config_path,
             applied_theme: None,
+            preview: PreviewPane::default(),
         }
     }
 
@@ -208,6 +250,32 @@ impl DrawingApp {
     #[must_use]
     pub fn pan(&self) -> Vec2 {
         self.pan
+    }
+
+    /// Test seam (S-026 AC3): is the SVG preview pane expanded (visible)?
+    #[cfg(test)]
+    #[must_use]
+    pub fn preview_expanded(&self) -> bool {
+        self.preview.expanded
+    }
+
+    /// Test seam (S-026 AC1): does a rasterized preview exist for the current grid?
+    #[cfg(test)]
+    #[must_use]
+    pub fn preview_has_image(&self) -> bool {
+        self.preview.image.is_some()
+    }
+
+    /// Test seam (S-026 AC4): inject a rasterization problem into the preview pane,
+    /// pinning the hash gate to `grid_text` so the next refresh with that same text is
+    /// a no-op and the problem survives the frame.
+    #[cfg(test)]
+    pub fn set_preview_problem(&mut self, grid_text: &str, problem: String) {
+        let mut hasher = DefaultHasher::new();
+        grid_text.hash(&mut hasher);
+        self.preview.grid_hash = Some(hasher.finish());
+        self.preview.image = None;
+        self.preview.problem = Some(problem);
     }
 
     /// Test seam (S-025 AC2): install an in-flight PNG export — a job handle plus
@@ -1719,12 +1787,164 @@ impl DrawingApp {
         }
 
         // WYSIWYG canvas: re-render the model every frame (live updates during gestures).
-        egui::CentralPanel::default_margins().show(ui, |ui| match self.canvas_frame() {
+        let frame = self.canvas_frame();
+
+        // SVG preview pane (S-026 / CR-004): it previews exactly what FR5 would export,
+        // so it is fed from this same render — never a second pipeline. The refresh is
+        // hash-gated (a no-op while the model is unchanged), and side panels must be
+        // shown before the central panel to reserve their space.
+        if let Ok((text, _, _)) = &frame {
+            self.refresh_preview(text);
+        }
+        self.draw_preview_pane(ui);
+
+        egui::CentralPanel::default_margins().show(ui, |ui| match frame {
             Err(e) => {
                 ui.label(RichText::new(format!("Render error: {e}")).color(ERROR_COLOR));
             }
             Ok((text, width, height)) => self.draw_canvas(ui, &text, width, height),
         });
+    }
+
+    // ── SVG preview pane (S-026 / CR-004) ────────────────────────────────────────
+
+    /// AC1 — re-rasterize the preview when the rendered grid changed. Called once per
+    /// frame with the exact canvas text the character canvas draws; the hash gate makes
+    /// it a no-op while the model is unchanged (throttled refresh — CR assumption).
+    fn refresh_preview(&mut self, canvas_text: &str) {
+        let mut hasher = DefaultHasher::new();
+        canvas_text.hash(&mut hasher);
+        let hash = hasher.finish();
+        if Some(hash) == self.preview.grid_hash {
+            return; // unchanged grid — the cached raster is still exact.
+        }
+        self.preview.grid_hash = Some(hash);
+        if canvas_text.is_empty() {
+            // Empty diagram → placeholder, not an error (AC4).
+            self.preview.image = None;
+            self.preview.problem = None;
+            return;
+        }
+        let rgba = core_services::preview::text_to_rgba(canvas_text).map_err(|e| e.to_string());
+        self.apply_raster(rgba);
+    }
+
+    /// AC4 — map a rasterization outcome onto the pane state: success replaces the
+    /// image and clears any problem; failure keeps no image and records the message so
+    /// the pane explains itself instead of failing. Kept pipeline-free so the failure
+    /// path is unit-testable headlessly.
+    fn apply_raster(&mut self, rgba: Result<RgbaImage, String>) {
+        match rgba {
+            Ok(rgba) => {
+                self.preview.image = Some(Arc::new(egui::ColorImage::from_rgba_unmultiplied(
+                    [rgba.width as usize, rgba.height as usize],
+                    &rgba.rgba,
+                )));
+                self.preview.problem = None;
+            }
+            Err(problem) => {
+                self.preview.image = None;
+                self.preview.problem = Some(problem);
+            }
+        }
+    }
+
+    /// The right-side SVG preview pane (S-026 / CR-004): a live view of exactly what
+    /// FR5 would export. Resizable by dragging its border (AC2); dragged past the
+    /// minimum it collapses, and while collapsed a visible “Preview” bookmark at the
+    /// window's right edge re-opens it (AC3). Must be shown before the central panel so
+    /// it reserves its space.
+    fn draw_preview_pane(&mut self, ui: &mut egui::Ui) {
+        // The expansion flag is a local for the duration of the call: the content
+        // closure already borrows `self`, so the panel cannot also take
+        // `&mut self.preview.expanded` (the drag-to-collapse flip is written back).
+        let mut expanded = self.preview.expanded;
+        let shown = egui::Panel::right("preview-pane")
+            .resizable(true)
+            // The visible “Preview” bookmark is the re-open affordance (AC3); keep
+            // egui's own collapsed grab handle out of the same strip.
+            .drag_to_open(false)
+            .default_size(PREVIEW_DEFAULT_PX)
+            .size_range(PREVIEW_MIN_PX..=PREVIEW_MAX_PX)
+            .show_collapsible(ui, &mut expanded, |ui| {
+                self.draw_preview_content(ui);
+            });
+        self.preview.expanded = expanded;
+        if shown.is_none() {
+            // Fully collapsed: the “Preview” bookmark at the right edge re-opens the pane.
+            // `resizable(false)`: left/right panels are resizable by default in egui 0.37,
+            // and that panel's resize handle would sit on top of the bookmark button and
+            // steal every click meant for it.
+            egui::Panel::right("preview-bookmark")
+                .resizable(false)
+                .exact_size(PREVIEW_BOOKMARK_PX)
+                .show(ui, |ui| {
+                    // A compact button centered in the strip (`centered_and_justified` would
+                    // stretch it to the full panel height instead).
+                    let avail = ui.available_size();
+                    ui.add_space((avail.y - 120.0).max(0.0) / 2.0);
+                    ui.vertical_centered(|ui| {
+                        if ui
+                            .button(RichText::new("P\nr\ne\nv\ni\ne\nw").size(13.0))
+                            .on_hover_text("Show the SVG preview pane")
+                            .clicked()
+                        {
+                            self.preview.expanded = true;
+                            self.status = "Preview shown".to_owned();
+                        }
+                    });
+                });
+        }
+    }
+
+    /// The preview pane's content (S-026): the rasterized export bytes scaled to fit,
+    /// or a placeholder / problem message (AC4). A resizable panel's content must grow
+    /// with the panel, hence `take_available_space`.
+    fn draw_preview_content(&self, ui: &mut egui::Ui) {
+        ui.take_available_space();
+        match (&self.preview.image, &self.preview.problem) {
+            (None, None) => {
+                // Empty diagram — nothing to preview yet (AC4).
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        RichText::new("Nothing to preview yet")
+                            .weak()
+                            .color(HINT_COLOR),
+                    );
+                });
+            }
+            (Some(image), _) => {
+                // egui's texture cache keyed on a fixed id: re-uploads only when the
+                // Arc actually changes (a cheap pointer compare per frame — AC1).
+                let handle = ui.ctx().load_texture_cached(
+                    "diagram-preview",
+                    egui::Id::unique("diagram-preview-tex"),
+                    image.clone(),
+                    egui::TextureOptions::LINEAR,
+                );
+                // Fit the raster into the pane preserving aspect; small diagrams may be
+                // upscaled (capped) so a tiny box does not sit as a speck in the corner.
+                let avail = ui.available_size();
+                let [iw, ih] = image.size;
+                let scale = (avail.x / iw as f32)
+                    .min(avail.y / ih as f32)
+                    .clamp(0.1, 4.0);
+                let disp = Vec2::new(iw as f32 * scale, ih as f32 * scale);
+                ui.centered_and_justified(|ui| {
+                    ui.add(egui::Image::new(&handle).fit_to_exact_size(disp));
+                });
+            }
+            (None, Some(problem)) => {
+                // Rasterizer unavailable or a pipeline error — explain, don't fail (AC4).
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        RichText::new(format!("Preview unavailable:\n{problem}"))
+                            .weak()
+                            .color(ERROR_COLOR),
+                    );
+                });
+            }
+        }
     }
 }
 
@@ -1848,6 +2068,98 @@ mod tests {
             .expect("placement");
         let err = app.canvas_frame().expect_err("renderer is failing");
         assert!(err.contains("mystery"), "{err:?}");
+    }
+
+    // ── SVG preview pane (S-026 / CR-004) ────────────────────────────────────
+
+    /// AC4 — an empty diagram is a placeholder state, not an error: no raster and no
+    /// problem message.
+    #[test]
+    fn preview_of_an_empty_diagram_is_a_placeholder_not_an_error() {
+        let mut app = app();
+        app.refresh_preview("");
+        assert!(
+            app.preview.image.is_none(),
+            "no raster for an empty diagram"
+        );
+        assert!(
+            app.preview.problem.is_none(),
+            "empty is a placeholder, not an error"
+        );
+    }
+
+    /// AC1 — the preview rasterizes the exact canvas bytes and re-runs only when they
+    /// change: unchanged text keeps the same cached `Arc` (no re-rasterization), new
+    /// text produces a new one.
+    #[test]
+    fn preview_rasterizes_the_canvas_bytes_and_gates_on_their_hash() {
+        let mut app = app();
+        app.editor.select_template(box_info());
+        assert!(matches!(
+            app.handle_pointer_frame(true, Some(((3, 4), HitTarget::Empty))),
+            EditOutcome::Placed { .. }
+        ));
+        app.handle_pointer_frame(false, None);
+        let (text, _, _) = app.canvas_frame().expect("renders");
+
+        app.refresh_preview(&text);
+        let first = app
+            .preview
+            .image
+            .clone()
+            .expect("rasterized after a change");
+        assert!(app.preview.problem.is_none());
+        assert!(first.size[0] > 0 && first.size[1] > 0, "non-empty raster");
+
+        // Unchanged grid → the cached raster is kept (same Arc — no re-rasterization).
+        app.refresh_preview(&text);
+        assert!(
+            Arc::ptr_eq(&first, app.preview.image.as_ref().expect("still there")),
+            "unchanged model must not re-rasterize (AC1 hash gate)"
+        );
+
+        // Changed grid → a new raster.
+        app.editor.select_template(box_info());
+        assert!(matches!(
+            app.handle_pointer_frame(true, Some(((20, 4), HitTarget::Empty))),
+            EditOutcome::Placed { .. }
+        ));
+        app.handle_pointer_frame(false, None);
+        let (text2, _, _) = app.canvas_frame().expect("renders");
+        assert_ne!(text, text2);
+        app.refresh_preview(&text2);
+        assert!(
+            !Arc::ptr_eq(&first, app.preview.image.as_ref().expect("re-rasterized")),
+            "changed model must re-rasterize"
+        );
+    }
+
+    /// AC4 — a rasterization failure becomes a visible problem message, never a panic
+    /// or a stale image.
+    #[test]
+    fn preview_raster_failure_becomes_a_problem_not_a_panic() {
+        let mut app = app();
+        app.apply_raster(Err("rasterizer exploded".to_owned()));
+        assert!(
+            app.preview.image.is_none(),
+            "no stale image after a failure"
+        );
+        assert_eq!(app.preview.problem.as_deref(), Some("rasterizer exploded"));
+    }
+
+    /// AC4 — a successful rasterization clears any previous problem.
+    #[test]
+    fn preview_success_clears_a_previous_problem() {
+        let mut app = app();
+        app.apply_raster(Err("boom".to_owned()));
+        app.apply_raster(Ok(RgbaImage {
+            width: 2,
+            height: 1,
+            rgba: vec![0; 8],
+        }));
+        assert!(app.preview.problem.is_none());
+        let image = app.preview.image.expect("image restored");
+        assert_eq!(image.size, [2, 1]);
     }
 
     #[test]

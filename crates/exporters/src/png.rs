@@ -27,18 +27,54 @@ pub fn to_png(grid: &ResolvedGrid) -> Result<Vec<u8>, ExportError> {
     }
 }
 
+/// A raw RGBA raster (row-major, top to bottom) — the in-memory result of
+/// rasterization before encoding. [`to_png`] encodes one to a file; the GUI's live
+/// preview pane (CR-004 / S-026) displays one directly as a texture via
+/// [`text_to_rgba`], so what the user sees is exactly what the export produces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RgbaImage {
+    /// Width in pixels (the SVG document's declared width).
+    pub width: u32,
+    /// Height in pixels (the SVG document's declared height).
+    pub height: u32,
+    /// `width * height` RGBA bytes, row-major, top to bottom.
+    pub rgba: Vec<u8>,
+}
+
+/// Live-preview rasterization (CR-004 / S-026): render an exact svgbob input string
+/// to raw RGBA — the same [`crate::svg::svg_from_text`] + resvg pipeline as
+/// [`to_svg`] + [`to_png`], but taking the text bytes directly so the GUI can preview
+/// from the canvas frame it already holds. The pixels are exactly what exporting
+/// those bytes would produce: [`to_svg`] is defined as `svg_from_text(&to_text(grid))`,
+/// and this function funnels through the same seam.
+///
+/// Degrades to [`ExportError::Unsupported`] without the `raster` feature, like
+/// [`to_png`] (AC4 — degradation, not failure).
+pub fn text_to_rgba(text: &str) -> Result<RgbaImage, ExportError> {
+    let svg = crate::svg::svg_from_text(text)?;
+    #[cfg(feature = "raster")]
+    {
+        rgba_from_svg(&svg)
+    }
+    #[cfg(not(feature = "raster"))]
+    {
+        let _ = svg;
+        Err(ExportError::Unsupported)
+    }
+}
+
 /// The rasterizer seam (ADR 016): usvg parse → resvg render into a tiny-skia pixmap at
-/// the document's declared size → PNG encode. Every fallible step maps to a typed
-/// [`ExportError`] — nothing in this path panics.
+/// the document's declared size. Every fallible step maps to a typed [`ExportError`] —
+/// nothing in this path panics.
 #[cfg(feature = "raster")]
-fn png_from_svg(svg: &str) -> Result<Vec<u8>, ExportError> {
+fn render_pixmap(svg: &str) -> Result<tiny_skia::Pixmap, ExportError> {
     let tree = usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default()).map_err(|err| {
         ExportError::SvgParse {
             message: err.to_string(),
         }
     })?;
-    // The document's declared pixel size (f32 in usvg) — the PNG renders at exactly
-    // this size, so decoded dimensions equal the SVG's width/height attributes.
+    // The document's declared pixel size (f32 in usvg) — the raster renders at exactly
+    // this size, so output dimensions equal the SVG's width/height attributes.
     let size = tree.size();
     let mut pixmap =
         tiny_skia::Pixmap::new(size.width() as u32, size.height() as u32).ok_or_else(|| {
@@ -51,6 +87,26 @@ fn png_from_svg(svg: &str) -> Result<Vec<u8>, ExportError> {
         tiny_skia::Transform::identity(),
         &mut pixmap.as_mut(),
     );
+    Ok(pixmap)
+}
+
+#[cfg(feature = "raster")]
+fn rgba_from_svg(svg: &str) -> Result<RgbaImage, ExportError> {
+    let pixmap = render_pixmap(svg)?;
+    // `take()` un-premultiplies and hands over the raw RGBA bytes.
+    Ok(RgbaImage {
+        width: pixmap.width(),
+        height: pixmap.height(),
+        rgba: pixmap.take(),
+    })
+}
+
+/// The PNG encode step of the rasterizer seam (ADR 016): render, then encode with
+/// tiny-skia's PNG encoder — the same direct pixmap→encode path as before S-026,
+/// so export bytes are unchanged.
+#[cfg(feature = "raster")]
+fn png_from_svg(svg: &str) -> Result<Vec<u8>, ExportError> {
+    let pixmap = render_pixmap(svg)?;
     pixmap.encode_png().map_err(|err| ExportError::PngEncode {
         message: err.to_string(),
     })
@@ -125,6 +181,68 @@ mod tests {
         assert!(unsupported.to_string().contains("no rasterizer backend"));
     }
 
+    /// AC1 (S-026) — the preview seam: rasterizing the exact canvas text yields
+    /// byte-identical pixels to decoding the PNG export of the same grid — same SVG
+    /// bytes in, same resvg pipeline, so the GUI's preview is exactly what FR5 exports.
+    #[test]
+    fn text_to_rgba_matches_the_png_export_pixels() {
+        let grid = small_grid();
+        let text = crate::to_text(&grid);
+        let rgba = text_to_rgba(&text).expect("rasterizes");
+
+        // Dimensions equal the SVG's declared size (same invariant as the PNG test).
+        let svg = to_svg(&grid).expect("renders");
+        let declared = |attr: &str| -> u32 {
+            let start = svg
+                .find(format!("{attr}=").as_str())
+                .expect("attribute present");
+            let rest = &svg[start + attr.len() + 2..];
+            rest.split('"')
+                .next()
+                .expect("value")
+                .parse()
+                .expect("numeric")
+        };
+        assert_eq!(rgba.width, declared("width"));
+        assert_eq!(rgba.height, declared("height"));
+        assert_eq!(rgba.rgba.len(), (rgba.width * rgba.height * 4) as usize);
+
+        // Same pixels as the decoded PNG export of the same grid.
+        let png_bytes = to_png(&grid).expect("rasterizes");
+        let decoder = png::Decoder::new(&png_bytes[..]);
+        let mut reader = decoder.read_info().expect("decodable PNG");
+        assert_eq!(reader.info().color_type, png::ColorType::Rgba);
+        let mut decoded = vec![0u8; reader.output_buffer_size()];
+        let frame = reader.next_frame(&mut decoded).expect("decodes");
+        assert_eq!(frame.buffer_size(), rgba.rgba.len());
+        assert_eq!(
+            &decoded[..frame.buffer_size()],
+            &rgba.rgba,
+            "preview ≠ export pixels"
+        );
+    }
+
+    /// AC1 (S-026) — deterministic: the same text rasterizes to identical bytes.
+    #[test]
+    fn text_to_rgba_is_deterministic() {
+        let grid = small_grid();
+        let text = crate::to_text(&grid);
+        assert_eq!(
+            text_to_rgba(&text).expect("rasterizes"),
+            text_to_rgba(&text).expect("rasterizes")
+        );
+    }
+
+    /// AC4 (S-026) — empty input never panics: svgbob accepts the empty document and
+    /// rasterizes it to its default-size blank canvas. The *GUI* gates on empty canvas
+    /// text and shows its placeholder instead of displaying this blank raster.
+    #[test]
+    fn text_to_rgba_handles_the_empty_document() {
+        let img = text_to_rgba("").expect("blank document, not an error");
+        assert!(img.width > 0 && img.height > 0);
+        assert_eq!(img.rgba.len(), (img.width * img.height * 4) as usize);
+    }
+
     /// A grid with connector arrowheads rasterizes too (the S-008 golden scenario).
     #[test]
     fn connector_grid_rasterizes() {
@@ -153,6 +271,15 @@ mod unsupported_tests {
     fn to_png_degrades_to_unsupported_without_the_raster_feature() {
         let grid = render_pipeline::ResolvedGrid::from_rows(&["+---+"]).expect("valid grid");
         let err = crate::to_png(&grid).expect_err("must degrade, not build-fail");
+        assert!(matches!(err, crate::ExportError::Unsupported));
+    }
+
+    /// AC4 (S-026) — without the `raster` feature the preview seam degrades to
+    /// `Unsupported` too, so the GUI shows its "unavailable" message instead.
+    #[cfg(not(feature = "raster"))]
+    #[test]
+    fn text_to_rgba_degrades_to_unsupported_without_the_raster_feature() {
+        let err = crate::text_to_rgba("+---+").expect_err("must degrade, not build-fail");
         assert!(matches!(err, crate::ExportError::Unsupported));
     }
 

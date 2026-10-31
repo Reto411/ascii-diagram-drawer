@@ -30,6 +30,9 @@ const WIN_H: f32 = 768.0;
 const MARGIN: f32 = 8.0;
 /// Must match `SIDEBAR_PX` in `app.rs`.
 const SIDEBAR: f32 = 180.0;
+/// Must match `PREVIEW_DEFAULT_PX` in `app.rs` (S-026): the SVG preview pane is
+/// visible by default, so the canvas no longer spans to the window's right edge.
+const PREVIEW: f32 = 380.0;
 /// Must match `ANCHOR_COLOR` / `SELECTION_COLOR` in `app.rs`.
 const ANCHOR: Color32 = Color32::from_rgb(255, 196, 87);
 const SELECTION: Color32 = Color32::from_rgb(90, 160, 255);
@@ -510,6 +513,11 @@ fn grid_lines_stay_inside_the_canvas_area() {
         if a.x < SIDEBAR || (a.y < min.y - 0.5 && b.y < min.y - 0.5) {
             continue; // top-bar / sidebar chrome
         }
+        // S-026: the preview pane's separator/resize edge is canvas-right chrome,
+        // not a grid line.
+        if a.x > WIN_W - PREVIEW || b.x > WIN_W - PREVIEW {
+            continue;
+        }
         assert!(
             a.x >= min.x - 0.5 && a.y >= min.y - 0.5 && b.x >= min.x - 0.5 && b.y >= min.y - 0.5,
             "line ({a:?}..{b:?}) stays inside the canvas area"
@@ -545,9 +553,10 @@ fn empty_canvas_shows_a_centered_hint_and_full_grid() {
             horizontals += 1;
         }
     }
-    // Canvas is ~830×700 px at ~8.4×16 cells → dozens of lines each way.
+    // S-026: the canvas is ~464 px wide (window − sidebar − default preview pane),
+    // still full height → dozens of lines each way.
     assert!(
-        verticals >= (830.0 / cw) as usize - 2,
+        verticals >= ((WIN_W - SIDEBAR - PREVIEW) / cw) as usize - 2,
         "full-width vertical grid: {verticals}"
     );
     assert!(
@@ -2427,5 +2436,164 @@ fn the_default_native_theme_renders_dark() {
         gui.ctx.theme(),
         egui::Theme::Dark,
         "native falls back to dark without a system theme"
+    );
+}
+
+// ── SVG preview pane (S-026 / CR-004) ────────────────────────────────────────
+
+/// AC3 — the pane is visible by default (CR assumption): an empty diagram shows the
+/// placeholder inside the pane at the window's right edge.
+#[test]
+fn preview_pane_is_visible_by_default_with_a_placeholder() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.frame();
+    assert!(gui.app.preview_expanded(), "the pane is visible by default");
+    let placeholder =
+        find_text(&out, "Nothing to preview yet").expect("empty diagram shows the placeholder");
+    assert!(
+        placeholder.min.x > WIN_W - PREVIEW,
+        "placeholder sits inside the right-side pane: {placeholder:?}"
+    );
+}
+
+/// AC1 — once content exists, the export bytes are rasterized for the pane and the
+/// placeholder is gone; the canvas model is untouched by the pane's presence.
+#[test]
+fn preview_shows_the_raster_once_content_exists() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 5, 3);
+    let out = gui.frame();
+    assert!(
+        gui.app.preview_has_image(),
+        "the export bytes were rasterized for the pane"
+    );
+    assert!(
+        find_text(&out, "Nothing to preview yet").is_none(),
+        "placeholder is replaced by the raster"
+    );
+}
+
+/// AC2 — dragging the pane's left edge resizes it live: the canvas narrows (fewer grid
+/// columns) and no grid line crosses into the pane.
+#[test]
+fn preview_pane_border_drag_resizes_the_canvas() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+
+    /// Long vertical segments in canvas colors — i.e. the grid, not the pane's separator.
+    fn grid_columns(out: &egui::FullOutput) -> Vec<f32> {
+        out.shapes
+            .iter()
+            .filter_map(|cs| match &cs.shape {
+                egui::epaint::Shape::LineSegment { points, stroke } => {
+                    let (a, b) = (points[0], points[1]);
+                    if (a.x - b.x).abs() < 0.5
+                        && (a.y - b.y).abs() > 100.0
+                        && stroke.color == crate::app::GRID_LINE_COLOR
+                    {
+                        Some(a.x)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    let before = grid_columns(&gui.frame()).len();
+
+    // Widen the pane by 100 px: drag its left edge to the left.
+    let edge = Pos2::new(WIN_W - PREVIEW, WIN_H / 2.0);
+    gui.drag(edge, Pos2::new(WIN_W - PREVIEW - 100.0, WIN_H / 2.0));
+    let out = gui.frame();
+
+    assert!(gui.app.preview_expanded(), "resizing is not collapsing");
+    let after = grid_columns(&out);
+    assert!(
+        after.len() < before.saturating_sub(5),
+        "canvas narrowed: {before} → {} grid columns",
+        after.len()
+    );
+    for x in &after {
+        assert!(
+            *x < WIN_W - PREVIEW - 100.0,
+            "grid line at x={x} stays out of the widened pane"
+        );
+    }
+}
+
+/// AC3 — double-clicking the pane's edge collapses it; while collapsed a “Preview”
+/// bookmark sits at the window's right edge and clicking it re-opens the pane.
+#[test]
+fn preview_pane_collapses_via_double_click_and_reopens_via_bookmark() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.frame(); // settle at the default width
+    assert!(gui.app.preview_expanded());
+
+    // Double-click the pane's left edge → collapse (the slide animation needs a few frames).
+    let edge = Pos2::new(WIN_W - PREVIEW, WIN_H / 2.0);
+    gui.double_click_at(edge);
+    for _ in 0..300 {
+        if !gui.app.preview_expanded() {
+            break;
+        }
+        let _ = gui.frame();
+    }
+    assert!(
+        !gui.app.preview_expanded(),
+        "double-click collapsed the pane"
+    );
+
+    // The “Preview” bookmark appears once the slide-out animation has finished…
+    let mut out = gui.frame();
+    for _ in 0..300 {
+        if find_text_exact(&out, "P\nr\ne\nv\ni\ne\nw").is_some() {
+            break;
+        }
+        out = gui.frame();
+    }
+    let bookmark =
+        find_text_exact(&out, "P\nr\ne\nv\ni\ne\nw").expect("bookmark drawn while collapsed");
+    assert!(
+        bookmark.center().x > WIN_W - 30.0,
+        "bookmark hugs the window's right edge: {bookmark:?}"
+    );
+
+    // …and clicking it re-opens the pane.
+    gui.click_at(bookmark.center());
+    for _ in 0..300 {
+        if gui.app.preview_expanded() {
+            break;
+        }
+        let _ = gui.frame();
+    }
+    assert!(
+        gui.app.preview_expanded(),
+        "the bookmark re-opened the pane"
+    );
+}
+
+/// AC4 — a rasterization problem is explained inside the pane (never a panic), and the
+/// canvas keeps working beside it.
+#[test]
+fn preview_problem_message_shows_in_the_pane() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    // Pin the problem to the (empty) grid so the next refresh is a no-op, and frame.
+    gui.app
+        .set_preview_problem("", "rasterizer exploded".to_owned());
+    let out = gui.frame();
+    assert!(
+        find_text(&out, "Preview unavailable").is_some(),
+        "problem explained in the pane"
+    );
+    assert!(
+        find_text(&out, "rasterizer exploded").is_some(),
+        "the message itself is shown"
+    );
+    // The canvas beside the pane keeps working (still offering its empty-state hint).
+    assert!(
+        find_text(&out, "Pick a shape").is_some(),
+        "canvas unaffected by the pane error"
     );
 }
