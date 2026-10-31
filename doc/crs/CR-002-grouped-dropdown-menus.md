@@ -2,7 +2,7 @@
 title: CR-002 - grouped dropdown menus in the toolbar
 description: replace the flat toolbar with a menu bar of dropdown menus grouping actions by category (e.g. File) — less clutter as features grow
 scope: gui (toolbar / menu structure)
-status: accepted
+status: implemented
 priority: low
 updated: 2026-10-31
 ---
@@ -57,4 +57,4 @@ User feedback: the toolbar is already a long flat row and will keep growing as f
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-025** — commit `16710cc` (2026-10-31). Flat toolbar button row replaced by a menu bar: **File ▾** (`egui::menu_button`) hosts the one-shot actions in three separator-divided groups (Open…/Save/Save As… · Copy/Text .txt · Export SVG…/Export PNG…) beside the existing Options ▾; the Scale control stays outside as a persistent live control, as flagged at acceptance. Ctrl+S fires outside the menu closure so it saves with the menu closed; Export PNG… is listed but inert while an export job is in flight (deterministic via the S-015 `export_jobs` test seam). Every pre-existing open/save/export tier-0b flow now drives the real dropdown through the new `Gui::click_menu_item` helper, so the whole suite exercises the menu path. 5 new headless tests; workspace green; tarpaulin 94.06% ≥ 80%; arc42 §8 records the menu bar in gui-app.
