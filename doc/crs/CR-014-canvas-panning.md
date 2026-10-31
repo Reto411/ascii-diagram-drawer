@@ -2,7 +2,7 @@
 title: CR-014 - canvas-panning
 description: user can pan the canvas to navigate diagrams that extend beyond the visible area (at 1x large diagrams are clipped and off-screen parts unreachable)
 scope: gui
-status: accepted
+status: implemented
 priority: high
 updated: 2026-10-31
 ---
@@ -67,4 +67,4 @@ On acceptance, one commit:
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-022** — commit `973d2d7` (2026-10-31). Middle-drag and scroll pan a view-only `DrawingApp.pan` (clamped at the model origin, reset on open); `Viewport::with_origin` makes content rows, grid paper, overlays and hit-testing all derive from one panned viewport, so every S-012/S-013 gesture keeps working at any offset. 5 new headless tests; workspace green; tarpaulin 94.79% ≥ 80%.

@@ -27,7 +27,6 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | CR-011 | Collapsible groupings with subcategories (menus + sidebar) | low | accepted | [CR-011-collapsible-groupings-subcategories.md](CR-011-collapsible-groupings-subcategories.md) |
 | CR-012 | Shape filter in the template sidebar | low | accepted | [CR-012-shape-filter.md](CR-012-shape-filter.md) |
 | CR-013 | Pre-rendered shape previews in the template sidebar (WYSIWYG picking) | medium | accepted | [CR-013-prerendered-shape-previews.md](CR-013-prerendered-shape-previews.md) |
-| CR-014 | Canvas panning for diagram navigation | high | accepted | [CR-014-canvas-panning.md](CR-014-canvas-panning.md) |
 | CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | high | accepted | [CR-015-uml-shape-set.md](CR-015-uml-shape-set.md) |
 | CR-016 | Shape-owned text boxes — definable text regions on templates (format change, ADR 004) | high | accepted | [CR-016-shape-text-boxes.md](CR-016-shape-text-boxes.md) |
 | CR-017 | Multi-select (Ctrl/Shift+click) and group move | medium | accepted | [CR-017-multi-select-group-move.md](CR-017-multi-select-group-move.md) |
@@ -37,4 +36,4 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
-| — | — | — | — |
+| CR-014 | Canvas panning for diagram navigation | 2026-10-31 | implemented — S-022, commit `973d2d7` (FR17) |
