@@ -3,8 +3,8 @@ title: 013 - connector-routing
 description: connectors route orthogonally — straight when anchors share a row/column, otherwise a single-corner L — stamped as structural edges so they join borders through the C1 rule table; arrowhead glyph at the target end
 scope: rendering
 status: accepted
-version: 2
-updated: 2026-10-28
+version: 3
+updated: 2026-10-31
 ---
 
 # ADR 013: Connector routing
@@ -26,7 +26,7 @@ Connectors are anchor-bound (FR9): a `ConnectorInstance` stores only `(object, a
 2. **Deterministic corner choice.** The corner is chosen so that the *final* segment approaches the target anchor perpendicular to its side when possible: a target on a left/right side gets a horizontal final segment; a target on a top/bottom side gets a vertical one. If the target anchor has no side preference (corner/interior cell), the source's preference is used, then a fixed default (vertical-first corner `(from.x, to.y)`). The route is therefore a pure function of the two endpoints and their sides — no search.
 3. **Routes are structural edges.** Every route cell stamps N/E/S/W edge connections toward its route neighbors (the same `CellState` mechanism as shape borders). Connectors therefore join borders through the existing C1 rule table and F2 merge: a connector leaving a wall's midpoint renders as a T-junction `+`, an elbow landing on a wall corner merges into it, and a route crossing another border mid-edge produces a clean T-junction. No connector cell is ever stamped as opaque content except the arrowhead (below).
 4. **Arrowhead at the target end.** The cell adjacent to the target anchor (the second-to-last route cell) carries an arrowhead glyph — `>` / `<` for horizontal approach, `v` / `^` for vertical — pointing toward the target, stamped as content over its edges. This matches svgbob's semantics: an arrowhead character becomes an arrow when a line connects to it ([svgbob specification](https://ivanceras.github.io/content/Svgbob/Specification.html)), so text and SVG outputs agree. The arrowhead is omitted when there is no room for it (endpoints on the same or adjacent cells).
-5. **Anchor resolution per geometry.** `Rect` instances have live pos/size: a template anchor coordinate maps proportionally onto the instance extent per axis, rounded to nearest (ties up), so side-midpoint anchors stay at side midpoints at any instance size and natural-size instances map to themselves. `Pattern` instances stamp at natural size, so their anchors are the template coordinates offset by the instance position. An anchor name missing from the type's anchor set, or declared outside the template extent (which cannot resolve inside the shape's bounds — the §8.4.1 render-time invariant), is a typed `RenderError`.
+5. **Anchor resolution per geometry.** `Rect` and `Ellipse` instances have live pos/size: a template anchor coordinate maps proportionally onto the instance extent per axis, rounded to nearest (ties up), so side-midpoint anchors stay at side midpoints at any instance size and natural-size instances map to themselves. `Pattern` instances (custom templates) stamp at natural size, so their anchors are the template coordinates offset by the instance position. An anchor name missing from the type's anchor set, or declared outside the template extent (which cannot resolve inside the shape's bounds — the §8.4.1 render-time invariant), is a typed `RenderError`.
 6. **Degenerate cases.** Coincident endpoints draw nothing; adjacent endpoints draw only the two stub edges (no arrowhead). Both are deterministic and render-safe.
 
 ## Alternatives considered
@@ -59,5 +59,6 @@ Connectors are anchor-bound (FR9): a `ConnectorInstance` stores only `(object, a
 
 > When a decision changes: bump `version` in the header, update Context/Decision to the *current* state, and add an entry here (newest first) recording what changed, why, and when. Never create a superseding ADR.
 
+- **v3 (2026-10-31):** point 5 extended — the built-in ellipse gained an `Ellipse` geometry kind and is re-rasterized at its instance pos/size (B-001: resizing was a no-op because it stamped the natural 9×5 art); its anchors now map proportionally like `Rect`. Custom templates stay `Pattern` (natural size).
 - **v2 (2026-10-28):** decision implemented — S-007 landed `crates/render-pipeline/src/connectors.rs` exactly as recorded: endpoint re-resolution from anchor references, straight/single-corner L with target-side corner preference, structural-edge stamping, lowercase arrowheads `< > ^ v` at the target end (uppercase `V` joins alphabet membership only, per ADR 001 v2), typed `RenderError::{UnknownAnchor, AnchorOutsideExtent}`. Five golden grids pin horizontal/vertical/L/mid-edge/scale-2 routing; status flipped to `accepted`.
 - **v1 (2026-10-26):** initial decision — orthogonal straight/single-corner routing, structural-edge routes, arrowhead at the target end, proportional Rect anchor mapping; dashed style deferred.

@@ -69,11 +69,13 @@ fn box_shape() -> ShapeType {
 
 /// The built-in ellipse/circle: a 9×5 svgbob-style oval with mid-side anchors.
 ///
-/// `Pattern` geometry: the fixed art is stamped at natural size.
+/// `Ellipse` geometry: the outline is re-rasterized deterministically at the
+/// instance's own pos/size (the art below documents the natural appearance), so
+/// the shape is resizable like `box` (FR1, S-013 AC1; B-001, ADR 013 v3).
 fn ellipse_shape() -> ShapeType {
     builtin(
         "ellipse",
-        GeometryKind::Pattern,
+        GeometryKind::Ellipse,
         &[
             "   ___   ",
             " ,'   '. ",
@@ -110,7 +112,7 @@ mod tests {
     }
 
     /// S-006: geometry kinds — box is Rect (borders from instance pos/size),
-    /// ellipse is Pattern (fixed art stamped at natural size).
+    /// ellipse is Ellipse (re-rasterized at the instance extent, B-001).
     #[test]
     fn builtins_carry_their_geometry_kind() {
         let catalog = builtin_catalog();
@@ -123,7 +125,7 @@ mod tests {
             .iter()
             .find(|s| s.name == "ellipse")
             .expect("ellipse is built in");
-        assert_eq!(ellipse.geometry, GeometryKind::Pattern);
+        assert_eq!(ellipse.geometry, GeometryKind::Ellipse);
     }
 
     /// AC1/AC4: every built-in carries exactly the four standard default anchors and no resize rules.

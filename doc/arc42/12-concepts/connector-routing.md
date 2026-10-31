@@ -19,8 +19,8 @@ FR9 requires connectors bound to object anchors that re-resolve when shapes move
 ## How it works / behaves
 
 - **Endpoints re-resolve on every render.** A `ConnectorInstance` stores no geometry. Each anchor reference is looked up in the endpoint shape's type (catalog), then mapped to a grid cell:
-  - `Rect` instances (live pos/size): template coordinates map proportionally per axis, rounded to nearest (ties up) — side-midpoint anchors stay at side midpoints at any size.
-  - `Pattern` instances (natural size): template coordinates offset by the instance position.
+  - `Rect` and `Ellipse` instances (live pos/size): template coordinates map proportionally per axis, rounded to nearest (ties up) — side-midpoint anchors stay at side midpoints at any size.
+  - `Pattern` instances (custom templates, natural size): template coordinates offset by the instance position.
   - Missing anchor names or anchors declared outside the template extent are typed `RenderError`s (the §8.4.1 render-time invariant).
 - **Straight or single-corner L (ADR 013).** Shared row/column → straight segment. Otherwise one corner cell: the final segment approaches the target perpendicular to its side when possible; otherwise the source's preference, then a fixed default. No multi-corner routes, no diagonals in v1 — routing is a pure function of the endpoints and their sides.
 - **Routes are structural edges.** Every route cell stamps N/E/S/W connections through the same `CellState` mechanism as shape borders, so joins resolve through the C1 rule table: a line leaving a wall's midpoint renders as T-junction `+`, crossings merge cleanly. No connector cell is opaque content except the arrowhead.

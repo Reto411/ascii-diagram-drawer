@@ -7,11 +7,15 @@
 //! - `Rect` shapes (built-in box): borders are edge connections resolved at the
 //!   instance's own pos/size, so instances of any size join cleanly; the label
 //!   centers in the strict interior.
-//! - `Pattern` shapes (built-in ellipse, all custom templates): the glyph pattern is
-//!   stamped opaquely at its natural size — non-space cells verbatim, space cells
-//!   transparent; anchor cells additionally carry *passive* base edges derived from
-//!   their drawn neighbors (for connector joining in S-007); the label centers over
-//!   the full pattern extent and may only land on space cells.
+//! - `Ellipse` shapes (built-in ellipse/circle): the outline is re-rasterized
+//!   deterministically at the instance's own pos/size (9×5 reproduces the natural
+//!   template byte-for-byte, B-001); anchors map proportionally like `Rect`; the label
+//!   centers over the full instance extent and may only land on space cells.
+//! - `Pattern` shapes (all custom templates): the glyph pattern is stamped opaquely at
+//!   its natural size — non-space cells verbatim, space cells transparent; anchor cells
+//!   additionally carry *passive* base edges derived from their drawn neighbors (for
+//!   connector joining in S-007); the label centers over the full pattern extent and may
+//!   only land on space cells.
 //! - Free text: stamped verbatim at its position; lines containing svgbob-alphabet
 //!   characters are wrapped in quotes so they read as literal text in SVG output (C1).
 //! - Connectors (ADR 013): endpoints re-resolved from anchor references, routed straight
@@ -24,6 +28,7 @@ use shape_registry::CellPos;
 use shape_registry::{GeometryKind, ShapeRegistry, ShapeType, TemplateGrid};
 
 use crate::edges::EdgeSet;
+use crate::ellipse::rasterize_ellipse;
 use crate::{RenderError, is_line_glyph, is_svgbob_glyph};
 
 /// What one cell knows after the place stage (before glyph resolution, C1).
@@ -171,9 +176,85 @@ fn place_shape(
     let shape = lookup_shape(instance, registry)?;
     match shape.geometry {
         GeometryKind::Rect => place_rect(grid, instance),
+        GeometryKind::Ellipse => place_ellipse(grid, instance, shape),
         GeometryKind::Pattern => place_pattern(grid, instance, shape),
     }
     Ok(())
+}
+
+/// Stamps an `Ellipse` shape: the outline re-rasterized at the instance's own pos/size
+/// (deterministic — [`rasterize_ellipse`]), passive base edges on anchor cells that map
+/// onto drawn art, label over the space cells of the rasterized extent.
+fn place_ellipse(grid: &mut PlacedGrid, instance: &ShapeInstance, shape: &ShapeType) {
+    let px = instance.pos.x;
+    let py = instance.pos.y;
+    let w = instance.size.width;
+    let h = instance.size.height;
+    if w == 0 || h == 0 {
+        return;
+    }
+    let glyph = &shape.glyph_pattern;
+    let art = rasterize_ellipse(w, h);
+
+    // 1. Opaque art stamp: non-space cells verbatim (they do not participate in glyph
+    //    resolution — ADR 007); space cells are transparent.
+    for dy in 0..h {
+        for dx in 0..w {
+            if let Some(c) = art.get(CellPos::new(dx, dy))
+                && c != ' '
+            {
+                grid.with_cell(px + dx, py + dy, |s| s.stamp_content(c));
+            }
+        }
+    }
+
+    // 2. Anchor base edges (passive): anchors are declared in template coordinates and
+    //    map proportionally onto the instance extent (identity at natural size); recorded
+    //    on anchor cells that carry art so a connector binding there merges with the
+    //    drawn neighbors. Invisible while unbound — content wins at resolution.
+    for (_name, apos) in shape.anchor_set.iter() {
+        let mapped = CellPos::new(
+            map_proportional(apos.x, glyph.width(), w),
+            map_proportional(apos.y, glyph.height(), h),
+        );
+        if let Some(c) = art.get(mapped)
+            && c != ' '
+        {
+            let base = anchor_base_edges(&art, mapped);
+            grid.with_cell(px + mapped.x, py + mapped.y, |s| {
+                s.stamp_content_with_base_edges(c, base)
+            });
+        }
+    }
+
+    // 3. The label centers over the full instance extent; only space cells may receive it.
+    stamp_label(
+        grid,
+        &instance.label,
+        LabelRegion::Pattern {
+            glyph: &art,
+            px,
+            py,
+        },
+    );
+}
+
+/// Proportional per-axis mapping of a template coordinate onto an instance extent
+/// (shared with connector endpoint resolution in [`crate::connectors`]): natural-size
+/// instances map to themselves, side coordinates stay on their side at any size, and
+/// ties round up.
+pub(crate) fn map_proportional(
+    template_coord: u32,
+    template_extent: u32,
+    instance_extent: u32,
+) -> u32 {
+    if template_extent <= 1 || instance_extent <= 1 {
+        return 0;
+    }
+    let num = template_coord * (instance_extent - 1);
+    let den = template_extent - 1;
+    // round(num / den), ties up.
+    (2 * num + den) / (2 * den)
 }
 
 /// Stamps a `Rect` shape: borders from the instance's own pos/size (any size), label
@@ -483,6 +564,39 @@ mod tests {
         assert_eq!(g.cell(5, 1).content, Some('_'));
         // Space cells stay transparent (nothing stamped).
         assert!(!g.cell(5, 3).occupied());
+    }
+
+    /// B-001: an ellipse instance larger than its natural 9×5 template is re-rasterized
+    /// at the instance's own extent — not stamped at natural size.
+    #[test]
+    fn resized_ellipse_is_rasterized_at_instance_extent() {
+        let mut shape = ellipse_at(2, 1);
+        shape.size = CellSize::new(13, 8).expect("non-zero test size");
+        let g = placed(vec![Object::Shape(shape)]);
+        // The grid follows the instance extent, not the template's 9×5.
+        assert_eq!(g.width, 2 + 13);
+        assert_eq!(g.height, 1 + 8);
+        // Rasterized art verbatim at instance coordinates (local (4,0)='_', (0,2)'(',
+        // (11,1)='.', (6,7)='-').
+        assert_eq!(g.cell(6, 1).content, Some('_'));
+        assert_eq!(g.cell(2, 3).content, Some('('));
+        assert_eq!(g.cell(13, 2).content, Some('.'));
+        assert_eq!(g.cell(8, 8).content, Some('-'));
+        // Interior space cells stay transparent.
+        assert!(!g.cell(8, 4).occupied());
+    }
+
+    /// B-001: the label of a resized ellipse centers over the instance extent and lands
+    /// only on space cells of the rasterized outline.
+    #[test]
+    fn resized_ellipse_label_centers_on_space_cells() {
+        let mut shape = ellipse_at(2, 1);
+        shape.size = CellSize::new(13, 8).expect("non-zero test size");
+        shape.label = "AB".to_owned();
+        let g = placed(vec![Object::Shape(shape)]);
+        // 13×8 region: x_off=(13-2)/2=5, y_off=(8-1)/2=3 → local (5,3),(6,3) — space cells.
+        assert_eq!(g.cell(7, 4).content, Some('A'));
+        assert_eq!(g.cell(8, 4).content, Some('B'));
     }
 
     #[test]

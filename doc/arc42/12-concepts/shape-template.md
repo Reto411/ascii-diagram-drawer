@@ -34,7 +34,7 @@ anchor-stmt    = "anchor", name, "at", int, int
 - Exactly `height` physical lines follow the declaration — they are consumed as grid rows whatever they contain (a blank line is a fully empty row). Trailing spaces on rows are trimmed on parse and never emitted (canonical form); rows longer than `width` are a parse error.
 - **Anchor placement rules:** `0 ≤ x < width`, `0 ≤ y < height`; anchor names are single tokens, unique within the template; several anchors may share one cell. No other v1 constraint (e.g. "on the border" is a guideline for clean joins, not an invariant).
 - **No in-grid marker characters.** ADR 007's open "anchor marker character" point is settled by *coordinate-based* declarations: anchors never appear in the art itself, so there is nothing to collide with the svgbob alphabet or the double-quote escape. The graphical anchor mode (FR11) produces exactly this data — same underlying definition, file remains the source of truth.
-- **Resize rules:** none in v1 — every custom object is fixed-size (ADR 007 v3). A future `resize` statement inside a template block is the reserved extension point; unknown-statement tolerance (see [diagram file format](diagram-file-format.md)) applies inside `.adc` files identically.
+- **Resize rules:** none in v1 — every custom object is fixed-size (ADR 007 v3). A future `resize` statement inside a template block is the reserved extension point; unknown-statement tolerance (see [diagram file format](diagram-file-format.md)) applies inside `.adc` files identically. Built-ins do not need rules: their resizability comes from the `geometry` kind (`Rect` derives borders at instance size, `Ellipse` re-rasterizes its outline at instance size — B-001), while custom templates stay `Pattern` (fixed natural size) until rules land.
 
 ### Identity and use
 
@@ -53,8 +53,8 @@ anchor-stmt    = "anchor", name, "at", int, int
 
 `crates/shape-registry` (leaf crate — Shape Catalog context, [§8.4.2](../08-building-block-view.md); landed with S-005):
 
-- `types.rs` — `TemplateGrid` (fixed `width × height`, printable-ASCII cells), `AnchorSet` (named cell positions, duplicate names rejected), `ShapeType { type_id, name, glyph_pattern, anchor_set, resize_rules }`, `Collection { name, types }`.
-- `builtin.rs` — the built-in catalog as data: `box` (9×5 rectangle) and `ellipse` (9×5 svgbob-style oval). All v1 shapes carry `resize_rules = None`.
+- `types.rs` — `TemplateGrid` (fixed `width × height`, printable-ASCII cells), `AnchorSet` (named cell positions, duplicate names rejected), `ShapeType { type_id, name, glyph_pattern, anchor_set, geometry, resize_rules }` with `GeometryKind::{Rect, Ellipse, Pattern}` (how the pipeline draws the type — [render pipeline](render-pipeline.md)), `Collection { name, types }`.
+- `builtin.rs` — the built-in catalog as data: `box` (9×5 rectangle, `Rect`) and `ellipse` (9×5 svgbob-style oval, `Ellipse` — re-rasterized at instance size by the pipeline, B-001). All v1 shapes carry `resize_rules = None`; custom templates are `Pattern`.
 - **Standard default anchor set (FR11):** every built-in declares the four edge midpoints — `n`, `s`, `w`, `e`. For both built-ins (both 9×5): `n` at (4,0), `s` at (4,4), `w` at (0,2), `e` at (8,2). Anchor cells sit on the shape border.
 - `templates.rs` — `.adc` parser per the file syntax above (`parse_collection`): 1-based line/column errors, versioning + unknown-statement tolerance identical to [`.ad`](diagram-file-format.md), short grid rows right-padded, statement order kept for canonical re-save.
 - `registry.rs` — `ShapeRegistry::lookup`: bare type-id → built-ins only, `collection/name` → user collections only (disjoint namespaces, typed `LookupError`).

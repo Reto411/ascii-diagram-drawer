@@ -2,9 +2,9 @@
 title: B-001 - ellipse-resizing-does-not-work
 description: dragging the resize handle of a built-in ellipse changes nothing visible — the render pipeline stamps Pattern shapes at natural size, ignoring the instance extent
 scope: gui-app / render-pipeline
-status: reproduced
+status: fixed
 severity: major
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # B-001: Ellipse resizing does not work
@@ -82,4 +82,11 @@ Nothing visible changes. The oval remains 9×5 in the canvas rendering, the text
 
 > Filled when the bug closes: what fixed it (story S-NNN / commit hash), or why it won't be fixed. Empty while open.
 
-- 
+**Fixed 2026-10-31.** Root cause confirmed as diagnosed: `ShapeType` had only two geometry kinds (`Rect`, `Pattern`) and the pipeline's `place.rs` matched on them — the built-in ellipse was a `Pattern`, so it was stamped opaquely at its natural 9×5 template size regardless of the instance's `CellSize`; resizing changed only the model. Fix (bounded context: render-pipeline + shape-registry, no GUI change needed):
+
+1. `shape-registry`: new `GeometryKind::Ellipse` — the built-in ellipse now declares it (`builtin.rs`, `types.rs`).
+2. `render-pipeline/src/ellipse.rs` (new): deterministic re-rasterizer — a pure function of `(w, h)` that reproduces the natural 9×5 template byte-for-byte at 9×5 and derives every other size structurally in the same glyph style (proportional caps, corner diagonal row pair, straight `(`/`)` sides).
+3. `place.rs`: new `Ellipse` arm — stamps the re-rasterized outline at the instance pos/size, proportional anchor base edges, label over space cells.
+4. `connectors.rs`: `Ellipse` endpoints resolve proportionally like `Rect` (shared `map_proportional`), so connectors stay bound to side midpoints at any size ([ADR 013 v3](../adr/013-connector-routing.md)).
+
+Verified: the report's exact repro (ellipse resized 9×5 → 13×8) now renders a 13×8 oval — pinned by `resolve.rs::resized_ellipse_renders_at_instance_extent` plus place/connector regression tests and an exhaustive rasterizer property test. Anchor dots drift is resolved as a consequence: the rendered extent, the model extent, and the proportional anchor mapping all agree again. 

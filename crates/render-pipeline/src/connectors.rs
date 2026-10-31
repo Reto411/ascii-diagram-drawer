@@ -59,9 +59,9 @@ struct Endpoint {
     side: Option<Side>,
 }
 
-/// Resolves one endpoint reference to an absolute cell (ADR 013): `Rect` geometry maps
-/// template coordinates proportionally onto the instance extent; `Pattern` geometry is a
-/// plain offset at natural size.
+/// Resolves one endpoint reference to an absolute cell (ADR 013): `Rect` and `Ellipse`
+/// geometry map template coordinates proportionally onto the instance extent; `Pattern`
+/// geometry is a plain offset at natural size.
 fn resolve_endpoint(
     diagram: &Diagram,
     registry: &ShapeRegistry,
@@ -97,13 +97,13 @@ fn resolve_endpoint(
     }
 
     let (cell, width, height) = match shape.geometry {
-        GeometryKind::Rect => {
+        GeometryKind::Rect | GeometryKind::Ellipse => {
             let w = instance.size.width;
             let h = instance.size.height;
             (
                 CellPos::new(
-                    instance.pos.x + map_proportional(template_pos.x, tw, w),
-                    instance.pos.y + map_proportional(template_pos.y, th, h),
+                    instance.pos.x + crate::place::map_proportional(template_pos.x, tw, w),
+                    instance.pos.y + crate::place::map_proportional(template_pos.y, th, h),
                 ),
                 w,
                 h,
@@ -123,20 +123,6 @@ fn resolve_endpoint(
         cell,
         side: anchor_side(instance.pos.x, instance.pos.y, width, height, cell),
     })
-}
-
-/// Proportional per-axis mapping of a template coordinate onto an instance extent (ADR
-/// 013): natural-size instances map to themselves, side coordinates stay on their side at
-/// any size, and ties round up. The coordinate is guaranteed to be inside the template
-/// extent by the caller; degenerate extents have only one possible cell.
-fn map_proportional(template_coord: u32, template_extent: u32, instance_extent: u32) -> u32 {
-    if template_extent <= 1 || instance_extent <= 1 {
-        return 0;
-    }
-    let num = template_coord * (instance_extent - 1);
-    let den = template_extent - 1;
-    // round(num / den), ties up.
-    (2 * num + den) / (2 * den)
 }
 
 /// The route cells between two endpoints (ADR 013): straight when they share a row or
@@ -320,6 +306,51 @@ mod tests {
             endpoint(&d, &registry, 0, "w"),
             Endpoint {
                 cell: MPos::new(2, 2),
+                side: Some(Side::Left)
+            }
+        );
+    }
+
+    /// B-001: ellipse anchors map proportionally onto the instance extent, exactly like
+    /// `Rect` (the template coordinates are the standard mid-side points).
+    #[test]
+    fn ellipse_anchors_map_proportionally_at_any_size() {
+        let mut d = Diagram::new();
+        let e = ShapeInstance::new(
+            ObjectId::generated(0),
+            "ellipse",
+            "",
+            CellPos::new(1, 2),
+            CellSize::new(5, 3).expect("non-zero test size"),
+        )
+        .expect("valid shape");
+        d.place_shape(e).unwrap();
+        let registry = ShapeRegistry::builtin();
+        assert_eq!(
+            endpoint(&d, &registry, 0, "e"),
+            Endpoint {
+                cell: MPos::new(5, 3),
+                side: Some(Side::Right)
+            }
+        );
+        assert_eq!(
+            endpoint(&d, &registry, 0, "n"),
+            Endpoint {
+                cell: MPos::new(3, 2),
+                side: Some(Side::Top)
+            }
+        );
+        assert_eq!(
+            endpoint(&d, &registry, 0, "s"),
+            Endpoint {
+                cell: MPos::new(3, 4),
+                side: Some(Side::Bottom)
+            }
+        );
+        assert_eq!(
+            endpoint(&d, &registry, 0, "w"),
+            Endpoint {
+                cell: MPos::new(1, 3),
                 side: Some(Side::Left)
             }
         );

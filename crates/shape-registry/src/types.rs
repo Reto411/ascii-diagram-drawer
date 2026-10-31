@@ -169,8 +169,13 @@ pub enum GeometryKind {
     /// Axis-aligned rectangle: borders are edge connections resolved at the
     /// instance's own `pos`/`size`, so instances of any size join cleanly.
     Rect,
+    /// Ellipse fitted to the instance's own `pos`/`size`: the outline is re-rasterized
+    /// deterministically at render time (the 9×5 art documents the natural appearance),
+    /// and anchors map proportionally like `Rect` (B-001, ADR 013 v3).
+    Ellipse,
     /// Fixed glyph pattern stamped opaquely at its natural size (curves cannot be
-    /// expressed with N/E/S/W edges; resizing is a v1+ concern, ADR 007).
+    /// expressed with N/E/S/W edges; resizing custom templates is a v1+ concern,
+    /// ADR 007 point 4).
     Pattern,
 }
 

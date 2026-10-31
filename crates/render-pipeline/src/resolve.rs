@@ -238,6 +238,30 @@ mod tests {
         );
     }
 
+    /// B-001: an ellipse instance at a size other than its natural 9×5 renders the
+    /// outline re-rasterized at the instance extent (previously it was stamped at
+    /// natural size, so resizing was a no-op).
+    #[test]
+    fn resized_ellipse_renders_at_instance_extent() {
+        let e = Object::Shape(
+            ShapeInstance::new(
+                ObjectId::generated(0),
+                "ellipse",
+                "",
+                CellPos::new(0, 0),
+                CellSize::new(13, 8).expect("non-zero test size"),
+            )
+            .expect("valid shape"),
+        );
+        let g = render_one(vec![e]);
+        assert_eq!(g.width(), 13);
+        assert_eq!(g.height(), 8);
+        assert_eq!(
+            g.to_text(),
+            "    ____     \n ,'       '. \n(           )\n(           )\n(           )\n(           )\n `.       .' \n    `--'     "
+        );
+    }
+
     #[test]
     fn cross_forms_where_borders_cross() {
         // A 1-wide box (a vertical line) crossing the big box's bottom edge: at the

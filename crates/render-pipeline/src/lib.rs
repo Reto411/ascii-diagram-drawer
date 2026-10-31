@@ -16,6 +16,7 @@
 
 mod connectors;
 mod edges;
+mod ellipse;
 mod grid;
 mod place;
 mod resolve;

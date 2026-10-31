@@ -43,7 +43,7 @@ Resolution maps the per-cell N/E/S/W connection set to exactly one glyph:
 
 **Priority:** cross > T-junction > corner > straight. The table is evaluated top-down; in v1 every junction class maps to the sharp `+`, so the priority only becomes observable once a later version splits the classes (e.g. rounded corners). Dangling single directions keep their straight glyph — they are how connector endpoints will render in S-007.
 
-**Rounded corners, dashes, arrows, ports** (`. , ' `` ` `, `~ _ : !`, `< > ^ v V`, `* o O`) are *not produced by the rule table in v1*. They appear only as **verbatim pattern art** — the built-in ellipse's oval or a custom template's glyphs ([shape template](shape-template.md), ADR 007) — stamped opaquely and never re-resolved.
+**Rounded corners, dashes, arrows, ports** (`. , ' `` ` `, `~ _ : !`, `< > ^ v V`, `* o O`) are *not produced by the rule table in v1*. They appear only as **verbatim pattern art** — the built-in ellipse's oval (re-rasterized at the instance extent, B-001) or a custom template's glyphs ([shape template](shape-template.md), ADR 007) — stamped opaquely and never re-resolved.
 
 ### Fallback rules (ambiguous cells)
 
