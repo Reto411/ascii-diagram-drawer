@@ -1203,6 +1203,50 @@ fn pressing_the_connector_tip_cycles_its_style() {
 }
 
 #[test]
+fn arrow_tool_draws_a_standalone_arrow_via_the_sidebar() {
+    use diagram_model::anchors::ConnectorEndpoint;
+    use diagram_model::geometry::CellPos;
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+
+    // Arm the arrow tool from the sidebar (CR-010 AC5).
+    let out = gui.frame();
+    let label = find_text_exact(&out, "↘  Arrow").expect("sidebar lists the arrow tool");
+    let _ = gui.click_at(label.center());
+
+    // Press-drag-release across empty canvas space.
+    let from = gui.cell_center(min, 3, 6);
+    let to = gui.cell_center(min, 14, 9);
+    let _ = gui.drag(from, to);
+    // One settle frame: the release frame processes the drop, but its rendering
+    // already contains the pre-release status bar text.
+    let out = gui.frame();
+
+    // The status bar reports the new connector…
+    assert!(
+        texts(&out)
+            .iter()
+            .any(|(t, _)| t.starts_with("Connector added as")),
+        "status bar names the new arrow"
+    );
+    // …and the model holds a standalone arrow with both ends free at the
+    // press/drop cells.
+    let connector: &ConnectorInstance = gui
+        .app
+        .diagram
+        .objects()
+        .iter()
+        .find_map(|o| match o {
+            Object::Connector(c) => Some(c),
+            _ => None,
+        })
+        .expect("the arrow exists");
+    assert_eq!(connector.from, ConnectorEndpoint::Free(CellPos::new(3, 6)));
+    assert_eq!(connector.to, ConnectorEndpoint::Free(CellPos::new(14, 9)));
+}
+
+#[test]
 fn delete_key_removes_the_selected_object() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let min = gui.canvas_min();

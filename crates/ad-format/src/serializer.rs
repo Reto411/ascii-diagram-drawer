@@ -6,6 +6,7 @@
 //! trailing whitespace.
 
 use diagram_model::Diagram;
+use diagram_model::anchors::ConnectorEndpoint;
 use diagram_model::objects::{ConnectorStyle, Object, ShapeInstance, TextInstance, TipStyle};
 
 use crate::parser::{Document, Slot};
@@ -74,13 +75,9 @@ fn push_object(out: &mut String, object: &Object) {
             out.push_str("connect as ");
             out.push_str(connector.id.as_str());
             out.push_str(" from ");
-            push_anchor_ref(
-                out,
-                connector.from.object().as_str(),
-                connector.from.anchor(),
-            );
+            push_endpoint(out, &connector.from);
             out.push_str(" to ");
-            push_anchor_ref(out, connector.to.object().as_str(), connector.to.anchor());
+            push_endpoint(out, &connector.to);
             if connector.style == ConnectorStyle::Dashed {
                 out.push_str(" dashed");
             }
@@ -159,6 +156,21 @@ fn push_anchor_ref(out: &mut String, object_id: &str, anchor: &str) {
     out.push_str(anchor);
 }
 
+/// Emits one connector endpoint (CR-010): attached as `<id>.<anchor>` (the historical form),
+/// free as `<x> <y>`.
+fn push_endpoint(out: &mut String, endpoint: &ConnectorEndpoint) {
+    match endpoint {
+        ConnectorEndpoint::Attached(reference) => {
+            push_anchor_ref(out, reference.object().as_str(), reference.anchor());
+        }
+        ConnectorEndpoint::Free(pos) => {
+            push_int(out, pos.x);
+            out.push(' ');
+            push_int(out, pos.y);
+        }
+    }
+}
+
 /// Emits a canonical decimal integer (u32 never needs leading zeros).
 fn push_int(out: &mut String, value: u32) {
     out.push_str(&value.to_string());
@@ -217,7 +229,7 @@ mod tests {
         let from = AnchorRef::new(s1.clone(), "e").expect("valid anchor");
         let to = AnchorRef::new(s1.clone(), "w").expect("valid anchor");
         diagram
-            .connect(ConnectorInstance::new(
+            .connect(ConnectorInstance::between(
                 ObjectId::new("c1").expect("valid id"),
                 from,
                 to,
@@ -282,7 +294,7 @@ mod tests {
         let from = AnchorRef::new(s1.clone(), "e").expect("valid anchor");
         let to = AnchorRef::new(s1, "w").expect("valid anchor");
         diagram
-            .connect(ConnectorInstance::new(
+            .connect(ConnectorInstance::between(
                 ObjectId::new("c1").expect("valid id"),
                 from,
                 to,
@@ -330,7 +342,7 @@ mod tests {
         let from = AnchorRef::new(s1.clone(), "e").expect("valid anchor");
         let to = AnchorRef::new(s1, "w").expect("valid anchor");
         diagram
-            .connect(ConnectorInstance::new(
+            .connect(ConnectorInstance::between(
                 ObjectId::new("c1").expect("valid id"),
                 from,
                 to,

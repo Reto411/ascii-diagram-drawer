@@ -666,12 +666,17 @@ impl DrawingApp {
                 None => EditOutcome::Nothing,
             },
             (false, true) => match hit {
-                Some((_, target)) => self
-                    .editor
-                    .on_pointer(PointerEvent::Up { target }, &mut self.diagram),
+                Some(((col, row), target)) => self.editor.on_pointer(
+                    PointerEvent::Up {
+                        cell: Some((col, row)),
+                        target,
+                    },
+                    &mut self.diagram,
+                ),
                 // Released off-canvas: drop on nothing cancels any gesture.
                 None => self.editor.on_pointer(
                     PointerEvent::Up {
+                        cell: None,
                         target: HitTarget::Empty,
                     },
                     &mut self.diagram,
@@ -958,7 +963,7 @@ impl DrawingApp {
                     &self.diagram,
                     self.services.catalog.as_ref(),
                     self.editor.selection.as_ref(),
-                    self.editor.connecting_source(),
+                    self.editor.anchor_exposure(),
                     (col, row),
                     &routes,
                 ),
@@ -967,11 +972,15 @@ impl DrawingApp {
 
         // Placement ghost at the hovered cell (model space — unbounded). The text tool
         // ghosts a 1×1 anchor marker — the placed object grows with its content.
-        if let (Some(tool), Some((col, row))) = (&self.editor.placing, hover_cell) {
-            let extent = match tool {
-                Placing::Shape(info) => info.size,
-                Placing::Text => CellSize::new(1, 1).expect("1×1 is a valid size"),
-            };
+        if let (Some(tool), Some((col, row))) = (&self.editor.placing, hover_cell)
+            && let Some(extent) = match tool {
+                Placing::Shape(info) => Some(info.size),
+                Placing::Text => Some(CellSize::new(1, 1).expect("1×1 is a valid size")),
+                // The arrow tool ghosts nothing — its drag line (in `draw_overlays`)
+                // runs from the press cell to the cursor once a drag has started.
+                Placing::Arrow => None,
+            }
+        {
             let (x, y, w, h) = vp.cell_block(col, row, extent.width, extent.height);
             painter.rect_stroke(
                 off_rect(egui::Rect::from_min_max(
@@ -1443,7 +1452,7 @@ fn draw_overlays(
         &app.diagram,
         app.services.catalog.as_ref(),
         app.editor.selection.as_ref(),
-        app.editor.connecting_source(),
+        app.editor.anchor_exposure(),
     ) {
         match overlay {
             crate::canvas::Overlay::AnchorArrow {
@@ -1521,6 +1530,25 @@ fn draw_overlays(
                 ANCHOR_COLOR,
             );
         }
+    }
+
+    // Arrow tool drag (CR-010): line from the press cell to the cursor. When the
+    // source end attached, its anchor glyph is already drawn by `overlays()` (all
+    // anchors are exposed); a free source gets a plain dot at the press cell.
+    if let (Some((from_cell, attached)), Some(cursor)) = (app.editor.arrow_drag_source(), cursor)
+        && !attached
+    {
+        painter.line_segment(
+            [center_of(from_cell.x, from_cell.y), off(cursor)],
+            egui::epaint::Stroke::new(1.5, CONNECT_LINE_COLOR),
+        );
+        painter.text(
+            center_of(from_cell.x, from_cell.y),
+            Align2::CENTER_CENTER,
+            "·",
+            FontId::new((vp.cell_h * 0.85).max(9.0), FontFamily::Monospace),
+            ANCHOR_COLOR,
+        );
     }
 }
 
@@ -1775,10 +1803,11 @@ impl DrawingApp {
         // built-in group + one group per loaded collection, each shape with a
         // small preview of its glyph pattern.
         let groups = crate::sidebar::group_templates(&self.services.catalog.list());
-        let (placing_id, placing_text) = match self.editor.placing.as_ref() {
-            Some(Placing::Shape(info)) => (Some(info.type_id.clone()), false),
-            Some(Placing::Text) => (None, true),
-            None => (None, false),
+        let (placing_id, placing_text, placing_arrow) = match self.editor.placing.as_ref() {
+            Some(Placing::Shape(info)) => (Some(info.type_id.clone()), false, false),
+            Some(Placing::Text) => (None, true, false),
+            Some(Placing::Arrow) => (None, false, true),
+            None => (None, false, false),
         };
         egui::Panel::left("templates")
             .size_range(SIDEBAR_PX..=SIDEBAR_PX)
@@ -1790,6 +1819,12 @@ impl DrawingApp {
                     if ui.selectable_label(placing_text, "T  Text").clicked() {
                         self.editor.select_text_tool();
                         self.status = "Placing text — click the canvas".to_owned();
+                    }
+                    // CR-010 — the arrow tool: press-drag draws a connector; ends snap
+                    // to shape anchors and stay free where they land.
+                    if ui.selectable_label(placing_arrow, "↘  Arrow").clicked() {
+                        self.editor.select_arrow_tool();
+                        self.status = "Drawing arrows — drag on the canvas (Esc stops)".to_owned();
                     }
                     ui.separator();
                     ui.heading("Shapes");
@@ -2051,6 +2086,16 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
             from.object()
         )),
         EditOutcome::Connected { id } => Some(format!("Connector added as {id}")),
+        EditOutcome::ArrowPlaced { id } => Some(format!("Connector added as {id}")),
+        EditOutcome::EndpointAttached { id, end } => {
+            Some(format!("{id}: {end} end re-attached to its shape"))
+        }
+        EditOutcome::EndpointDetached { id, end } => Some(format!(
+            "{id}: {end} end detached — drop it on an anchor or an empty cell"
+        )),
+        EditOutcome::EndpointMoved { id, end, to } => {
+            Some(format!("{id}: {end} end moved to ({}, {})", to.x, to.y))
+        }
         EditOutcome::BendAdded { id, at } => {
             Some(format!("Bend added to {id} at ({}, {})", at.x, at.y))
         }

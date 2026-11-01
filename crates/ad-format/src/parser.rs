@@ -7,7 +7,7 @@
 //! QS7 across minor upgrades).
 
 use diagram_model::Diagram;
-use diagram_model::anchors::AnchorRef;
+use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::invariants::ModelError;
 use diagram_model::objects::{
@@ -432,17 +432,15 @@ fn parse_text(cursor: &mut Cursor, line_no: usize) -> Result<TextInstance, Parse
     .map_err(|e| model_error(e, line_no, 1))
 }
 
-/// Parses `connect as <id> from <ref> to <ref> [dashed]` (keyword consumed).
+/// Parses `connect as <id> from <endpoint> to <endpoint> [dashed]` (keyword consumed).
+/// Each endpoint is either `<id>.<anchor>` (attached) or `<x> <y>` (free — CR-010 / ADR 013 v6).
 fn parse_connect(cursor: &mut Cursor, line_no: usize) -> Result<ConnectorInstance, ParseError> {
     cursor.expect_keyword("as", line_no)?;
     let id = cursor.expect_word("an id", line_no)?;
     cursor.expect_keyword("from", line_no)?;
-    let from = parse_anchor_ref(
-        cursor.expect_word("the 'from' anchor-ref", line_no)?,
-        line_no,
-    )?;
+    let from = parse_endpoint(cursor, line_no)?;
     cursor.expect_keyword("to", line_no)?;
-    let to = parse_anchor_ref(cursor.expect_word("the 'to' anchor-ref", line_no)?, line_no)?;
+    let to = parse_endpoint(cursor, line_no)?;
     // Optional clauses in fixed order (CR-007/CR-008):
     // `[dashed] [tip <src> <tgt>] [via <x> <y>, …]`.
     let style = match cursor.peek() {
@@ -483,6 +481,29 @@ fn parse_connect(cursor: &mut Cursor, line_no: usize) -> Result<ConnectorInstanc
     Ok(ConnectorInstance::new(object_id, from, to, style)
         .with_bends(bends)
         .with_tips(tips.0, tips.1))
+}
+
+/// Parses one connector endpoint (CR-010 / ADR 013 v6): either `<id>.<anchor>` — attached,
+/// containing a dot — or `<x> <y>` — free at an explicit model-space cell, two bare
+/// non-negative integers. The token shape disambiguates: object ids and anchor names are
+/// single tokens, so a dotted token can only be an anchor-ref.
+fn parse_endpoint(cursor: &mut Cursor, line_no: usize) -> Result<ConnectorEndpoint, ParseError> {
+    let token = cursor.expect_word("an endpoint ('<id>.<anchor>' or '<x> <y>')", line_no)?;
+    if token.contains('.') {
+        return Ok(ConnectorEndpoint::Attached(parse_anchor_ref(
+            token, line_no,
+        )?));
+    }
+    // No dot — the first token is the x coordinate of a free endpoint.
+    let x = parse_int_text(&token, line_no, 1).map_err(|mut error| {
+        error.message = format!(
+            "free endpoint x coordinate: {} (an endpoint is '<id>.<anchor>' or '<x> <y>')",
+            error.message
+        );
+        error
+    })?;
+    let y = cursor.expect_int("the free endpoint's y coordinate", line_no)?;
+    Ok(ConnectorEndpoint::Free(CellPos::new(x, y)))
 }
 
 /// Parses the optional `via <x> <y>, …` manual-bend waypoint list (CR-007 / ADR 013 v4).
@@ -925,11 +946,13 @@ mod tests {
     }
 
     #[test]
-    fn anchor_ref_without_dot_is_rejected() {
-        let input = "ad 1.0\nshape box \"x\" as s1 at 0 0 w 2 h 1\nconnect as c1 from s1 to s1\n";
+    fn free_endpoint_with_non_numeric_coordinates_is_rejected() {
+        // A bare token without a dot is a free endpoint — its x must be an integer (CR-010).
+        let input =
+            "ad 1.0\nshape box \"x\" as s1 at 0 0 w 2 h 1\nconnect as c1 from s1 0 to s1.w\n";
         let err = assert_error(input, 3, 1);
         assert!(
-            err.message.contains("no dot found"),
+            err.message.contains("endpoint") && err.message.contains("x coordinate"),
             "message: {}",
             err.message
         );
@@ -952,11 +975,57 @@ mod tests {
         let diagram = parse(input).expect("valid");
         match &diagram.objects()[1] {
             Object::Connector(connector) => {
-                assert_eq!(connector.from.object().as_str(), "s.a");
-                assert_eq!(connector.from.anchor(), "north-east");
+                assert_eq!(connector.from.object().expect("attached").as_str(), "s.a");
+                assert_eq!(connector.from.anchor(), Some("north-east"));
             }
             other => panic!("expected connector, got {other:?}"),
         }
+    }
+
+    /// A free endpoint is two bare integers and survives the model (CR-010).
+    #[test]
+    fn free_endpoints_parse_to_cell_positions() {
+        let input = "ad 1.0\nconnect as c1 from 2 3 to 9 12\n";
+        let diagram = parse(input).expect("valid");
+        match &diagram.objects()[0] {
+            Object::Connector(connector) => {
+                assert_eq!(connector.from, ConnectorEndpoint::Free(CellPos::new(2, 3)));
+                assert_eq!(connector.to, ConnectorEndpoint::Free(CellPos::new(9, 12)));
+            }
+            other => panic!("expected connector, got {other:?}"),
+        }
+    }
+
+    /// Endpoints mix freely per end — attached source, free target (CR-010).
+    #[test]
+    fn endpoints_mix_attached_and_free() {
+        let input =
+            "ad 1.0\nshape box \"x\" as s1 at 0 0 w 2 h 1\nconnect as c1 from s1.e to 5 6 dashed\n";
+        let diagram = parse(input).expect("valid");
+        match &diagram.objects()[1] {
+            Object::Connector(connector) => {
+                assert_eq!(
+                    connector.from,
+                    ConnectorEndpoint::Attached(
+                        AnchorRef::new(ObjectId::new("s1").expect("id"), "e").expect("anchor")
+                    )
+                );
+                assert_eq!(connector.to, ConnectorEndpoint::Free(CellPos::new(5, 6)));
+                assert_eq!(connector.style, ConnectorStyle::Dashed);
+            }
+            other => panic!("expected connector, got {other:?}"),
+        }
+    }
+
+    /// A free endpoint missing its y coordinate is a truncated statement.
+    #[test]
+    fn free_endpoint_missing_y_is_rejected() {
+        let err = assert_error("ad 1.0\nconnect as c1 from 2 to s1.w\n", 2, 22);
+        assert!(
+            err.message.contains("y coordinate"),
+            "message: {}",
+            err.message
+        );
     }
 
     #[test]

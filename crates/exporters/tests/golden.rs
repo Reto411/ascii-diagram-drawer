@@ -77,7 +77,7 @@ fn scenarios() -> Vec<(&'static str, ResolvedGrid)> {
         )
         .expect("place shape");
     connector
-        .connect(ConnectorInstance::new(
+        .connect(ConnectorInstance::between(
             ObjectId::generated(2),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),

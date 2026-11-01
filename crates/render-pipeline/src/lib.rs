@@ -227,7 +227,7 @@ mod tests {
             .expect("valid shape"),
         )
         .unwrap();
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             ObjectId::generated(2),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -285,7 +285,7 @@ mod tests {
                 .expect("valid shape"),
             )
             .unwrap();
-            d.connect(ConnectorInstance::new(
+            d.connect(ConnectorInstance::between(
                 ObjectId::generated(2),
                 AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
                 AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -326,7 +326,7 @@ mod tests {
                 .expect("valid shape"),
             )
             .unwrap();
-            d.connect(ConnectorInstance::new(
+            d.connect(ConnectorInstance::between(
                 ObjectId::generated(2),
                 AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
                 AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),

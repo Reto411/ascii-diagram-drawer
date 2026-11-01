@@ -45,10 +45,29 @@ pub enum HitTarget {
         prev: CellPos,
         next: CellPos,
     },
-    /// A tip cell of a connector (CR-008 AC2): pressing it cycles that end's tip
-    /// style. `end` is which endpoint the cell belongs to — same derivation as the
-    /// pipeline's stamping rule (ADR 013 v5).
-    Tip { id: ObjectId, end: ConnectorEnd },
+    /// A connector's endpoint cell or its visible tip's glyph cell (CR-010): pressing
+    /// starts an endpoint drag (attach/detach/move); a press without movement cycles
+    /// that end's tip style (S-029 behavior preserved). `end` is which endpoint the
+    /// cell belongs to, `at` the endpoint's own cell — the gesture detaches/moves
+    /// relative to it. The tip cells follow the pipeline's stamping rule (ADR 013 v5).
+    Endpoint {
+        id: ObjectId,
+        end: ConnectorEnd,
+        at: CellPos,
+    },
+}
+
+/// Which shape anchors are exposed to the pointer under the current gesture (S-031).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnchorExposure<'a> {
+    /// Selection mode: only the selected shape's anchors.
+    SelectionOnly,
+    /// A connection is in flight from `source`: every anchor except the source itself
+    /// is a drop target — nothing else on the canvas is offered.
+    Connect { source: &'a AnchorRef },
+    /// Arrow tool / endpoint drag (CR-010): every anchor of every shape is a snap
+    /// target; non-anchor cells fall through to the other hit targets.
+    All,
 }
 
 /// Proportional per-axis mapping of a template coordinate onto an instance extent —
@@ -89,44 +108,67 @@ pub fn anchor_cell(
 
 /// The interactive target under a model cell (S-013).
 ///
-/// - **Connecting** (`connecting_from` set): every anchor except the source itself is a
-///   valid drop target — that is what makes "drop outside an anchor cancels" work.
-/// - **Otherwise**: the selected shape's anchors and its bottom-right resize cell first,
-///   then the topmost shape body (document order = z-order, C5), then connector bends
-///   and bodies (CR-007) — below shapes and text so a shape painted over a route
-///   still wins.
+/// Priority (top first):
+/// 1. Anchor exposure per [`AnchorExposure`]: the selected shape's anchors in
+///    selection mode, every anchor except the source while connecting (nothing else
+///    is offered — that is what makes "drop outside an anchor cancels" work), or
+///    every shape's anchors while drawing an arrow / dragging an endpoint (S-031).
+/// 2. The selected shape's bottom-right resize cell (selection mode only; S-024 AC5).
+/// 3. Connector endpoint cells and visible tip glyph cells (CR-010) — above shape
+///    bodies, below the selected shape's anchors/resize handle; topmost connector
+///    first. A declared bend on the same cell keeps winning over them.
+/// 4. The topmost shape/text body (document order = z-order, C5).
+/// 5. Connector bends and body segments (CR-007) — below shapes and text so a shape
+///    painted over a route still wins; a declared bend at the cell wins over the
+///    segment below it.
 #[must_use]
 pub fn hit_target(
     diagram: &Diagram,
     catalog: &dyn ShapeCatalog,
     selection: Option<&ObjectId>,
-    connecting_from: Option<&AnchorRef>,
+    exposure: AnchorExposure<'_>,
     cell: (u32, u32),
     connector_routes: &[(ObjectId, Vec<CellPos>)],
 ) -> HitTarget {
     let (col, row) = cell;
-    if let Some(source) = connecting_from {
-        for object in diagram.objects() {
-            let Object::Shape(shape) = object else {
-                continue;
-            };
-            let Some(anchors) = catalog.anchors(&shape.type_id) else {
-                continue;
-            };
-            for anchor in anchors {
-                let is_source = shape.id == *source.object() && anchor.name == source.anchor();
-                if !is_source
-                    && anchor_cell(shape, catalog, &anchor).is_some_and(|c| c == (col, row))
-                {
-                    return HitTarget::Anchor(shape.id.clone(), anchor.name);
-                }
+
+    // Anchor targets — which anchors are exposed depends on the gesture (S-031).
+    for object in diagram.objects() {
+        let Object::Shape(shape) = object else {
+            continue;
+        };
+        let allowed = match exposure {
+            AnchorExposure::SelectionOnly => selection.is_some_and(|id| id == &shape.id),
+            AnchorExposure::Connect { source } => shape.id != *source.object(),
+            AnchorExposure::All => true,
+        };
+        if !allowed {
+            continue;
+        }
+        let Some(anchors) = catalog.anchors(&shape.type_id) else {
+            continue;
+        };
+        for anchor in anchors {
+            let is_source = matches!(
+                exposure,
+                AnchorExposure::Connect { source }
+                    if shape.id == *source.object() && anchor.name == source.anchor()
+            );
+            if !is_source && anchor_cell(shape, catalog, &anchor).is_some_and(|c| c == (col, row)) {
+                return HitTarget::Anchor(shape.id.clone(), anchor.name);
             }
         }
+    }
+
+    // While a connection is in flight, anchors are the only offered target — the
+    // gesture resolves the drop from the hit at release time.
+    if matches!(exposure, AnchorExposure::Connect { .. }) {
         return HitTarget::Empty;
     }
 
     if let Some(selected_id) = selection
         && let Some(Object::Shape(shape)) = diagram.get(selected_id)
+        && matches!(exposure, AnchorExposure::SelectionOnly)
     {
         if let Some(anchors) = catalog.anchors(&shape.type_id) {
             for anchor in anchors {
@@ -148,6 +190,44 @@ pub fn hit_target(
             return HitTarget::ResizeHandle {
                 id: shape.id.clone(),
                 min_size: info.min_size,
+            };
+        }
+    }
+
+    // Connector endpoint cells and visible tip glyph cells (CR-010): above shape
+    // bodies, below the selected shape's anchors/resize handle. Topmost connector
+    // first. The tip cells mirror the pipeline's stamping rule (ADR 013 v5): the
+    // source tip only when the route has more than three cells (otherwise it would
+    // collide with the target endpoint); the target tip needs at least three. A
+    // declared bend on the same cell keeps winning — that is checked in the pass
+    // below, together with the segments.
+    let pos = CellPos::new(col, row);
+    for (id, route) in connector_routes.iter().rev() {
+        let Some(Object::Connector(connector)) = diagram.get(id) else {
+            continue; // stale read-model entry — trust the model
+        };
+        if route.len() < 2 || connector.bends.contains(&pos) {
+            continue; // degenerate route, or a declared bend wins on its own cell
+        }
+        let last = *route.last().expect("length checked above");
+        if pos == route[0]
+            || (connector.from_tip != TipStyle::Bare && route.len() > 3 && pos == route[1])
+        {
+            return HitTarget::Endpoint {
+                id: id.clone(),
+                end: ConnectorEnd::Source,
+                at: route[0],
+            };
+        }
+        if pos == last
+            || (connector.to_tip != TipStyle::Bare
+                && route.len() >= 3
+                && pos == route[route.len() - 2])
+        {
+            return HitTarget::Endpoint {
+                id: id.clone(),
+                end: ConnectorEnd::Target,
+                at: last,
             };
         }
     }
@@ -182,7 +262,6 @@ pub fn hit_target(
     // Connectors (CR-007 AC4) — below shapes and text, topmost first. A declared bend
     // at the cell wins over body cells: a bend lies on two segments and the explicit
     // waypoint must be draggable.
-    let pos = CellPos::new(col, row);
     for (id, route) in connector_routes.iter().rev() {
         let Some(Object::Connector(connector)) = diagram.get(id) else {
             continue; // stale read-model entry — trust the model
@@ -209,14 +288,6 @@ pub fn hit_target(
             };
         }
 
-        // Tip cells (CR-008 AC2) — the exact cells the pipeline stamps (ADR 013 v5).
-        if let Some(end) = tip_end_at(connector, route, pos) {
-            return HitTarget::Tip {
-                id: id.clone(),
-                end,
-            };
-        }
-
         for (segment, pair) in polyline_points(from, bends, to).windows(2).enumerate() {
             let (a, b) = (pair[0], pair[1]);
             if on_segment(a, b, pos) {
@@ -231,25 +302,6 @@ pub fn hit_target(
     }
 
     HitTarget::Empty
-}
-
-/// Which tip end (if any) is stamped at `pos` on this connector's route — mirrors the
-/// pipeline's stamping rule exactly (ADR 013 v5): the target tip sits on the cell
-/// adjacent to the endpoint, the source tip one cell in from its endpoint (skipped
-/// when it would collide with the target tip). Bare tips are not hit-testable.
-fn tip_end_at(
-    connector: &diagram_model::objects::ConnectorInstance,
-    route: &[CellPos],
-    pos: CellPos,
-) -> Option<ConnectorEnd> {
-    if connector.to_tip != TipStyle::Bare && route.len() >= 3 && *route.get(route.len() - 2)? == pos
-    {
-        return Some(ConnectorEnd::Target);
-    }
-    if connector.from_tip != TipStyle::Bare && route.len() > 3 && *route.get(1)? == pos {
-        return Some(ConnectorEnd::Source);
-    }
-    None
 }
 
 /// The arrow glyph for an anchor marker pointing outward from the shape's side
@@ -357,22 +409,23 @@ pub enum Overlay {
 }
 
 /// The overlay primitives for the current model + view state (S-013 AC1/AC2, CR-007
-/// AC7): anchor dots on the selected shape — or on every shape while connecting — the
-/// resize handle of a selected shape, and bend handles on a selected connector. Empty
-/// when nothing is selected and no connection is in flight.
+/// AC7): anchor dots on the selected shape — or on every shape while connecting /
+/// drawing an arrow / dragging an endpoint (S-031) — the resize handle of a selected
+/// shape, and bend handles on a selected connector. Empty when nothing is selected
+/// and no gesture is in flight.
 #[must_use]
 pub fn overlays(
     diagram: &Diagram,
     catalog: &dyn ShapeCatalog,
     selection: Option<&ObjectId>,
-    connecting_from: Option<&AnchorRef>,
+    exposure: AnchorExposure<'_>,
 ) -> Vec<Overlay> {
     let mut out = Vec::new();
 
     // A selected connector shows a handle at each declared waypoint (CR-007 AC7).
-    if let Some(selected_id) = selection
+    if matches!(exposure, AnchorExposure::SelectionOnly)
+        && let Some(selected_id) = selection
         && let Some(Object::Connector(connector)) = diagram.get(selected_id)
-        && connecting_from.is_none()
     {
         for bend in &connector.bends {
             out.push(Overlay::BendHandle((bend.x, bend.y)));
@@ -384,15 +437,23 @@ pub fn overlays(
             continue;
         };
         let selected = selection.is_some_and(|id| id == &shape.id);
-        if connecting_from.is_none() && !selected {
-            continue; // dots only on the selection (or as connect targets)
+        // Which shapes' anchors are snap targets (S-031): selection mode — only the
+        // selection; connecting / arrow tool / endpoint drag — every shape.
+        if !match exposure {
+            AnchorExposure::SelectionOnly => selected,
+            AnchorExposure::Connect { .. } | AnchorExposure::All => true,
+        } {
+            continue;
         }
 
         if let Some(anchors) = catalog.anchors(&shape.type_id) {
             let size = catalog.get(&shape.type_id).map(|t| t.size);
             for anchor in anchors {
-                let is_source = connecting_from
-                    .is_some_and(|src| src.object() == &shape.id && src.anchor() == anchor.name);
+                let is_source = matches!(
+                    exposure,
+                    AnchorExposure::Connect { source }
+                        if shape.id == *source.object() && anchor.name == source.anchor()
+                );
                 if !is_source && let Some(cell) = anchor_cell(shape, catalog, &anchor) {
                     out.push(Overlay::AnchorArrow {
                         cell,
@@ -407,7 +468,7 @@ pub fn overlays(
         // plain customs stay fixed-size per FR12). The drawn marker and the hit-test
         // must agree on this exact cell.
         if selected
-            && connecting_from.is_none()
+            && matches!(exposure, AnchorExposure::SelectionOnly)
             && catalog
                 .get(&shape.type_id)
                 .is_some_and(|info| info.resizable)
@@ -749,13 +810,27 @@ mod tests {
 
         // e anchor of the selected s1 at (8,2) — an anchor even though the body is there.
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (8, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                Some(&s1),
+                AnchorExposure::SelectionOnly,
+                (8, 2),
+                &[]
+            ),
             HitTarget::Anchor(ObjectId::new("s1").expect("valid"), "e".to_owned())
         );
         // Bottom-right cell of s1 = the resize handle with the catalog's minimum
         // extent (the same cell the overlay draws its marker on).
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (8, 4), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                Some(&s1),
+                AnchorExposure::SelectionOnly,
+                (8, 4),
+                &[]
+            ),
             HitTarget::ResizeHandle {
                 id: s1.clone(),
                 min_size: CellSize::new(1, 1).expect("valid"),
@@ -763,19 +838,40 @@ mod tests {
         );
         // Interior body cell → the shape itself.
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (3, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                Some(&s1),
+                AnchorExposure::SelectionOnly,
+                (3, 2),
+                &[]
+            ),
             HitTarget::Body(s1.clone())
         );
         // Empty space.
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (40, 40), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                Some(&s1),
+                AnchorExposure::SelectionOnly,
+                (40, 40),
+                &[]
+            ),
             HitTarget::Empty
         );
 
         // s2 is not selected: its e anchor cell (13,2) offers no handle → plain body.
         let s2 = ObjectId::new("s2").expect("valid id");
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (13, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                Some(&s1),
+                AnchorExposure::SelectionOnly,
+                (13, 2),
+                &[]
+            ),
             HitTarget::Body(s2.clone())
         );
     }
@@ -787,7 +883,14 @@ mod tests {
         // s2 overlaps s1 at columns 5..8; nothing selected → plain body hit.
         let diagram = diagram_with(&[("s1", 0, 0), ("s2", 5, 0)]);
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (6, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (6, 2),
+                &[]
+            ),
             HitTarget::Body(ObjectId::new("s2").expect("valid id"))
         );
     }
@@ -802,17 +905,38 @@ mod tests {
 
         // s2's w anchor at (20,2) is a valid target…
         assert_eq!(
-            hit_target(&diagram, &catalog, None, Some(&source), (20, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::Connect { source: &source },
+                (20, 2),
+                &[]
+            ),
             HitTarget::Anchor(ObjectId::new("s2").expect("valid"), "w".to_owned())
         );
         // …the source anchor itself is not…
         assert_eq!(
-            hit_target(&diagram, &catalog, None, Some(&source), (8, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::Connect { source: &source },
+                (8, 2),
+                &[]
+            ),
             HitTarget::Empty
         );
         // …nor are plain body cells.
         assert_eq!(
-            hit_target(&diagram, &catalog, None, Some(&source), (3, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::Connect { source: &source },
+                (3, 2),
+                &[]
+            ),
             HitTarget::Empty
         );
     }
@@ -876,24 +1000,38 @@ mod tests {
 
         // Plain custom: its bottom-right cell (4,2) selects the body — no handle…
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&a1), None, (4, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                Some(&a1),
+                AnchorExposure::SelectionOnly,
+                (4, 2),
+                &[]
+            ),
             HitTarget::Body(a1.clone())
         );
-        let ov = overlays(&diagram, &catalog, Some(&a1), None);
+        let ov = overlays(&diagram, &catalog, Some(&a1), AnchorExposure::SelectionOnly);
         assert!(!ov.iter().any(|o| matches!(o, Overlay::ResizeHandle(_))));
         assert_eq!(ov.len(), 1, "just the single anchor dot");
 
         // Rule-bearing custom: its bottom-right cell (14,2) is a resize handle with
         // its min size…
         assert_eq!(
-            hit_target(&diagram, &catalog, Some(&s1), None, (14, 2), &[]),
+            hit_target(
+                &diagram,
+                &catalog,
+                Some(&s1),
+                AnchorExposure::SelectionOnly,
+                (14, 2),
+                &[]
+            ),
             HitTarget::ResizeHandle {
                 id: s1.clone(),
                 min_size: CellSize::new(2, 2).expect("valid size"),
             }
         );
         // …and the overlay carries its handle marker.
-        let ov = overlays(&diagram, &catalog, Some(&s1), None);
+        let ov = overlays(&diagram, &catalog, Some(&s1), AnchorExposure::SelectionOnly);
         assert!(ov.contains(&Overlay::ResizeHandle((14, 2))));
     }
 
@@ -905,11 +1043,11 @@ mod tests {
         let diagram = diagram_with(&[("s1", 0, 0), ("s2", 20, 0)]);
 
         // Nothing selected, nothing in flight: no overlay at all.
-        assert!(overlays(&diagram, &catalog, None, None).is_empty());
+        assert!(overlays(&diagram, &catalog, None, AnchorExposure::SelectionOnly).is_empty());
 
         // Selection: s1's four anchor dots + its bottom-right corner handle.
         let s1 = ObjectId::new("s1").expect("valid id");
-        let sel = overlays(&diagram, &catalog, Some(&s1), None);
+        let sel = overlays(&diagram, &catalog, Some(&s1), AnchorExposure::SelectionOnly);
         assert_eq!(
             sel.iter()
                 .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
@@ -931,7 +1069,12 @@ mod tests {
 
         // Connecting from s1's e: dots on both shapes, minus the source dot, no handle.
         let source = AnchorRef::new(s1.clone(), "e").expect("valid ref");
-        let connecting = overlays(&diagram, &catalog, None, Some(&source));
+        let connecting = overlays(
+            &diagram,
+            &catalog,
+            None,
+            AnchorExposure::Connect { source: &source },
+        );
         assert_eq!(
             connecting
                 .iter()
@@ -1033,7 +1176,7 @@ mod tests {
         diagram.place_shape(box_at("s2", 14, 0)).expect("places");
         let c = ObjectId::new("c1").expect("valid id");
         diagram
-            .connect(ConnectorInstance::new(
+            .connect(ConnectorInstance::between(
                 c.clone(),
                 AnchorRef::new(ObjectId::new("s1").expect("valid"), "e").expect("valid anchor"),
                 AnchorRef::new(ObjectId::new("s2").expect("valid"), "w").expect("valid anchor"),
@@ -1053,7 +1196,14 @@ mod tests {
         let routes = vec![(c.clone(), route)];
         // The bend cell itself is a Bend — even though it lies on two segments.
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (11, 6), &routes),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (11, 6),
+                &routes
+            ),
             HitTarget::Bend {
                 id: c,
                 index: 0,
@@ -1074,7 +1224,7 @@ mod tests {
         diagram.place_shape(box_at("s2", 20, 0)).expect("places");
         let c = ObjectId::new("c1").expect("valid id");
         diagram
-            .connect(ConnectorInstance::new(
+            .connect(ConnectorInstance::between(
                 c.clone(),
                 AnchorRef::new(ObjectId::new("s1").expect("valid"), "e").expect("valid anchor"),
                 AnchorRef::new(ObjectId::new("s2").expect("valid"), "w").expect("valid anchor"),
@@ -1088,13 +1238,28 @@ mod tests {
         // Default tips: bare source, hollow arrow at the target — only the target's
         // adjacent cell is a tip cell.
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (19, 2), &routes),
-            HitTarget::Tip {
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (19, 2),
+                &routes
+            ),
+            HitTarget::Endpoint {
                 id: c.clone(),
-                end: ConnectorEnd::Target
+                end: ConnectorEnd::Target,
+                at: pos(20, 2)
             }
         );
-        match hit_target(&diagram, &catalog, None, None, (9, 2), &routes) {
+        match hit_target(
+            &diagram,
+            &catalog,
+            None,
+            AnchorExposure::SelectionOnly,
+            (9, 2),
+            &routes,
+        ) {
             HitTarget::ConnectorBody { id, .. } => assert_eq!(id, c),
             other => panic!("bare source end is body, got {other:?}"),
         }
@@ -1104,10 +1269,18 @@ mod tests {
             .set_tip(&c, ConnectorEnd::Source, TipStyle::HollowArrow)
             .expect("sets source tip");
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (9, 2), &routes),
-            HitTarget::Tip {
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (9, 2),
+                &routes
+            ),
+            HitTarget::Endpoint {
                 id: c,
-                end: ConnectorEnd::Source
+                end: ConnectorEnd::Source,
+                at: pos(8, 2)
             }
         );
     }
@@ -1132,15 +1305,30 @@ mod tests {
             ],
         )];
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (13, 4), &routes),
-            HitTarget::Tip {
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (13, 4),
+                &routes
+            ),
+            HitTarget::Endpoint {
                 id: c.clone(),
-                end: ConnectorEnd::Target
+                end: ConnectorEnd::Target,
+                at: pos(14, 2)
             }
         );
         // The declared bend still wins on its own cell.
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (11, 6), &routes),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (11, 6),
+                &routes
+            ),
             HitTarget::Bend {
                 id: c,
                 index: 0,
@@ -1150,12 +1338,114 @@ mod tests {
         );
     }
 
+    /// CR-010: free-endpoint cells and tip cells are hit above shape bodies, below
+    /// the selected shape's anchors; `AnchorExposure::All` exposes every shape's
+    /// anchors (arrow tool / endpoint-drag snap targets).
+    #[test]
+    fn hit_target_reports_endpoint_cells_above_bodies() {
+        use diagram_model::anchors::ConnectorEndpoint;
+        use diagram_model::objects::{ConnectorInstance, ConnectorStyle};
+        let catalog = catalog();
+        let mut diagram = Diagram::new();
+        diagram.place_shape(box_at("s1", 0, 0)).expect("places");
+        diagram.place_shape(box_at("s2", 20, 0)).expect("places");
+        // A third box covering part of the route and the free endpoint's cell.
+        diagram.place_shape(box_at("s3", 12, 0)).expect("places");
+        let c = ObjectId::new("c1").expect("valid id");
+        diagram
+            .connect(ConnectorInstance::new(
+                c.clone(),
+                ConnectorEndpoint::Attached(
+                    AnchorRef::new(ObjectId::new("s1").expect("valid"), "e").expect("valid anchor"),
+                ),
+                ConnectorEndpoint::Free(pos(15, 2)),
+                ConnectorStyle::Solid,
+            ))
+            .expect("connects");
+        // Route: s1.e (8,2) → free end (15,2), stamped horizontally.
+        let route: Vec<CellPos> = (8..=15).map(|x| pos(x, 2)).collect();
+        let routes = vec![(c.clone(), route)];
+
+        // The free endpoint cell sits on s3's body — the endpoint wins (CR-010).
+        assert_eq!(
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (15, 2),
+                &routes
+            ),
+            HitTarget::Endpoint {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+                at: pos(15, 2)
+            }
+        );
+        // A plain route cell inside s3 is still the shape's body.
+        assert_eq!(
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (13, 2),
+                &routes
+            ),
+            HitTarget::Body(ObjectId::new("s3").expect("valid"))
+        );
+
+        // The attached source's cell is the selected shape's anchor — anchors keep
+        // priority over endpoints.
+        let s1 = ObjectId::new("s1").expect("valid id");
+        assert_eq!(
+            hit_target(
+                &diagram,
+                &catalog,
+                Some(&s1),
+                AnchorExposure::SelectionOnly,
+                (8, 2),
+                &routes
+            ),
+            HitTarget::Anchor(s1.clone(), "e".to_owned())
+        );
+
+        // `All` exposes every shape's anchors even without a selection…
+        assert_eq!(
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::All,
+                (28, 2),
+                &routes
+            ),
+            HitTarget::Anchor(ObjectId::new("s2").expect("valid"), "e".to_owned())
+        );
+        // …and the overlay layer shows all their snap markers.
+        let all = overlays(&diagram, &catalog, None, AnchorExposure::All);
+        assert_eq!(
+            all.iter()
+                .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
+                .count(),
+            12,
+            "three boxes × four anchors"
+        );
+    }
+
     #[test]
     fn hit_target_reports_body_cells_with_segment_endpoints() {
         let (diagram, catalog, c, route) = bent_connector_scene();
         let routes = vec![(c.clone(), route)];
         // Segment 0 is the diagonal (8,2)-(11,6): a cell on its stamped line.
-        match hit_target(&diagram, &catalog, None, None, (9, 3), &routes) {
+        match hit_target(
+            &diagram,
+            &catalog,
+            None,
+            AnchorExposure::SelectionOnly,
+            (9, 3),
+            &routes,
+        ) {
             HitTarget::ConnectorBody {
                 id,
                 segment,
@@ -1169,7 +1459,14 @@ mod tests {
             other => panic!("expected ConnectorBody on (9,3), got {other:?}"),
         }
         // Segment 1 is the rising diagonal (11,6)-(14,2).
-        match hit_target(&diagram, &catalog, None, None, (12, 5), &routes) {
+        match hit_target(
+            &diagram,
+            &catalog,
+            None,
+            AnchorExposure::SelectionOnly,
+            (12, 5),
+            &routes,
+        ) {
             HitTarget::ConnectorBody {
                 id,
                 segment,
@@ -1192,7 +1489,14 @@ mod tests {
         let s3 = ObjectId::new("s3").expect("valid id");
         diagram.place_shape(box_at("s3", 9, 3)).expect("places");
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (9, 3), &routes),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (9, 3),
+                &routes
+            ),
             HitTarget::Body(s3)
         );
     }
@@ -1203,14 +1507,28 @@ mod tests {
         let routes = vec![(c.clone(), route)];
         // Empty cell off the route stays empty.
         assert_eq!(
-            hit_target(&diagram, &catalog, None, None, (0, 9), &routes),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::SelectionOnly,
+                (0, 9),
+                &routes
+            ),
             HitTarget::Empty
         );
         // While connecting, connector cells are not drop targets (anchors only).
         let source =
             AnchorRef::new(ObjectId::new("s1").expect("valid"), "e").expect("valid anchor");
         assert_eq!(
-            hit_target(&diagram, &catalog, None, Some(&source), (9, 3), &routes),
+            hit_target(
+                &diagram,
+                &catalog,
+                None,
+                AnchorExposure::Connect { source: &source },
+                (9, 3),
+                &routes
+            ),
             HitTarget::Empty
         );
     }
@@ -1220,13 +1538,13 @@ mod tests {
         let (diagram, catalog, c, _route) = bent_connector_scene();
         // Not selected: no bend handles.
         assert!(
-            overlays(&diagram, &catalog, None, None)
+            overlays(&diagram, &catalog, None, AnchorExposure::SelectionOnly)
                 .iter()
                 .all(|o| !matches!(o, Overlay::BendHandle(_)))
         );
         // Selected: one handle at the declared waypoint — same cell `hit_target`
         // answers with a Bend.
-        let handles = overlays(&diagram, &catalog, Some(&c), None);
+        let handles = overlays(&diagram, &catalog, Some(&c), AnchorExposure::SelectionOnly);
         assert_eq!(
             handles
                 .iter()

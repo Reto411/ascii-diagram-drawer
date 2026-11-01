@@ -9,7 +9,7 @@
 //! that mixes plain letters/digits with drawing glyphs to exercise quote escaping.
 
 use diagram_model::Diagram;
-use diagram_model::anchors::AnchorRef;
+use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::objects::{
     ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance,
@@ -111,7 +111,7 @@ fn random_diagram() -> impl Strategy<Value = Diagram> {
             }
             // Chain up to `connector_count` consecutive boxes with random side anchors.
             for k in 0..connector_count.min(box_ids.len().saturating_sub(1)) {
-                d.connect(ConnectorInstance::new(
+                d.connect(ConnectorInstance::between(
                     object_id((200 + k) as u32),
                     AnchorRef::new(box_ids[k].clone(), SIDE_ANCHORS[k % 4]).expect("side anchor"),
                     AnchorRef::new(
@@ -123,6 +123,15 @@ fn random_diagram() -> impl Strategy<Value = Diagram> {
                 ))
                 .expect("endpoints are boxes");
             }
+            // CR-010: one standalone arrow with both ends free, so the purity and
+            // determinism properties also cover unattached endpoints.
+            d.connect(ConnectorInstance::new(
+                object_id(999),
+                ConnectorEndpoint::Free(CellPos::new(3, 2)),
+                ConnectorEndpoint::Free(CellPos::new(8, 5)),
+                ConnectorStyle::Solid,
+            ))
+            .expect("free endpoints are always valid");
             d
         })
 }

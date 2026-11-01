@@ -117,7 +117,7 @@ fn anchors_map_proportionally_on_resized_shapes() {
     let mut d = Diagram::new();
     d.place_shape(shape(1, "c/box", "", 0, 0, 8, 6))
         .expect("place");
-    d.connect(ConnectorInstance::new(
+    d.connect(ConnectorInstance::between(
         ObjectId::generated(90),
         AnchorRef::new(ObjectId::generated(1), "e").expect("anchor"),
         AnchorRef::new(ObjectId::generated(1), "n").expect("anchor"),

@@ -10,7 +10,7 @@
 
 use diagram_model::{
     Diagram,
-    anchors::AnchorRef,
+    anchors::{AnchorRef, ConnectorEndpoint},
     geometry::{CellPos, CellSize},
     objects::{ConnectorInstance, ConnectorStyle, ObjectId, ShapeInstance, TextInstance},
 };
@@ -23,7 +23,9 @@ fn id(prefix: &str, n: u32) -> ObjectId {
 
 type ShapeSpec = (String, String, u32, u32, u32, u32);
 type TextSpec = (u32, u32, String);
-type ConnectorSpec = (usize, usize, String, String, bool);
+/// `(from-shape-index, to-shape-index, from-anchor, to-anchor, dashed, free-from, free-to)` —
+/// the free flags select CR-010 standalone ends instead of anchor refs.
+type ConnectorSpec = (usize, usize, String, String, bool, bool, bool);
 
 fn shape_spec() -> impl Strategy<Value = ShapeSpec> {
     (
@@ -56,6 +58,8 @@ fn diagram_strategy() -> impl Strategy<Value = Diagram> {
                 0usize..4,
                 "[a-z-]{1,6}",
                 "[a-z-]{1,6}",
+                any::<bool>(),
+                any::<bool>(),
                 any::<bool>(),
             ),
             0..3,
@@ -100,20 +104,35 @@ fn build(
             )
             .expect("valid text");
     }
-    for (i, (a, b, from_anchor, to_anchor, dashed)) in conns.iter().enumerate() {
+    for (i, (a, b, from_anchor, to_anchor, dashed, free_from, free_to)) in conns.iter().enumerate()
+    {
         if *a >= shapes.len() || *b >= shapes.len() {
             continue; // generated index out of range: skip this connector
         }
-        let from = AnchorRef::new(
-            id("s", u32::try_from(*a).expect("small index") + 1),
-            from_anchor,
-        )
-        .expect("valid anchor");
-        let to = AnchorRef::new(
-            id("s", u32::try_from(*b).expect("small index") + 1),
-            to_anchor,
-        )
-        .expect("valid anchor");
+        let from = if *free_from {
+            ConnectorEndpoint::Free(CellPos::new(10, 5))
+        } else {
+            ConnectorEndpoint::Attached(
+                AnchorRef::new(
+                    id("s", u32::try_from(*a).expect("small index") + 1),
+                    from_anchor,
+                )
+                .expect("valid anchor"),
+            )
+        };
+        let to = if *free_to {
+            // Offset from the free source cell — both ends free at one cell is a
+            // zero-length connector (CR-010) and would be rejected by `connect`.
+            ConnectorEndpoint::Free(CellPos::new(11, 5))
+        } else {
+            ConnectorEndpoint::Attached(
+                AnchorRef::new(
+                    id("s", u32::try_from(*b).expect("small index") + 1),
+                    to_anchor,
+                )
+                .expect("valid anchor"),
+            )
+        };
         diagram
             .connect(ConnectorInstance::new(
                 id("c", u32::try_from(i).expect("small index") + 1),

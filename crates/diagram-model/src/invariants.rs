@@ -73,6 +73,8 @@ pub enum ModelError {
     ShapeTypeIdContainsWhitespace(String),
     /// A referenced object id does not exist in the diagram.
     UnknownObject(ObjectId),
+    /// Both ends of a connector are free at the same cell — zero length (CR-010).
+    ZeroLengthConnector(ObjectId),
     /// Object sizes must be at least one cell in each dimension.
     ZeroSize {
         /// Rejected height.
@@ -124,6 +126,12 @@ impl fmt::Display for ModelError {
                 "shape type id must be a single token (no whitespace): '{type_id}'"
             ),
             Self::UnknownObject(id) => write!(f, "unknown object id: {id}"),
+            Self::ZeroLengthConnector(id) => {
+                write!(
+                    f,
+                    "connector '{id}' has no length (both ends at the same cell)"
+                )
+            }
             Self::ZeroSize { height, width } => {
                 write!(
                     f,

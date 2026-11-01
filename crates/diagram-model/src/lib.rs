@@ -11,8 +11,9 @@
 //!   Negative coordinates and zero-sized objects are unrepresentable by type construction.
 //! - [`objects::Object`]: `Shape(ShapeInstance) | Text(TextInstance) | Connector(ConnectorInstance)`
 //!   — shapes carry a catalog `type_id` (the only reference into the Shape Catalog context), a
-//!   label and grid geometry; text is independent free content (FR10); connectors bind to
-//!   [`anchors::AnchorRef`]s, not coordinates (FR9).
+//!   label and grid geometry; text is independent free content (FR10); connector ends are
+//!   either [`anchors::AnchorRef`]s or free cell positions ([`anchors::ConnectorEndpoint`],
+//!   FR9 + CR-010).
 //! - [`Diagram`]: aggregate root holding objects in document order (= z-order) plus the
 //!   whole-diagram scale (FR8). All mutations go through intent-revealing operations that
 //!   enforce the boundary invariants; see [`invariants::ModelError`] for the failure surface.
@@ -28,7 +29,7 @@ pub mod glyphs;
 pub mod invariants;
 pub mod objects;
 
-use anchors::AnchorRef;
+use anchors::ConnectorEndpoint;
 use geometry::{CellPos, CellSize};
 use invariants::ModelError;
 use objects::{
@@ -46,15 +47,20 @@ pub struct Diagram {
 }
 
 impl Diagram {
-    /// Adds a connector between two shape anchors. Both endpoints must reference existing
-    /// shape objects (connectors cannot bind to text or other connectors).
+    /// Adds a connector between two endpoints (FR9, CR-010).
+    ///
+    /// Attached ends must reference existing shape objects (connectors cannot bind to text or
+    /// other connectors); free ends are plain coordinates and always valid. Both ends free at the
+    /// same cell is rejected — a connector needs at least one cell of length.
     ///
     /// # Errors
-    /// [`ModelError::DuplicateId`], [`ModelError::UnknownObject`] or [`ModelError::NotAShape`].
+    /// [`ModelError::DuplicateId`], [`ModelError::UnknownObject`], [`ModelError::NotAShape`] or
+    /// [`ModelError::ZeroLengthConnector`].
     pub fn connect(&mut self, instance: ConnectorInstance) -> Result<(), ModelError> {
         self.ensure_unique_id(&instance.id)?;
-        self.validate_connector_end(&instance.from)?;
-        self.validate_connector_end(&instance.to)?;
+        self.validate_endpoint(&instance.from)?;
+        self.validate_endpoint(&instance.to)?;
+        Self::reject_zero_length(&instance.id, &instance.from, &instance.to)?;
         self.objects.push(Object::Connector(instance));
         Ok(())
     }
@@ -142,6 +148,35 @@ impl Diagram {
             ConnectorEnd::Target => connector.to_tip = style,
         }
         Ok(())
+    }
+
+    /// Sets one end of a connector to a new endpoint — the attach/detach conversion of
+    /// CR-010 / ADR 013 v6. Attaching validates the target like [`Self::connect`];
+    /// detaching (replacing an attached end with a free position) is always valid subject
+    /// to the zero-length rule.
+    ///
+    /// # Errors
+    /// [`ModelError::UnknownObject`] when the id does not exist, [`ModelError::NotAConnector`]
+    /// when it exists but is another object kind, [`ModelError::NotAShape`]/[`ModelError::UnknownObject`]
+    /// for an attached target on a non-shape or missing object, or
+    /// [`ModelError::ZeroLengthConnector`] when the result would have both ends free at one cell.
+    pub fn set_endpoint(
+        &mut self,
+        id: &ObjectId,
+        end: ConnectorEnd,
+        endpoint: ConnectorEndpoint,
+    ) -> Result<(), ModelError> {
+        self.validate_endpoint(&endpoint)?;
+        let connector = match self.get_mut(id) {
+            Some(Object::Connector(connector)) => connector,
+            None => return Err(ModelError::UnknownObject(id.clone())),
+            Some(_) => return Err(ModelError::NotAConnector(id.clone())),
+        };
+        match end {
+            ConnectorEnd::Source => connector.from = endpoint,
+            ConnectorEnd::Target => connector.to = endpoint,
+        };
+        Self::reject_zero_length(id, &connector.from, &connector.to)
     }
 
     /// Mutable access to a connector's bend list (aggregate-internal).
@@ -296,7 +331,7 @@ impl Diagram {
                 && !matches!(
                     object,
                     Object::Connector(connector)
-                        if *connector.from.object() == *id || *connector.to.object() == *id
+                        if connector.from.object() == Some(id) || connector.to.object() == Some(id)
                 )
         });
         Ok(before.saturating_sub(self.len()))
@@ -337,16 +372,35 @@ impl Diagram {
         Ok(())
     }
 
-    /// A connector endpoint must reference an existing shape.
+    /// A connector endpoint must be free or reference an existing shape.
     ///
     /// # Errors
     /// [`ModelError::UnknownObject`] or [`ModelError::NotAShape`].
-    fn validate_connector_end(&self, end: &AnchorRef) -> Result<(), ModelError> {
-        match self.get(end.object()) {
+    fn validate_endpoint(&self, end: &ConnectorEndpoint) -> Result<(), ModelError> {
+        let ConnectorEndpoint::Attached(reference) = end else {
+            return Ok(()); // free ends are plain coordinates — nothing to validate
+        };
+        match self.get(reference.object()) {
             Some(&Object::Shape(_)) => Ok(()),
-            Some(_) => Err(ModelError::NotAShape(end.object().clone())),
-            None => Err(ModelError::UnknownObject(end.object().clone())),
+            Some(_) => Err(ModelError::NotAShape(reference.object().clone())),
+            None => Err(ModelError::UnknownObject(reference.object().clone())),
         }
+    }
+
+    /// Both ends free at the same cell is a zero-length connector (CR-010: minimum 1 cell).
+    /// Mixed/attached pairs cannot be checked here — their resolved cells are only known to
+    /// the render pipeline, which renders coincident endpoints as nothing (ADR 013).
+    fn reject_zero_length(
+        id: &ObjectId,
+        from: &ConnectorEndpoint,
+        to: &ConnectorEndpoint,
+    ) -> Result<(), ModelError> {
+        if let (ConnectorEndpoint::Free(a), ConnectorEndpoint::Free(b)) = (from, to)
+            && a == b
+        {
+            return Err(ModelError::ZeroLengthConnector(id.clone()));
+        }
+        Ok(())
     }
 
     /// A diagram with an explicit initial scale.
@@ -378,7 +432,7 @@ mod tests {
     )]
 
     use super::{Diagram, ModelError};
-    use crate::anchors::AnchorRef;
+    use crate::anchors::{AnchorRef, ConnectorEndpoint};
     use crate::geometry::{CellPos, CellSize};
     use crate::objects::{
         ConnectorEnd, ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance,
@@ -387,7 +441,7 @@ mod tests {
 
     /// Builds a solid connector between two shapes' `e`/`w` anchors.
     fn connector(id: &str, from: &str, to: &str) -> ConnectorInstance {
-        ConnectorInstance::new(
+        ConnectorInstance::between(
             ObjectId::new(id).expect("valid id"),
             AnchorRef::new(ObjectId::new(from).expect("valid id"), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::new(to).expect("valid id"), "w").expect("valid anchor"),
@@ -765,6 +819,127 @@ mod tests {
 
         let connector = diagram.get(&oid("c1")).expect("present");
         assert!(matches!(connector, Object::Connector(_)));
+    }
+
+    /// Free ends are accepted (standalone arrows — CR-010); both ends free at one cell is a
+    /// zero-length connector and rejected.
+    #[test]
+    fn connect_accepts_free_ends_and_rejects_zero_length() {
+        let mut diagram = Diagram::new();
+        diagram.place_shape(shape("s1", "box")).expect("places");
+
+        let standalone = ConnectorInstance::new(
+            oid("c1"),
+            ConnectorEndpoint::Free(CellPos::new(2, 3)),
+            ConnectorEndpoint::Free(CellPos::new(6, 7)),
+            ConnectorStyle::Solid,
+        );
+        assert_eq!(diagram.connect(standalone), Ok(()));
+
+        let zero = ConnectorInstance::new(
+            oid("c2"),
+            ConnectorEndpoint::Free(CellPos::new(4, 4)),
+            ConnectorEndpoint::Free(CellPos::new(4, 4)),
+            ConnectorStyle::Solid,
+        );
+        assert_eq!(
+            diagram.connect(zero),
+            Err(ModelError::ZeroLengthConnector(oid("c2")))
+        );
+
+        // Mixed attached/free is legal even when the free cell coincides with the attached
+        // end's resolved cell — only the pipeline knows resolved cells (ADR 013).
+        let mixed = ConnectorInstance::new(
+            oid("c3"),
+            ConnectorEndpoint::Attached(AnchorRef::new(oid("s1"), "e").expect("valid anchor")),
+            ConnectorEndpoint::Free(CellPos::new(4, 4)),
+            ConnectorStyle::Solid,
+        );
+        assert_eq!(diagram.connect(mixed), Ok(()));
+    }
+
+    /// `set_endpoint` converts one end between attached and free (CR-010 attach/detach),
+    /// validating attached targets like `connect` and re-applying the zero-length rule.
+    #[test]
+    fn set_endpoint_attaches_detaches_and_enforces_invariants() {
+        let mut diagram = Diagram::new();
+        diagram.place_shape(shape("s1", "box")).expect("places");
+        diagram.place_shape(shape("s2", "box")).expect("places");
+        diagram.place_text(text("t1")).expect("places");
+        diagram
+            .connect(connector("c1", "s1", "s2"))
+            .expect("connects");
+
+        // Detach the target end — it becomes free at the given cell.
+        assert_eq!(
+            diagram.set_endpoint(
+                &oid("c1"),
+                ConnectorEnd::Target,
+                ConnectorEndpoint::Free(CellPos::new(9, 9))
+            ),
+            Ok(())
+        );
+        let Object::Connector(connector) = diagram.get(&oid("c1")).expect("present") else {
+            panic!("connector missing")
+        };
+        assert_eq!(connector.to, ConnectorEndpoint::Free(CellPos::new(9, 9)));
+
+        // Re-attach the target end to a shape anchor.
+        assert_eq!(
+            diagram.set_endpoint(
+                &oid("c1"),
+                ConnectorEnd::Target,
+                ConnectorEndpoint::Attached(AnchorRef::new(oid("s2"), "w").expect("valid anchor"),)
+            ),
+            Ok(())
+        );
+
+        // Attaching to a missing object is rejected and leaves the end unchanged.
+        assert_eq!(
+            diagram.set_endpoint(
+                &oid("c1"),
+                ConnectorEnd::Source,
+                ConnectorEndpoint::Attached(
+                    AnchorRef::new(oid("ghost"), "e").expect("valid anchor"),
+                )
+            ),
+            Err(ModelError::UnknownObject(oid("ghost")))
+        );
+
+        // Zero length: both ends free at one cell is rejected.
+        diagram
+            .set_endpoint(
+                &oid("c1"),
+                ConnectorEnd::Source,
+                ConnectorEndpoint::Free(CellPos::new(9, 9)),
+            )
+            .expect("detaches source");
+        assert_eq!(
+            diagram.set_endpoint(
+                &oid("c1"),
+                ConnectorEnd::Target,
+                ConnectorEndpoint::Free(CellPos::new(9, 9))
+            ),
+            Err(ModelError::ZeroLengthConnector(oid("c1")))
+        );
+
+        // Unknown object and non-connector targets are rejected.
+        assert_eq!(
+            diagram.set_endpoint(
+                &oid("ghost"),
+                ConnectorEnd::Source,
+                ConnectorEndpoint::Free(CellPos::new(1, 1))
+            ),
+            Err(ModelError::UnknownObject(oid("ghost")))
+        );
+        assert_eq!(
+            diagram.set_endpoint(
+                &oid("t1"),
+                ConnectorEnd::Source,
+                ConnectorEndpoint::Free(CellPos::new(1, 1))
+            ),
+            Err(ModelError::NotAConnector(oid("t1")))
+        );
     }
 
     /// Scale can be set at construction and later; zero is rejected.

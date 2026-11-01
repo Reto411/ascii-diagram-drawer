@@ -7,7 +7,7 @@
 
 use core::fmt;
 
-use crate::anchors::AnchorRef;
+use crate::anchors::{AnchorRef, ConnectorEndpoint};
 use crate::geometry::{CellPos, CellSize};
 use crate::invariants::{ModelError, TokenField, validate_single_token};
 
@@ -200,20 +200,22 @@ impl TextInstance {
     }
 }
 
-/// A line/arrow between two shape anchors (FR9).
+/// A line/arrow between two endpoints (FR9, extended by CR-010).
 ///
-/// Bound to anchors, not raw coordinates: when a bound shape moves or resizes, the connector
-/// stays attached because its endpoints are re-resolved from `(object, anchor name)` at render time.
+/// Each end is either bound to a named shape anchor or free at an explicit model-space cell
+/// (ADR 013 v6). Bound ends are not raw coordinates: when a bound shape moves or resizes, the
+/// connector stays attached because its endpoints are re-resolved from `(object, anchor name)`
+/// at render time. Free ends never re-resolve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorInstance {
-    /// Starting endpoint (an anchor on a shape).
-    pub from: AnchorRef,
+    /// Starting endpoint (attached to a shape anchor or free at a cell).
+    pub from: ConnectorEndpoint,
     /// Stable identity of this connector.
     pub id: ObjectId,
     /// Line style.
     pub style: ConnectorStyle,
-    /// Ending endpoint (an anchor on a shape).
-    pub to: AnchorRef,
+    /// Ending endpoint (attached to a shape anchor or free at a cell).
+    pub to: ConnectorEndpoint,
     /// Optional ordered manual bends (waypoints, model-space cells) — CR-007 / ADR 013 v4.
     ///
     /// Empty = automatic routing (straight / single-corner L). Non-empty = the route is
@@ -229,10 +231,15 @@ pub struct ConnectorInstance {
 impl ConnectorInstance {
     /// Creates a connector without manual bends and with the default tips (source
     /// bare, target hollow arrow — CR-008: existing diagrams render identically).
-    /// Endpoints are pre-validated [`AnchorRef`]s; cross-object checks (both ends exist
-    /// and are shapes) happen in [`crate::Diagram::connect`].
+    /// Attached endpoints are pre-validated [`AnchorRef`]s; cross-object checks (bound ends
+    /// exist and are shapes) happen in [`crate::Diagram::connect`].
     #[must_use]
-    pub const fn new(id: ObjectId, from: AnchorRef, to: AnchorRef, style: ConnectorStyle) -> Self {
+    pub const fn new(
+        id: ObjectId,
+        from: ConnectorEndpoint,
+        to: ConnectorEndpoint,
+        style: ConnectorStyle,
+    ) -> Self {
         Self {
             bends: Vec::new(),
             from,
@@ -242,6 +249,23 @@ impl ConnectorInstance {
             to,
             to_tip: TipStyle::HollowArrow,
         }
+    }
+
+    /// Creates a connector between two shape anchors — both ends attached (the FR9
+    /// baseline; the common case for tests and legacy code). See [`Self::new`].
+    #[must_use]
+    pub const fn between(
+        id: ObjectId,
+        from: AnchorRef,
+        to: AnchorRef,
+        style: ConnectorStyle,
+    ) -> Self {
+        Self::new(
+            id,
+            ConnectorEndpoint::Attached(from),
+            ConnectorEndpoint::Attached(to),
+            style,
+        )
     }
 
     /// Returns a copy of this connector with the given manual bend waypoints (CR-007).
@@ -296,7 +320,7 @@ mod tests {
     )]
 
     use super::{ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance};
-    use crate::anchors::AnchorRef;
+    use crate::anchors::{AnchorRef, ConnectorEndpoint};
     use crate::geometry::{CellPos, CellSize};
     use crate::invariants::ModelError;
 
@@ -408,10 +432,10 @@ mod tests {
         let from = AnchorRef::new(id("s1"), "e").expect("valid anchor");
         let to = AnchorRef::new(id("s2"), "w").expect("valid anchor");
         let connector =
-            ConnectorInstance::new(id("c1"), from.clone(), to.clone(), ConnectorStyle::Dashed);
+            ConnectorInstance::between(id("c1"), from.clone(), to.clone(), ConnectorStyle::Dashed);
         assert_eq!(connector.id, id("c1"));
-        assert_eq!(connector.from, from);
-        assert_eq!(connector.to, to);
+        assert_eq!(connector.from, ConnectorEndpoint::Attached(from));
+        assert_eq!(connector.to, ConnectorEndpoint::Attached(to));
         assert_eq!(connector.style, ConnectorStyle::Dashed);
     }
 
@@ -424,7 +448,7 @@ mod tests {
         );
         let text =
             Object::Text(TextInstance::new(id("t1"), CellPos::origin(), "hi").expect("valid"));
-        let connector = Object::Connector(ConnectorInstance::new(
+        let connector = Object::Connector(ConnectorInstance::between(
             id("c1"),
             AnchorRef::new(id("s1"), "e").expect("valid anchor"),
             AnchorRef::new(id("s2"), "w").expect("valid anchor"),

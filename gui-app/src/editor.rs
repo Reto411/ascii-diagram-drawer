@@ -7,7 +7,7 @@
 //! gestures are transient *view* state — they never touch the model.
 
 use diagram_model::Diagram;
-use diagram_model::anchors::AnchorRef;
+use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::objects::{
     ConnectorEnd, ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance,
@@ -29,8 +29,12 @@ pub enum PointerEvent {
     Down { cell: (u32, u32), target: HitTarget },
     /// Pointer moved (primary held or hovering) over the given grid cell.
     Move { cell: (u32, u32), target: HitTarget },
-    /// Primary button released; `target` is what was under the pointer at release.
-    Up { target: HitTarget },
+    /// Primary button released; `cell` is the release position in model space (`None`
+    /// when released off-canvas) and `target` what it is over.
+    Up {
+        cell: Option<(u32, u32)>,
+        target: HitTarget,
+    },
     /// Double click (primary) on the given cell — opens inline editing of a text object
     /// under the pointer (S-018 AC1).
     DoubleClick { cell: (u32, u32), target: HitTarget },
@@ -61,6 +65,19 @@ pub enum EditOutcome {
     Connecting { from: AnchorRef },
     /// A connector was created between two anchors.
     Connected { id: ObjectId },
+    /// The arrow tool created a new connector (CR-010) — its ends may be attached or
+    /// free.
+    ArrowPlaced { id: ObjectId },
+    /// A connector end was re-attached to a shape anchor (CR-010).
+    EndpointAttached { id: ObjectId, end: ConnectorEnd },
+    /// An attached connector end was detached — it now follows the pointer (CR-010).
+    EndpointDetached { id: ObjectId, end: ConnectorEnd },
+    /// A free connector end moved to a new cell (CR-010).
+    EndpointMoved {
+        id: ObjectId,
+        end: ConnectorEnd,
+        to: CellPos,
+    },
     /// A new bend entered the model at the dragged cell (CR-007 AC5) — live, on the
     /// first displacement of a body drag.
     BendAdded { id: ObjectId, at: CellPos },
@@ -119,6 +136,26 @@ enum Gesture {
         pressed: CellPos,
         added: bool,
     },
+    /// The arrow tool is drawing a connector (CR-010): `from` was resolved at press
+    /// time (attached when the press landed on an anchor), `from_cell` its cell for
+    /// the drag line; `moved` flips once the pointer has crossed a cell — a press
+    /// without movement draws nothing.
+    ArrowDrag {
+        from: ConnectorEndpoint,
+        from_cell: CellPos,
+        moved: bool,
+    },
+    /// A connector endpoint is being dragged (CR-010): `at` is the end's current cell
+    /// (kept in sync with every successful mutation); `was_attached` flips to `false`
+    /// once an attached end has been detached; `moved` as in [`Gesture::ArrowDrag`] —
+    /// a press without movement cycles the tip style at release instead (S-029).
+    EndpointDrag {
+        id: ObjectId,
+        end: ConnectorEnd,
+        at: CellPos,
+        was_attached: bool,
+        moved: bool,
+    },
 }
 
 /// What a canvas click will place — the tool picked in the sidebar (S-012 shapes,
@@ -130,6 +167,10 @@ pub enum Placing {
     Shape(Box<ShapeInfo>),
     /// A free-text object; inline editing opens immediately after placement (FR10).
     Text,
+    /// The arrow tool (CR-010): press-drag-release draws a connector from the press
+    /// cell to the release cell; ends attach when they land on shape anchors. Stays
+    /// armed for further drags (Esc stops it).
+    Arrow,
 }
 
 /// Transient view state + gesture machine (ADR 009: selection/placement/gestures are
@@ -167,6 +208,45 @@ impl EditorState {
     pub fn select_text_tool(&mut self) {
         self.placing = Some(Placing::Text);
         self.selection = None;
+    }
+
+    /// Sidebar action: pick the arrow tool (CR-010). The next press-drag on the canvas
+    /// draws a connector; the tool stays armed for further drags (Esc stops it).
+    pub fn select_arrow_tool(&mut self) {
+        self.placing = Some(Placing::Arrow);
+        self.selection = None;
+    }
+
+    /// The anchor exposure for canvas hit-testing/overlays under the current state
+    /// (S-031): selection mode shows only the selected shape's anchors; a connection,
+    /// an arrow drag or an endpoint drag exposes every shape's anchors as snap targets.
+    #[must_use]
+    pub fn anchor_exposure(&self) -> crate::canvas::AnchorExposure<'_> {
+        match &self.gesture {
+            Some(Gesture::Connect { from }) => {
+                crate::canvas::AnchorExposure::Connect { source: from }
+            }
+            Some(Gesture::ArrowDrag { .. }) | Some(Gesture::EndpointDrag { .. }) => {
+                crate::canvas::AnchorExposure::All
+            }
+            _ => match &self.placing {
+                Some(Placing::Arrow) => crate::canvas::AnchorExposure::All,
+                _ => crate::canvas::AnchorExposure::SelectionOnly,
+            },
+        }
+    }
+
+    /// The arrow tool's in-flight drag source (CR-010): the press cell and whether the
+    /// source end attached to it — the canvas draws the drag line from that cell. Only
+    /// set while an arrow is being drawn.
+    #[must_use]
+    pub fn arrow_drag_source(&self) -> Option<(CellPos, bool)> {
+        match &self.gesture {
+            Some(Gesture::ArrowDrag {
+                from, from_cell, ..
+            }) => Some((*from_cell, matches!(from, ConnectorEndpoint::Attached(_)))),
+            _ => None,
+        }
     }
 
     /// The source anchor of an in-flight connection gesture, if any — the canvas uses
@@ -218,7 +298,7 @@ impl EditorState {
         match event {
             PointerEvent::Down { cell, target } => self.on_down(cell, target, diagram),
             PointerEvent::Move { cell, .. } => self.on_move(cell, diagram),
-            PointerEvent::Up { target } => self.on_up(target, diagram),
+            PointerEvent::Up { cell, target } => self.on_up(cell, target, diagram),
             PointerEvent::DoubleClick { cell, target } => {
                 self.on_double_click(cell, target, diagram)
             }
@@ -262,6 +342,13 @@ impl EditorState {
         match self.placing.clone() {
             Some(Placing::Shape(info)) => return self.place(col, row, *info, diagram),
             Some(Placing::Text) => return self.place_text(col, row, diagram),
+            // CR-010 — the arrow tool starts a drag instead of placing an object; it
+            // stays armed for further drags.
+            Some(Placing::Arrow) => {
+                let outcome = self.start_arrow(col, row, target);
+                self.placing = Some(Placing::Arrow);
+                return outcome;
+            }
             None => {}
         }
         match target {
@@ -324,13 +411,50 @@ impl EditorState {
                 });
                 EditOutcome::Selected(id)
             }
-            // CR-008 AC2 — pressing a tip cell cycles that end's tip style live.
-            HitTarget::Tip { id, end } => self.cycle_tip(id, end, diagram),
+            // CR-010 — pressing an endpoint (or its tip cell) starts a drag: a free
+            // end follows the pointer live, an attached end detaches on its first
+            // move; a press without movement cycles the tip style at release
+            // (S-029 behavior preserved).
+            HitTarget::Endpoint { id, end, at } => {
+                let Some(Object::Connector(connector)) = diagram.get(&id) else {
+                    return EditOutcome::Nothing; // defensive: stale hit
+                };
+                self.selection = Some(id.clone());
+                self.gesture = Some(Gesture::EndpointDrag {
+                    id: id.clone(),
+                    end,
+                    at,
+                    was_attached: match end {
+                        ConnectorEnd::Source => connector.from.is_attached(),
+                        ConnectorEnd::Target => connector.to.is_attached(),
+                    },
+                    moved: false,
+                });
+                EditOutcome::Selected(id)
+            }
             HitTarget::Empty => {
                 self.selection = None;
                 EditOutcome::Deselected
             }
         }
+    }
+
+    /// The arrow tool's press (CR-010): the source end attaches when the press lands
+    /// on a shape anchor and stays free at the pressed cell otherwise. The drag line
+    /// runs from that cell; the target end is resolved at release ([`Self::on_up`]).
+    fn start_arrow(&mut self, col: u32, row: u32, target: HitTarget) -> EditOutcome {
+        let from = match target {
+            HitTarget::Anchor(object_id, name) => AnchorRef::new(object_id, &name)
+                .map(ConnectorEndpoint::Attached)
+                .unwrap_or_else(|_| ConnectorEndpoint::Free(CellPos::new(col, row))),
+            _ => ConnectorEndpoint::Free(CellPos::new(col, row)),
+        };
+        self.gesture = Some(Gesture::ArrowDrag {
+            from,
+            from_cell: CellPos::new(col, row),
+            moved: false,
+        });
+        EditOutcome::Nothing
     }
 
     /// Cycles the pressed tip end through bare → hollow arrow → empty rhombus →
@@ -563,20 +687,68 @@ impl EditorState {
                     EditOutcome::Nothing
                 }
             }
+            // CR-010 — arrow drag: pure hover until release; remember that the pointer
+            // has crossed a cell so a bare click draws nothing.
+            Gesture::ArrowDrag { from_cell, .. } => {
+                if CellPos::new(col, row) != from_cell
+                    && let Some(Gesture::ArrowDrag { moved, .. }) = self.gesture.as_mut()
+                {
+                    *moved = true;
+                }
+                EditOutcome::Nothing
+            }
+            // CR-010 — endpoint drag: a free end follows the pointer live; an attached
+            // end detaches on its first move. Invalid targets (e.g. both-free on one
+            // cell) are refused by the model and leave the gesture running.
+            Gesture::EndpointDrag {
+                id,
+                end,
+                at,
+                was_attached,
+                ..
+            } => {
+                let to = CellPos::new(col, row);
+                if to == at {
+                    return EditOutcome::Nothing;
+                }
+                match diagram.set_endpoint(&id, end, ConnectorEndpoint::Free(to)) {
+                    Ok(()) => {
+                        self.gesture = Some(Gesture::EndpointDrag {
+                            id: id.clone(),
+                            end,
+                            at: to,
+                            was_attached: false,
+                            moved: true,
+                        });
+                        if was_attached {
+                            EditOutcome::EndpointDetached { id, end }
+                        } else {
+                            EditOutcome::EndpointMoved { id, end, to }
+                        }
+                    }
+                    Err(_) => EditOutcome::Nothing,
+                }
+            }
         }
     }
 
-    fn on_up(&mut self, target: HitTarget, diagram: &mut Diagram) -> EditOutcome {
+    fn on_up(
+        &mut self,
+        cell: Option<(u32, u32)>,
+        target: HitTarget,
+        diagram: &mut Diagram,
+    ) -> EditOutcome {
         let gesture = self.gesture.take();
-        match (gesture, target) {
-            (Some(Gesture::Connect { from }), HitTarget::Anchor(object_id, name)) => {
+        match (gesture, cell, target) {
+            (Some(Gesture::Connect { from }), _, HitTarget::Anchor(object_id, name)) => {
                 // `hit_target` in connecting mode never reports the source anchor itself,
                 // so a hit here is always a legal drop.
                 let Ok(to) = AnchorRef::new(object_id, &name) else {
                     return EditOutcome::Nothing; // defensive: catalog names are valid
                 };
                 let id = diagram.new_object_id();
-                let connector = ConnectorInstance::new(id.clone(), from, to, ConnectorStyle::Solid);
+                let connector =
+                    ConnectorInstance::between(id.clone(), from, to, ConnectorStyle::Solid);
                 match diagram.connect(connector) {
                     Ok(()) => EditOutcome::Connected { id },
                     Err(_) => EditOutcome::Nothing, // defensive: endpoints were just hit-tested
@@ -585,6 +757,75 @@ impl EditorState {
             // CR-007 AC6 — dropping a *moved* bend on the straight line between its
             // neighbors removes it (Visio-style cleanup); otherwise it stays where the
             // live moves left it. A press without movement never removes.
+            // CR-010 — arrow tool: a press without movement draws nothing; otherwise
+            // the target end attaches when released on an anchor and stays free at the
+            // release cell. Both-free on one cell is refused by the model (criterion 1).
+            (Some(Gesture::ArrowDrag { from, moved, .. }), Some((col, row)), target) => {
+                if !moved {
+                    return EditOutcome::Nothing;
+                }
+                let to = match target {
+                    HitTarget::Anchor(object_id, name) => AnchorRef::new(object_id, &name)
+                        .map(ConnectorEndpoint::Attached)
+                        .unwrap_or_else(|_| ConnectorEndpoint::Free(CellPos::new(col, row))),
+                    _ => ConnectorEndpoint::Free(CellPos::new(col, row)),
+                };
+                let id = diagram.new_object_id();
+                match diagram.connect(ConnectorInstance::new(
+                    id.clone(),
+                    from,
+                    to,
+                    ConnectorStyle::Solid,
+                )) {
+                    Ok(()) => EditOutcome::ArrowPlaced { id },
+                    Err(_) => EditOutcome::Nothing, // defensive: endpoints were just hit-tested
+                }
+            }
+            (Some(Gesture::ArrowDrag { .. }), None, _) => EditOutcome::Nothing,
+            // CR-010 — endpoint drag: a press without movement cycles the tip style
+            // (S-029); otherwise the end attaches when released on an anchor and stays
+            // free at the release cell.
+            (
+                Some(Gesture::EndpointDrag {
+                    id, end, at, moved, ..
+                }),
+                cell,
+                target,
+            ) => {
+                if !moved {
+                    return self.cycle_tip(id, end, diagram);
+                }
+                match target {
+                    HitTarget::Anchor(object_id, name) => {
+                        let Ok(reference) = AnchorRef::new(object_id, &name) else {
+                            return EditOutcome::Nothing; // defensive: catalog names are valid
+                        };
+                        match diagram.set_endpoint(&id, end, ConnectorEndpoint::Attached(reference))
+                        {
+                            Ok(()) => EditOutcome::EndpointAttached { id, end },
+                            Err(_) => EditOutcome::Nothing,
+                        }
+                    }
+                    _ => {
+                        let to = match cell {
+                            Some((col, row)) if (col, row) != (at.x, at.y) => {
+                                CellPos::new(col, row)
+                            }
+                            _ => at,
+                        };
+                        if to == at {
+                            EditOutcome::Nothing
+                        } else if diagram
+                            .set_endpoint(&id, end, ConnectorEndpoint::Free(to))
+                            .is_ok()
+                        {
+                            EditOutcome::EndpointMoved { id, end, to }
+                        } else {
+                            EditOutcome::Nothing
+                        }
+                    }
+                }
+            }
             (
                 Some(Gesture::BendMove {
                     id,
@@ -593,6 +834,7 @@ impl EditorState {
                     next,
                     moved,
                 }),
+                _,
                 _,
             ) => {
                 if moved
@@ -619,6 +861,7 @@ impl EditorState {
                     added,
                     ..
                 }),
+                _,
                 _,
             ) => {
                 if added
@@ -712,7 +955,7 @@ mod tests {
             diagram,
             &catalog(),
             editor.selection.as_ref(),
-            None,
+            editor.anchor_exposure(),
             (col, row),
             routes,
         );
@@ -736,7 +979,7 @@ mod tests {
             diagram,
             &catalog(),
             editor.selection.as_ref(),
-            None,
+            editor.anchor_exposure(),
             (col, row),
             routes,
         );
@@ -755,17 +998,22 @@ mod tests {
         col: u32,
         row: u32,
         routes: &[(ObjectId, Vec<CellPos>)],
-        connecting_from: Option<&AnchorRef>,
     ) -> EditOutcome {
         let target = hit_target(
             diagram,
             &catalog(),
-            None,
-            connecting_from,
+            editor.selection.as_ref(),
+            editor.anchor_exposure(),
             (col, row),
             routes,
         );
-        editor.on_pointer(PointerEvent::Up { target }, diagram)
+        editor.on_pointer(
+            PointerEvent::Up {
+                cell: Some((col, row)),
+                target,
+            },
+            diagram,
+        )
     }
 
     fn first_shape(diagram: &Diagram) -> &ShapeInstance {
@@ -933,7 +1181,7 @@ mod tests {
         );
 
         // Release ends the drag; further moves do nothing.
-        up(&mut editor, &mut diagram, 10, 7, &[], None);
+        up(&mut editor, &mut diagram, 10, 7, &[]);
         assert_eq!(
             move_to(&mut editor, &mut diagram, 20, 7, &[]),
             EditOutcome::Nothing
@@ -1250,9 +1498,8 @@ mod tests {
         assert_eq!(diagram.len(), 2);
 
         // Release over s2's w anchor (20,2): the connector lands.
-        let source = AnchorRef::new(s1.clone(), "e").unwrap();
         assert_eq!(
-            up(&mut editor, &mut diagram, 20, 2, &[], Some(&source)),
+            up(&mut editor, &mut diagram, 20, 2, &[]),
             EditOutcome::Connected {
                 id: ObjectId::generated(3)
             }
@@ -1266,8 +1513,15 @@ mod tests {
                 _ => None,
             })
             .expect("the connector exists");
-        assert_eq!(connector.from, AnchorRef::new(s1, "e").unwrap());
-        assert_eq!(connector.to, AnchorRef::new(s2, "w").unwrap());
+        use diagram_model::anchors::ConnectorEndpoint;
+        assert_eq!(
+            connector.from,
+            ConnectorEndpoint::Attached(AnchorRef::new(s1, "e").unwrap())
+        );
+        assert_eq!(
+            connector.to,
+            ConnectorEndpoint::Attached(AnchorRef::new(s2, "w").unwrap())
+        );
         assert_eq!(connector.style, ConnectorStyle::Solid);
     }
 
@@ -1282,11 +1536,10 @@ mod tests {
             EditOutcome::Selected(s1.clone())
         );
         down(&mut editor, &mut diagram, 8, 2, &[]); // start connecting from e
-        let source = AnchorRef::new(s1, "e").unwrap();
 
         // Drop on empty space — no connector, gesture over.
         assert_eq!(
-            up(&mut editor, &mut diagram, 14, 9, &[], Some(&source)),
+            up(&mut editor, &mut diagram, 14, 9, &[]),
             EditOutcome::Nothing
         );
         assert_eq!(diagram.len(), 2);
@@ -1294,7 +1547,7 @@ mod tests {
         // A second attempt dropped on a shape body (not an anchor) also cancels.
         down(&mut editor, &mut diagram, 8, 2, &[]);
         assert_eq!(
-            up(&mut editor, &mut diagram, 24, 1, &[], Some(&source)),
+            up(&mut editor, &mut diagram, 24, 1, &[]),
             EditOutcome::Nothing
         );
         assert_eq!(diagram.len(), 2);
@@ -1311,14 +1564,268 @@ mod tests {
             EditOutcome::Selected(s1.clone())
         );
         down(&mut editor, &mut diagram, 8, 2, &[]); // start connecting from e
-        let source = AnchorRef::new(s1, "e").unwrap();
 
         // The source anchor is never reported as a target (hit_target excludes it)…
         assert_eq!(
-            up(&mut editor, &mut diagram, 8, 2, &[], Some(&source)),
+            up(&mut editor, &mut diagram, 8, 2, &[]),
             EditOutcome::Nothing
         );
         assert_eq!(diagram.len(), 2);
+    }
+
+    // ── S-031 (CR-010): arrow tool + endpoint drag ─────────────────────────────
+
+    /// Two boxes with a straight connector A.e → B.w, drawn through the real gesture
+    /// path (select A, drag its e anchor onto B's w anchor).
+    fn connected_boxes() -> (EditorState, Diagram) {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        down(&mut editor, &mut diagram, 1, 1, &[]); // select A
+        down(&mut editor, &mut diagram, 8, 2, &[]); // start connecting from A's e anchor
+        move_to(&mut editor, &mut diagram, 14, 2, &[]);
+        up(&mut editor, &mut diagram, 20, 2, &[]); // drop on B's w anchor
+        (editor, diagram)
+    }
+
+    fn connector_of(diagram: &Diagram) -> &ConnectorInstance {
+        diagram
+            .objects()
+            .iter()
+            .find_map(|o| match o {
+                Object::Connector(c) => Some(c),
+                _ => None,
+            })
+            .expect("the connector exists")
+    }
+
+    /// The connected scene with the target end detached to a free cell at (14,7).
+    fn free_endpoint_scene() -> (EditorState, Diagram, ObjectId) {
+        let (editor, mut diagram) = connected_boxes();
+        let c = connector_of(&diagram).id.clone();
+        diagram
+            .set_endpoint(
+                &c,
+                ConnectorEnd::Target,
+                ConnectorEndpoint::Free(CellPos::new(14, 7)),
+            )
+            .expect("detach is valid");
+        (editor, diagram, c)
+    }
+
+    /// Route read-model for the free-endpoint scene: A.e (8,2) → free end (14,7).
+    fn free_endpoint_routes(c: &ObjectId) -> Vec<(ObjectId, Vec<CellPos>)> {
+        vec![(c.clone(), vec![CellPos::new(8, 2), CellPos::new(14, 7)])]
+    }
+
+    #[test]
+    fn arrow_tool_draws_a_standalone_free_arrow() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        editor.select_arrow_tool();
+
+        // Press on empty space: the source end stays free at the press cell…
+        assert_eq!(
+            down(&mut editor, &mut diagram, 3, 5, &[]),
+            EditOutcome::Nothing
+        );
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 14, 7, &[]),
+            EditOutcome::Nothing
+        );
+        // …and the drop cell becomes the free target end.
+        let outcome = up(&mut editor, &mut diagram, 14, 7, &[]);
+        assert!(matches!(outcome, EditOutcome::ArrowPlaced { .. }));
+
+        let connector = connector_of(&diagram);
+        assert_eq!(connector.from, ConnectorEndpoint::Free(CellPos::new(3, 5)));
+        assert_eq!(connector.to, ConnectorEndpoint::Free(CellPos::new(14, 7)));
+    }
+
+    #[test]
+    fn arrow_tool_snaps_its_ends_to_shape_anchors() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+        let s2 = ObjectId::generated(2);
+        editor.select_arrow_tool();
+
+        // Press exactly on A's e anchor: the source end attaches…
+        assert_eq!(
+            down(&mut editor, &mut diagram, 8, 2, &[]),
+            EditOutcome::Nothing
+        );
+        move_to(&mut editor, &mut diagram, 14, 2, &[]);
+        // …and dropping on B's w anchor attaches the target end.
+        let outcome = up(&mut editor, &mut diagram, 20, 2, &[]);
+        assert!(matches!(outcome, EditOutcome::ArrowPlaced { .. }));
+
+        let connector = connector_of(&diagram);
+        assert_eq!(
+            connector.from,
+            ConnectorEndpoint::Attached(AnchorRef::new(s1, "e").unwrap())
+        );
+        assert_eq!(
+            connector.to,
+            ConnectorEndpoint::Attached(AnchorRef::new(s2, "w").unwrap())
+        );
+    }
+
+    #[test]
+    fn arrow_tool_press_without_movement_draws_nothing() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        editor.select_arrow_tool();
+
+        assert_eq!(
+            down(&mut editor, &mut diagram, 5, 5, &[]),
+            EditOutcome::Nothing
+        );
+        assert_eq!(
+            up(&mut editor, &mut diagram, 5, 5, &[]),
+            EditOutcome::Nothing
+        );
+        assert_eq!(diagram.len(), 2, "no connector was created");
+    }
+
+    #[test]
+    fn arrow_tool_refuses_a_zero_length_standalone_arrow() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        editor.select_arrow_tool();
+
+        // Drag out and back onto the press cell: both ends free at one cell — the
+        // model's minimum-1-cell rule refuses it (AC1).
+        assert_eq!(
+            down(&mut editor, &mut diagram, 5, 5, &[]),
+            EditOutcome::Nothing
+        );
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 6, 5, &[]),
+            EditOutcome::Nothing
+        );
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 5, 5, &[]),
+            EditOutcome::Nothing
+        );
+        assert_eq!(
+            up(&mut editor, &mut diagram, 5, 5, &[]),
+            EditOutcome::Nothing
+        );
+        assert_eq!(diagram.len(), 2, "the zero-length arrow was refused");
+    }
+
+    #[test]
+    fn pressing_a_free_endpoint_without_moving_cycles_its_tip() {
+        let (mut editor, mut diagram, c) = free_endpoint_scene();
+        let routes = free_endpoint_routes(&c);
+
+        // Press on the free endpoint cell: selects + starts the endpoint drag…
+        assert_eq!(
+            down(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::Selected(c.clone())
+        );
+        // …and a release without movement cycles the tip style (S-029 preserved):
+        // the default hollow arrow advances to the empty rhombus.
+        assert_eq!(
+            up(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::TipChanged {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+                tip: TipStyle::EmptyRhombus,
+            }
+        );
+    }
+
+    #[test]
+    fn dragging_a_free_endpoint_moves_it_live() {
+        let (mut editor, mut diagram, c) = free_endpoint_scene();
+        let routes = free_endpoint_routes(&c);
+
+        assert_eq!(
+            down(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::Selected(c.clone())
+        );
+        // Each move re-positions the end (AC6: a free end follows the pointer).
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 18, 9, &routes),
+            EditOutcome::EndpointMoved {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+                to: CellPos::new(18, 9),
+            }
+        );
+        // Releasing where it already sits changes nothing.
+        assert_eq!(
+            up(&mut editor, &mut diagram, 18, 9, &routes),
+            EditOutcome::Nothing
+        );
+        assert_eq!(
+            connector_of(&diagram).to,
+            ConnectorEndpoint::Free(CellPos::new(18, 9))
+        );
+    }
+
+    #[test]
+    fn dropping_a_free_endpoint_on_an_anchor_attaches_it() {
+        let (mut editor, mut diagram, c) = free_endpoint_scene();
+        let routes = free_endpoint_routes(&c);
+        let s2 = ObjectId::generated(2);
+
+        assert_eq!(
+            down(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::Selected(c.clone())
+        );
+        // Moving over B's w anchor re-positions the end there…
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 20, 2, &routes),
+            EditOutcome::EndpointMoved {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+                to: CellPos::new(20, 2),
+            }
+        );
+        // …and the release snaps it onto the anchor (AC6).
+        assert_eq!(
+            up(&mut editor, &mut diagram, 20, 2, &routes),
+            EditOutcome::EndpointAttached {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+            }
+        );
+        assert_eq!(
+            connector_of(&diagram).to,
+            ConnectorEndpoint::Attached(AnchorRef::new(s2, "w").unwrap())
+        );
+    }
+
+    #[test]
+    fn dragging_an_attached_endpoint_off_its_anchor_detaches_it() {
+        let (mut editor, mut diagram) = connected_boxes();
+        let c = connector_of(&diagram).id.clone();
+        let routes = vec![(c.clone(), vec![CellPos::new(8, 2), CellPos::new(20, 2)])];
+
+        // Press on the attached target's anchor cell: endpoint drag starts…
+        assert_eq!(
+            down(&mut editor, &mut diagram, 20, 2, &routes),
+            EditOutcome::Selected(c.clone())
+        );
+        // …and the first move off the anchor detaches it (AC6).
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::EndpointDetached {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+            }
+        );
+        // Releasing on empty space leaves it free at the drop cell.
+        assert_eq!(
+            up(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::Nothing
+        );
+        assert_eq!(
+            connector_of(&diagram).to,
+            ConnectorEndpoint::Free(CellPos::new(14, 7))
+        );
     }
 
     // ── S-013: delete + escape ───────────────────────────────────────────────────
@@ -1331,7 +1838,7 @@ mod tests {
         let s2 = ObjectId::generated(2);
         // Two connectors out of s1 (e→w on both… use distinct anchors for validity).
         diagram
-            .connect(ConnectorInstance::new(
+            .connect(ConnectorInstance::between(
                 diagram.new_object_id(),
                 AnchorRef::new(s1.clone(), "e").unwrap(),
                 AnchorRef::new(s2.clone(), "w").unwrap(),
@@ -1339,7 +1846,7 @@ mod tests {
             ))
             .expect("valid connector");
         diagram
-            .connect(ConnectorInstance::new(
+            .connect(ConnectorInstance::between(
                 diagram.new_object_id(),
                 AnchorRef::new(s1.clone(), "n").unwrap(),
                 AnchorRef::new(s2.clone(), "s").unwrap(),
@@ -1650,7 +2157,7 @@ mod tests {
         let mut diagram = two_boxes();
         let c = diagram.new_object_id(); // obj-3
         diagram
-            .connect(ConnectorInstance::new(
+            .connect(ConnectorInstance::between(
                 c.clone(),
                 AnchorRef::new(ObjectId::generated(1), "e").expect("valid anchor"),
                 AnchorRef::new(ObjectId::generated(2), "w").expect("valid anchor"),
@@ -1698,7 +2205,7 @@ mod tests {
 
         // Drop off the straight line between the neighbors: the bend stays.
         assert_eq!(
-            up(&mut editor, &mut diagram, 16, 7, &routes, None),
+            up(&mut editor, &mut diagram, 16, 7, &routes),
             EditOutcome::Nothing
         );
         assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(15, 5)]);
@@ -1721,7 +2228,7 @@ mod tests {
         );
         // Drop: collinear with both neighbors → removed (AC6).
         assert_eq!(
-            up(&mut editor, &mut diagram, 14, 2, &routes, None),
+            up(&mut editor, &mut diagram, 14, 2, &routes),
             EditOutcome::BendRemoved {
                 id: c.clone(),
                 index: 0
@@ -1743,7 +2250,7 @@ mod tests {
             EditOutcome::Selected(c.clone())
         );
         assert_eq!(
-            up(&mut editor, &mut diagram, 14, 2, &routes, None),
+            up(&mut editor, &mut diagram, 14, 2, &routes),
             EditOutcome::Nothing
         );
         assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(14, 2)]);
@@ -1787,7 +2294,7 @@ mod tests {
 
         // Drop off the neighbor line: stays.
         assert_eq!(
-            up(&mut editor, &mut diagram, 13, 8, &routes, None),
+            up(&mut editor, &mut diagram, 13, 8, &routes),
             EditOutcome::Nothing
         );
         assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(13, 8)]);
@@ -1816,7 +2323,7 @@ mod tests {
             }
         );
         assert_eq!(
-            up(&mut editor, &mut diagram, 11, 2, &routes, None),
+            up(&mut editor, &mut diagram, 11, 2, &routes),
             EditOutcome::BendRemoved {
                 id: c.clone(),
                 index: 0

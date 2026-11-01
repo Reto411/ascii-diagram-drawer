@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 
 use diagram_model::Diagram;
-use diagram_model::anchors::AnchorRef;
+use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::objects::{
     ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance, TipStyle,
@@ -78,7 +78,7 @@ fn diagram(scale: u32, objects: Vec<Object>) -> Diagram {
 /// Adds one solid connector to a diagram built by `diagram` (S-007, ADR 013): endpoint
 /// ids are the generated ids of the scenario's shapes; the connector itself is id 90.
 fn linked(mut d: Diagram, from_id: u32, from_anchor: &str, to_id: u32, to_anchor: &str) -> Diagram {
-    d.connect(ConnectorInstance::new(
+    d.connect(ConnectorInstance::between(
         ObjectId::generated(90),
         AnchorRef::new(ObjectId::generated(from_id), from_anchor).expect("valid anchor"),
         AnchorRef::new(ObjectId::generated(to_id), to_anchor).expect("valid anchor"),
@@ -98,7 +98,7 @@ fn linked_bent(
     bends: Vec<CellPos>,
 ) -> Diagram {
     d.connect(
-        ConnectorInstance::new(
+        ConnectorInstance::between(
             ObjectId::generated(90),
             AnchorRef::new(ObjectId::generated(from_id), from_anchor).expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(to_id), to_anchor).expect("valid anchor"),
@@ -121,7 +121,7 @@ fn linked_tips(
     tips: (TipStyle, TipStyle),
 ) -> Diagram {
     d.connect(
-        ConnectorInstance::new(
+        ConnectorInstance::between(
             ObjectId::generated(id),
             AnchorRef::new(ObjectId::generated(from_id), from_anchor).expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(to_id), to_anchor).expect("valid anchor"),
@@ -130,6 +130,18 @@ fn linked_tips(
         .with_tips(tips.0, tips.1),
     )
     .expect("endpoints are placed shapes");
+    d
+}
+
+/// Adds one solid connector between arbitrary endpoints (CR-010 / ADR 013 v6) — id 90.
+fn linked_endpoints(mut d: Diagram, from: ConnectorEndpoint, to: ConnectorEndpoint) -> Diagram {
+    d.connect(ConnectorInstance::new(
+        ObjectId::generated(90),
+        from,
+        to,
+        ConnectorStyle::Solid,
+    ))
+    .expect("endpoints are valid");
     d
 }
 
@@ -334,6 +346,28 @@ fn scenarios() -> Vec<(&'static str, Diagram)> {
                 "e",
                 1,
                 "w",
+            ),
+        ),
+        // CR-010: a standalone arrow — both ends free at explicit cells. No side
+        // preference on either end, so the L corner is vertical-first (from.x, to.y).
+        (
+            "standalone-arrow",
+            linked_endpoints(
+                diagram(1, Vec::new()),
+                ConnectorEndpoint::Free(CellPos::new(1, 1)),
+                ConnectorEndpoint::Free(CellPos::new(6, 4)),
+            ),
+        ),
+        // CR-010: mixed ends — the source is attached to the box's east anchor and
+        // follows it; the target is free at an explicit cell.
+        (
+            "mixed-endpoints",
+            linked_endpoints(
+                diagram(1, vec![box_obj(0, "A", 0, 0, 5, 3)]),
+                ConnectorEndpoint::Attached(
+                    AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
+                ),
+                ConnectorEndpoint::Free(CellPos::new(9, 6)),
             ),
         ),
     ]

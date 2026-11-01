@@ -1,9 +1,10 @@
-//! Connector placement (ADR 013): resolve both endpoint anchors to cells, route a
+//! Connector placement (ADR 013, v6): resolve both endpoints to cells — attached ends via
+//! their shape anchor, free ends as-is (CR-010) — then route a
 //! straight or single-corner L between them (or the declared manual-bend polyline,
 //! CR-007 / ADR 013 v4), and stamp per-end tips — by default an arrowhead at the
 //! target end (CR-008 / ADR 013 v5: hollow arrow, empty or filled rhombus, or none).
 //!
-//! A connector stores no geometry — its endpoints are anchor *references* re-resolved on
+//! A connector stores no geometry — attached endpoints are anchor *references* re-resolved on
 //! every render (FR9), so moving or resizing a shape moves its connectors for free and
 //! rendering `{model, then move_object}` is byte-identical to rendering the moved model.
 //! Route cells are stamped in document order like any other object: axis-aligned segments
@@ -13,7 +14,7 @@
 //! stamped last — it never changes edge resolution of neighboring cells either.
 
 use diagram_model::Diagram;
-use diagram_model::anchors::AnchorRef;
+use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::objects::{ConnectorInstance, Object, ObjectId, TipStyle};
 use shape_registry::{GeometryKind, ShapeRegistry, min_size};
@@ -67,9 +68,27 @@ struct Endpoint {
 fn resolve_endpoint(
     diagram: &Diagram,
     registry: &ShapeRegistry,
+    endpoint: &ConnectorEndpoint,
+) -> Result<Endpoint, RenderError> {
+    match endpoint {
+        // Free ends (CR-010 / ADR 013 v6): plain model-space coordinates — no shape
+        // lookup, no side preference for corner choice.
+        ConnectorEndpoint::Free(pos) => Ok(Endpoint {
+            cell: *pos,
+            side: None,
+        }),
+        ConnectorEndpoint::Attached(reference) => {
+            resolve_attached_endpoint(diagram, registry, reference)
+        }
+    }
+}
+
+fn resolve_attached_endpoint(
+    diagram: &Diagram,
+    registry: &ShapeRegistry,
     reference: &AnchorRef,
 ) -> Result<Endpoint, RenderError> {
-    // The model guarantees endpoints exist and are shapes (Diagram::connect validates);
+    // The model guarantees attached ends exist and are shapes (Diagram::connect validates);
     // the pipeline is the last line of defense and fails loudly if that breaks.
     let object = diagram.get(reference.object()).expect(
         "connector endpoint must reference an existing object (Diagram::connect enforces this)",
@@ -436,6 +455,7 @@ mod tests {
 
     use super::*;
     use crate::place::place;
+    use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
     use diagram_model::geometry::{CellPos as MPos, CellSize as MSize};
     use diagram_model::objects::{ConnectorEnd, ConnectorStyle, ObjectId, ShapeInstance, TipStyle};
     use shape_registry::{AnchorSet, Collection, GeometryKind, ShapeType, TemplateGrid};
@@ -465,7 +485,8 @@ mod tests {
     fn endpoint(d: &Diagram, registry: &ShapeRegistry, object_id: u32, anchor: &str) -> Endpoint {
         let reference =
             AnchorRef::new(ObjectId::generated(object_id), anchor).expect("valid anchor");
-        resolve_endpoint(d, registry, &reference).expect("resolvable endpoint")
+        resolve_endpoint(d, registry, &ConnectorEndpoint::Attached(reference))
+            .expect("resolvable endpoint")
     }
 
     #[test]
@@ -585,7 +606,12 @@ mod tests {
         let mut d = Diagram::new();
         d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
         let reference = AnchorRef::new(ObjectId::generated(0), "x").expect("valid anchor");
-        let err = resolve_endpoint(&d, &ShapeRegistry::builtin(), &reference).unwrap_err();
+        let err = resolve_endpoint(
+            &d,
+            &ShapeRegistry::builtin(),
+            &ConnectorEndpoint::Attached(reference),
+        )
+        .unwrap_err();
         assert_eq!(
             err,
             RenderError::UnknownAnchor {
@@ -627,7 +653,8 @@ mod tests {
         let mut d = Diagram::new();
         d.place_shape(s).unwrap();
         let reference = AnchorRef::new(ObjectId::generated(0), "out").expect("valid anchor");
-        let err = resolve_endpoint(&d, &registry, &reference).unwrap_err();
+        let err =
+            resolve_endpoint(&d, &registry, &ConnectorEndpoint::Attached(reference)).unwrap_err();
         assert!(
             matches!(err, RenderError::AnchorOutsideExtent { .. }),
             "{err:?}"
@@ -668,6 +695,22 @@ mod tests {
         d.place_shape(s).unwrap();
         assert_eq!(endpoint(&d, &registry, 0, "center").side, None);
         assert_eq!(endpoint(&d, &registry, 0, "corner").side, None);
+    }
+
+    #[test]
+    fn free_endpoint_resolves_to_its_cell_without_a_side() {
+        let d = Diagram::new();
+        let pos = MPos::new(3, 7);
+        let endpoint =
+            resolve_endpoint(&d, &ShapeRegistry::builtin(), &ConnectorEndpoint::Free(pos))
+                .expect("free endpoints always resolve");
+        assert_eq!(
+            endpoint,
+            Endpoint {
+                cell: pos,
+                side: None
+            }
+        );
     }
 
     #[test]
@@ -739,7 +782,7 @@ mod tests {
         d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
         d.place_shape(box_at(1, 14, 0, 9, 5)).unwrap();
         let id = ObjectId::generated(2);
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             id.clone(),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -765,7 +808,7 @@ mod tests {
         d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
         d.place_shape(box_at(1, 14, 0, 9, 5)).unwrap();
         let id = ObjectId::generated(2);
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             id.clone(),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -789,7 +832,7 @@ mod tests {
         d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
         d.place_shape(box_at(1, 14, 0, 9, 5)).unwrap();
         let id = ObjectId::generated(2);
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             id.clone(),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -813,7 +856,7 @@ mod tests {
         d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
         d.place_shape(box_at(1, 10, 0, 9, 5)).unwrap();
         let id = ObjectId::generated(2);
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             id.clone(),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -838,7 +881,7 @@ mod tests {
         let mut d = Diagram::new();
         d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
         d.place_shape(box_at(1, 14, 0, 9, 5)).unwrap();
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             ObjectId::generated(2),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -863,7 +906,7 @@ mod tests {
         // A 1x1 box: every standard anchor maps to the single cell, so e->n is coincident.
         let mut d = Diagram::new();
         d.place_shape(box_at(0, 0, 0, 1, 1)).unwrap();
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             ObjectId::generated(1),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(0), "n").expect("valid anchor"),
@@ -889,7 +932,7 @@ mod tests {
         let mut d = Diagram::new();
         d.place_shape(box_at(0, 0, 0, 1, 1)).unwrap();
         d.place_shape(box_at(1, 3, 0, 1, 1)).unwrap();
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             ObjectId::generated(2),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -914,7 +957,7 @@ mod tests {
         let mut d = Diagram::new();
         d.place_shape(box_at(0, 0, 0, 1, 1)).unwrap();
         d.place_shape(box_at(1, 1, 0, 1, 1)).unwrap();
-        d.connect(ConnectorInstance::new(
+        d.connect(ConnectorInstance::between(
             ObjectId::generated(2),
             AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
             AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
@@ -1034,7 +1077,7 @@ mod tests {
         d.place_shape(box_at(0, 0, 0, 9, 5)).unwrap();
         d.place_shape(box_at(1, 14, 6, 9, 5)).unwrap();
         d.connect(
-            ConnectorInstance::new(
+            ConnectorInstance::between(
                 ObjectId::generated(2),
                 AnchorRef::new(ObjectId::generated(0), "e").expect("valid anchor"),
                 AnchorRef::new(ObjectId::generated(1), "w").expect("valid anchor"),
