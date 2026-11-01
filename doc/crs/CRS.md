@@ -15,6 +15,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | ID | Title | Priority | Status | File |
 |----|-------|----------|--------|------|
 | CR-019 | Window close button at the top right (rightmost of the app-bar controls) | low | proposed | [CR-019-close-button-at-top-right.md](CR-019-close-button-at-top-right.md) |
+| CR-020 | Arrow object behavior and Visio-style line handles — move by drag, visible endpoint/bend handles, double-click bend insertion, in-canvas tip dropdown | high | proposed | [CR-020-arrow-object-behavior-and-line-handles.md](CR-020-arrow-object-behavior-and-line-handles.md) |
 
 ## Closed
 
