@@ -540,11 +540,11 @@ impl DrawingApp {
         self.editor.editing.is_some()
     }
 
-    /// The currently selected object, if any (test support).
+    /// The current selection set (S-035 FR20) — empty when nothing is selected.
     #[cfg(test)]
     #[must_use]
-    pub fn selection(&self) -> Option<diagram_model::objects::ObjectId> {
-        self.editor.selection.clone()
+    pub fn selection(&self) -> &std::collections::BTreeSet<diagram_model::objects::ObjectId> {
+        &self.editor.selection
     }
 
     /// Submits the inline path prompt: opens or saves-as depending on its kind.
@@ -761,10 +761,27 @@ impl DrawingApp {
     /// detection) and returns what changed — the seam between egui input and the
     /// pure gesture machine, unit-testable without a window. `hit` is the canvas cell
     /// plus the interactive target under it (see [`crate::canvas::hit_target`]).
+    /// Modifiers are off — use [`Self::handle_pointer_frame_additive`] for presses
+    /// with Ctrl/Shift held (S-035 FR20). The real UI always goes through the
+    /// additive variant, so this convenience wrapper exists only for tests.
+    #[cfg(test)]
     pub fn handle_pointer_frame(
         &mut self,
         held: bool,
         hit: Option<((u32, u32), HitTarget)>,
+    ) -> EditOutcome {
+        self.handle_pointer_frame_additive(held, hit, false)
+    }
+
+    /// [`Self::handle_pointer_frame`] with the press frame's modifier state (S-035
+    /// FR20): `additive` true when Ctrl or Shift was held while the primary button
+    /// went down — a body click then extends/toggles the selection instead of
+    /// replacing it, and empty space no longer deselects.
+    pub fn handle_pointer_frame_additive(
+        &mut self,
+        held: bool,
+        hit: Option<((u32, u32), HitTarget)>,
+        additive: bool,
     ) -> EditOutcome {
         let outcome = match (held, self.pointer_held) {
             (true, false) => match hit {
@@ -772,6 +789,7 @@ impl DrawingApp {
                     PointerEvent::Down {
                         cell: (col, row),
                         target,
+                        additive,
                     },
                     &mut self.diagram,
                 ),
@@ -1053,24 +1071,22 @@ impl DrawingApp {
             );
         }
 
-        // Selection overlay around the selected object's bounds — shapes and free text
-        // (S-018; text uses its hit extent).
-        let selected_extent =
-            self.editor
-                .selection
-                .as_ref()
-                .and_then(|id| match self.diagram.get(id) {
-                    Some(Object::Shape(shape)) => Some((shape.pos, shape.size)),
-                    Some(Object::Text(text)) => {
-                        let (w, h) = crate::canvas::text_hit_extent(text);
-                        Some((
-                            text.pos,
-                            CellSize::new(w, h).expect("hit extent is a valid size"),
-                        ))
-                    }
-                    _ => None,
-                });
-        if let Some((pos, size)) = selected_extent {
+        // Selection overlay around every selected member's bounds (S-035 FR20) —
+        // shapes and free text (S-018; text uses its hit extent).
+        for id in &self.editor.selection {
+            let Some((pos, size)) = (match self.diagram.get(id) {
+                Some(Object::Shape(shape)) => Some((shape.pos, shape.size)),
+                Some(Object::Text(text)) => {
+                    let (w, h) = crate::canvas::text_hit_extent(text);
+                    Some((
+                        text.pos,
+                        CellSize::new(w, h).expect("hit extent is a valid size"),
+                    ))
+                }
+                _ => None, // connectors have no bounds of their own
+            }) else {
+                continue;
+            };
             let (x, y, w, h) = vp.cell_block(pos.x, pos.y, size.width, size.height);
             painter.rect_stroke(
                 off_rect(egui::Rect::from_min_max(
@@ -1120,7 +1136,7 @@ impl DrawingApp {
                 hit_target(
                     &self.diagram,
                     self.services.catalog.as_ref(),
-                    self.editor.selection.as_ref(),
+                    &self.editor.selection,
                     self.editor.anchor_exposure(),
                     (col, row),
                     &routes,
@@ -1161,7 +1177,12 @@ impl DrawingApp {
             self.status = "Action cancelled".to_owned();
         }
 
-        if let Some(message) = status_for(self.handle_pointer_frame(held, hit.clone())) {
+        // S-035 FR20 — Ctrl/Shift held at the press frame make a body click additive
+        // (extend/toggle the selection instead of replacing it).
+        let additive = ctx.input(|i| i.modifiers.ctrl || i.modifiers.shift);
+        if let Some(message) =
+            status_for(self.handle_pointer_frame_additive(held, hit.clone(), additive))
+        {
             self.status = message;
         }
 
@@ -1609,7 +1630,7 @@ fn draw_overlays(
     for overlay in crate::canvas::overlays(
         &app.diagram,
         app.services.catalog.as_ref(),
-        app.editor.selection.as_ref(),
+        &app.editor.selection,
         app.editor.anchor_exposure(),
     ) {
         match overlay {
@@ -2370,6 +2391,10 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
         EditOutcome::Editing { id } => Some(format!("Editing {id} — Enter commits, Esc cancels")),
         EditOutcome::Edited { id } => Some(format!("Text updated [{id}]")),
         EditOutcome::Moved { id, to } => Some(format!("{id} moved to ({}, {})", to.x, to.y)),
+        EditOutcome::GroupMoved { count } => {
+            let word = if count == 1 { "object" } else { "objects" };
+            Some(format!("Moved {count} {word}"))
+        }
         EditOutcome::Resized { id, to } => {
             Some(format!("{id} resized to {}×{}", to.width, to.height))
         }
@@ -2404,6 +2429,19 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
             } else {
                 format!("Deleted {id} and {connectors} connector(s)")
             })
+        }
+        EditOutcome::BulkDeleted { count, removed } => {
+            let word = if count == 1 { "object" } else { "objects" };
+            let connectors = removed.saturating_sub(count);
+            Some(if connectors == 0 {
+                format!("Deleted {count} {word}")
+            } else {
+                format!("Deleted {count} {word} and {connectors} connector(s)")
+            })
+        }
+        EditOutcome::SelectionChanged { count } => {
+            let word = if count == 1 { "object" } else { "objects" };
+            Some(format!("{count} {word} selected"))
         }
         EditOutcome::Cancelled => Some("Action cancelled".to_owned()),
     }

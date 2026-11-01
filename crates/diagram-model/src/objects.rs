@@ -15,7 +15,7 @@ use crate::invariants::{ModelError, TokenField, validate_single_token};
 ///
 /// Ids are single tokens (non-empty, no whitespace) because they are referenced by name in the
 /// line-based `.ad` format (connectors reference shape ids) and must survive round-trips.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ObjectId(String);
 
 impl ObjectId {

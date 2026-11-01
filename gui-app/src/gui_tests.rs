@@ -136,6 +136,16 @@ impl Gui {
         self.frame()
     }
 
+    /// A full click with Ctrl held (S-035 FR20): the modifier event is pumped on its
+    /// own frame before the press and dropped afterwards, so the app's modifier probe
+    /// sees Ctrl exactly on the press frame.
+    fn ctrl_click_at(&mut self, pos: Pos2) -> egui::FullOutput {
+        let _ = self.pump(vec![Event::ModifiersChanged(Modifiers::CTRL)]);
+        let out = self.click_at(pos);
+        let _ = self.pump(vec![Event::ModifiersChanged(Modifiers::default())]);
+        out
+    }
+
     /// Two quick clicks at `pos` (double-click).
     fn double_click_at(&mut self, pos: Pos2) -> egui::FullOutput {
         let _ = self.click_at(pos);
@@ -714,6 +724,75 @@ fn selection_outline_covers_exactly_the_selected_cells() {
     assert!(close(sel.max.y, expected.max.y, 2.0), "outline bottom");
 }
 
+/// S-035 AC1–AC3 (FR20) through the real UI: Ctrl+click extends the selection to a
+/// group (status bar reports the set size, both members get outlines), and dragging
+/// any member moves the WHOLE group by the same delta — relative positions kept.
+#[test]
+fn ctrl_click_builds_a_group_and_drag_moves_it() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 2, 2); // A at (2,2), spans cols 2..10
+    // Second box B at (15,2): sidebar label again, then the target cell.
+    let out = gui.frame();
+    let label = find_text_exact(&out, "box").expect("sidebar lists the box template");
+    let _ = gui.click_at(label.center());
+    let _ = gui.click_at(gui.cell_center(min, 15, 2)); // B at (15,2), spans cols 15..23
+    assert_eq!(gui.object_count(), 2);
+
+    // Ctrl+click A's body center (6,4): extends the selection to {A, B}.
+    let out = gui.ctrl_click_at(gui.cell_center(min, 6, 4));
+    assert_eq!(
+        gui.app.selection().len(),
+        2,
+        "Ctrl+click extended the selection"
+    );
+    assert!(
+        find_text_exact(&out, "2 objects selected").is_some(),
+        "status bar reports the set size"
+    );
+    // Both members carry a selection outline.
+    let outlines = stroked_rects(&out)
+        .into_iter()
+        .filter(|(_, c)| *c == SELECTION)
+        .count();
+    assert_eq!(outlines, 2, "one outline per selected member");
+
+    // Drag B from (19,4) to (27,6): model delta (+8,+2) for the whole group.
+    let _ = gui.drag(gui.cell_center(min, 19, 4), gui.cell_center(min, 27, 6));
+    let mut positions: Vec<(u32, u32)> = gui
+        .app
+        .diagram
+        .objects()
+        .iter()
+        .filter_map(|o| match o {
+            Object::Shape(s) => Some((s.pos.x, s.pos.y)),
+            _ => None,
+        })
+        .collect();
+    positions.sort();
+    assert_eq!(
+        positions,
+        vec![(10, 4), (23, 4)],
+        "both members moved by the same (+8,+2) delta"
+    );
+}
+
+/// S-035 AC1 (FR20) — a Ctrl+click on empty canvas space leaves the selection
+/// untouched; only a plain click deselects.
+#[test]
+fn ctrl_click_on_empty_space_keeps_the_selection() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 4, 2);
+
+    let _ = gui.ctrl_click_at(gui.cell_center(min, 30, 15)); // far from the box
+    assert_eq!(
+        gui.app.selection().len(),
+        1,
+        "Ctrl+click on empty space keeps it"
+    );
+}
+
 /// Regression (B-003): at scale ×N the selection outline, the rendered text and
 /// hit-testing must all agree on the FR8 layout — a model cell renders as an N×N
 /// block starting at (col·N, row·N), so the outline covers exactly the drawn extent
@@ -737,7 +816,10 @@ fn selection_outline_and_hit_test_follow_the_scaled_extent() {
 
     // Select by clicking the body.
     let _ = gui.click_at(gui.cell_center(min, 10, 3));
-    assert!(gui.app.selection().is_some(), "body click selects the text");
+    assert!(
+        !gui.app.selection().is_empty(),
+        "body click selects the text"
+    );
 
     // Scale ×2 via the top bar (a toolbar click keeps the selection).
     let out = gui.click_topbar_button("+");
@@ -775,11 +857,11 @@ fn selection_outline_and_hit_test_follow_the_scaled_extent() {
         min.x + MARGIN + 41.0 * cw,
         min.y + MARGIN + 17.0 * ch,
     ));
-    assert!(gui.app.selection().is_none(), "empty-cell click deselects");
+    assert!(gui.app.selection().is_empty(), "empty-cell click deselects");
     let right_half = Pos2::new(min.x + MARGIN + 27.0 * cw, min.y + MARGIN + 7.0 * ch);
     let _ = gui.click_at(right_half);
     assert!(
-        gui.app.selection().is_some(),
+        !gui.app.selection().is_empty(),
         "clicking the scaled text selects it"
     );
 
@@ -2157,6 +2239,20 @@ fn visual_dump() {
         let out = gui.frame();
         let out = gui.click_color_row_action(&out, 0, "Set");
         shot(&gui.ctx, &out, "13-color-dialog-filled.png");
+    }
+
+    // 14. Multi-selection (S-035 FR20): two boxes selected via Ctrl+click — one
+    // outline per member, anchor dots on both, no resize handle.
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let min = gui.canvas_min();
+        gui.place_box_via_ui(min, 2, 2);
+        let out = gui.frame();
+        let label = find_text_exact(&out, "box").expect("sidebar lists the box template");
+        let _ = gui.click_at(label.center());
+        let _ = gui.click_at(gui.cell_center(min, 15, 2));
+        let out = gui.ctrl_click_at(gui.cell_center(min, 6, 4));
+        shot(&gui.ctx, &out, "14-multi-select.png");
     }
 
     eprintln!("visual dump written to {dir:?}");

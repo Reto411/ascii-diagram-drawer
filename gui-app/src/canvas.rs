@@ -3,6 +3,8 @@
 //!
 //! No egui types here — plain `f32`/`u32` math, unit-testable without a window.
 
+use std::collections::BTreeSet;
+
 use diagram_model::Diagram;
 use diagram_model::anchors::AnchorRef;
 use diagram_model::geometry::{CellPos, CellSize};
@@ -60,7 +62,7 @@ pub enum HitTarget {
 /// Which shape anchors are exposed to the pointer under the current gesture (S-031).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnchorExposure<'a> {
-    /// Selection mode: only the selected shape's anchors.
+    /// Selection mode: the anchors of every selected shape (S-035 FR20).
     SelectionOnly,
     /// A connection is in flight from `source`: every anchor except the source itself
     /// is a drop target — nothing else on the canvas is offered.
@@ -109,11 +111,13 @@ pub fn anchor_cell(
 /// The interactive target under a model cell (S-013).
 ///
 /// Priority (top first):
-/// 1. Anchor exposure per [`AnchorExposure`]: the selected shape's anchors in
-///    selection mode, every anchor except the source while connecting (nothing else
-///    is offered — that is what makes "drop outside an anchor cancels" work), or
-///    every shape's anchors while drawing an arrow / dragging an endpoint (S-031).
-/// 2. The selected shape's bottom-right resize cell (selection mode only; S-024 AC5).
+/// 1. Anchor exposure per [`AnchorExposure`]: the selected shapes' anchors in
+///    selection mode (every member of the set — S-035 FR20), every anchor except the
+///    source while connecting (nothing else is offered — that is what makes "drop
+///    outside an anchor cancels" work), or every shape's anchors while drawing an
+///    arrow / dragging an endpoint (S-031).
+/// 2. The selected shape's bottom-right resize cell — only when exactly one shape is
+///    selected (selection mode; S-024 AC5, S-035 keeps resize single-selection).
 /// 3. Connector endpoint cells and visible tip glyph cells (CR-010) — above shape
 ///    bodies, below the selected shape's anchors/resize handle; topmost connector
 ///    first. A declared bend on the same cell keeps winning over them.
@@ -125,20 +129,21 @@ pub fn anchor_cell(
 pub fn hit_target(
     diagram: &Diagram,
     catalog: &dyn ShapeCatalog,
-    selection: Option<&ObjectId>,
+    selection: &BTreeSet<ObjectId>,
     exposure: AnchorExposure<'_>,
     cell: (u32, u32),
     connector_routes: &[(ObjectId, Vec<CellPos>)],
 ) -> HitTarget {
     let (col, row) = cell;
 
-    // Anchor targets — which anchors are exposed depends on the gesture (S-031).
+    // Anchor targets — which anchors are exposed depends on the gesture (S-031);
+    // in selection mode that is every selected shape (S-035 FR20).
     for object in diagram.objects() {
         let Object::Shape(shape) = object else {
             continue;
         };
         let allowed = match exposure {
-            AnchorExposure::SelectionOnly => selection.is_some_and(|id| id == &shape.id),
+            AnchorExposure::SelectionOnly => selection.contains(&shape.id),
             AnchorExposure::Connect { source } => shape.id != *source.object(),
             AnchorExposure::All => true,
         };
@@ -166,7 +171,10 @@ pub fn hit_target(
         return HitTarget::Empty;
     }
 
-    if let Some(selected_id) = selection
+    // The resize handle is offered only for a single-shape selection (S-035 AC5 —
+    // group resize is out of scope; S-024's one-handle rule stays the base case).
+    if let Some(selected_id) = selection.iter().next()
+        && selection.len() == 1
         && let Some(Object::Shape(shape)) = diagram.get(selected_id)
         && matches!(exposure, AnchorExposure::SelectionOnly)
     {
@@ -409,26 +417,28 @@ pub enum Overlay {
 }
 
 /// The overlay primitives for the current model + view state (S-013 AC1/AC2, CR-007
-/// AC7): anchor dots on the selected shape — or on every shape while connecting /
-/// drawing an arrow / dragging an endpoint (S-031) — the resize handle of a selected
-/// shape, and bend handles on a selected connector. Empty when nothing is selected
-/// and no gesture is in flight.
+/// AC7): anchor dots on every selected shape — or on every shape while connecting /
+/// drawing an arrow / dragging an endpoint (S-031) — the resize handle of a
+/// single-shape selection (S-035 AC5), and bend handles on each selected connector.
+/// Empty when nothing is selected and no gesture is in flight.
 #[must_use]
 pub fn overlays(
     diagram: &Diagram,
     catalog: &dyn ShapeCatalog,
-    selection: Option<&ObjectId>,
+    selection: &BTreeSet<ObjectId>,
     exposure: AnchorExposure<'_>,
 ) -> Vec<Overlay> {
     let mut out = Vec::new();
 
-    // A selected connector shows a handle at each declared waypoint (CR-007 AC7).
-    if matches!(exposure, AnchorExposure::SelectionOnly)
-        && let Some(selected_id) = selection
-        && let Some(Object::Connector(connector)) = diagram.get(selected_id)
-    {
-        for bend in &connector.bends {
-            out.push(Overlay::BendHandle((bend.x, bend.y)));
+    // Each selected connector shows a handle at each declared waypoint (CR-007 AC7;
+    // S-035 extends the single selection to the whole set).
+    if matches!(exposure, AnchorExposure::SelectionOnly) {
+        for id in selection {
+            if let Some(Object::Connector(connector)) = diagram.get(id) {
+                for bend in &connector.bends {
+                    out.push(Overlay::BendHandle((bend.x, bend.y)));
+                }
+            }
         }
     }
 
@@ -436,7 +446,7 @@ pub fn overlays(
         let Object::Shape(shape) = object else {
             continue;
         };
-        let selected = selection.is_some_and(|id| id == &shape.id);
+        let selected = selection.contains(&shape.id);
         // Which shapes' anchors are snap targets (S-031): selection mode — only the
         // selection; connecting / arrow tool / endpoint drag — every shape.
         if !match exposure {
@@ -463,11 +473,13 @@ pub fn overlays(
             }
         }
 
-        // One resize handle: the selection's bottom-right cell, iff the catalog says
-        // the type is resizable (S-024 AC5 — built-ins and rule-bearing custom shapes;
-        // plain customs stay fixed-size per FR12). The drawn marker and the hit-test
-        // must agree on this exact cell.
+        // One resize handle: the selection's bottom-right cell, iff the selection is
+        // exactly this one shape (S-035 AC5) and the catalog says the type is
+        // resizable (S-024 AC5 — built-ins and rule-bearing custom shapes; plain
+        // customs stay fixed-size per FR12). The drawn marker and the hit-test must
+        // agree on this exact cell.
         if selected
+            && selection.len() == 1
             && matches!(exposure, AnchorExposure::SelectionOnly)
             && catalog
                 .get(&shape.type_id)
@@ -574,8 +586,15 @@ impl Viewport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use diagram_model::geometry::{CellPos, CellSize};
     use ui_api::ShapeInfo;
+
+    /// A selection set holding exactly the given object (S-035 — the seam takes a set
+    /// now; most tests still select one object).
+    fn sel(id: &ObjectId) -> BTreeSet<ObjectId> {
+        std::iter::once(id.clone()).collect()
+    }
 
     /// A catalog carrying the built-in `box` (9×5, standard mid-side anchors) — the seam
     /// fake keeps this test hermetic.
@@ -813,7 +832,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                Some(&s1),
+                &sel(&s1),
                 AnchorExposure::SelectionOnly,
                 (8, 2),
                 &[]
@@ -826,7 +845,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                Some(&s1),
+                &sel(&s1),
                 AnchorExposure::SelectionOnly,
                 (8, 4),
                 &[]
@@ -841,7 +860,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                Some(&s1),
+                &sel(&s1),
                 AnchorExposure::SelectionOnly,
                 (3, 2),
                 &[]
@@ -853,7 +872,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                Some(&s1),
+                &sel(&s1),
                 AnchorExposure::SelectionOnly,
                 (40, 40),
                 &[]
@@ -867,13 +886,92 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                Some(&s1),
+                &sel(&s1),
                 AnchorExposure::SelectionOnly,
                 (13, 2),
                 &[]
             ),
             HitTarget::Body(s2.clone())
         );
+    }
+
+    /// S-035 AC5 — with a multi-selection, EVERY member's anchors are exposed and
+    /// no resize handle is offered (group resize is out of scope; the bottom-right
+    /// cell falls back to the body).
+    #[test]
+    fn hit_target_multi_selection_exposes_all_anchors_and_no_resize() {
+        let catalog = catalog();
+        // Non-overlapping boxes: s1 spans cols 0..8, s2 spans 15..23.
+        let diagram = diagram_with(&[("s1", 0, 0), ("s2", 15, 0)]);
+        let s1 = ObjectId::new("s1").expect("valid id");
+        let s2 = ObjectId::new("s2").expect("valid id");
+        let both: BTreeSet<ObjectId> = [s1.clone(), s2.clone()].into_iter().collect();
+
+        // Both e anchors are exposed — even though the bodies cover those cells.
+        assert_eq!(
+            hit_target(
+                &diagram,
+                &catalog,
+                &both,
+                AnchorExposure::SelectionOnly,
+                (8, 2),
+                &[]
+            ),
+            HitTarget::Anchor(s1.clone(), "e".to_owned())
+        );
+        assert_eq!(
+            hit_target(
+                &diagram,
+                &catalog,
+                &both,
+                AnchorExposure::SelectionOnly,
+                (23, 2),
+                &[]
+            ),
+            HitTarget::Anchor(s2.clone(), "e".to_owned())
+        );
+
+        // s1's bottom-right cell is a body cell, not a resize handle.
+        assert_eq!(
+            hit_target(
+                &diagram,
+                &catalog,
+                &both,
+                AnchorExposure::SelectionOnly,
+                (8, 4),
+                &[]
+            ),
+            HitTarget::Body(s1)
+        );
+    }
+
+    /// S-035 — overlays: anchor dots for every selected shape, bend handles for every
+    /// selected connector, and the resize marker only in a single-shape selection.
+    #[test]
+    fn overlays_multi_selection() {
+        let catalog = catalog();
+        let diagram = diagram_with(&[("s1", 0, 0), ("s2", 5, 0)]);
+        let s1 = ObjectId::new("s1").expect("valid id");
+        let s2 = ObjectId::new("s2").expect("valid id");
+
+        // Single selection: anchors + one resize handle.
+        let single = overlays(&diagram, &catalog, &sel(&s1), AnchorExposure::SelectionOnly);
+        assert!(single.iter().any(|o| matches!(o, Overlay::ResizeHandle(_))));
+        let single_anchors = single
+            .iter()
+            .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
+            .count();
+        assert_eq!(single_anchors, 4);
+
+        // Multi selection: both shapes' anchors (8 dots), no resize handle.
+        let both: BTreeSet<ObjectId> = [s1.clone(), s2.clone()].into_iter().collect();
+        let multi = overlays(&diagram, &catalog, &both, AnchorExposure::SelectionOnly);
+        assert!(!multi.iter().any(|o| matches!(o, Overlay::ResizeHandle(_))));
+        let multi_anchors = multi
+            .iter()
+            .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
+            .count();
+        assert_eq!(multi_anchors, 8);
     }
 
     /// Overlap: the topmost shape body wins (document order = z-order).
@@ -886,7 +984,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (6, 2),
                 &[]
@@ -908,7 +1006,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::Connect { source: &source },
                 (20, 2),
                 &[]
@@ -920,7 +1018,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::Connect { source: &source },
                 (8, 2),
                 &[]
@@ -932,7 +1030,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::Connect { source: &source },
                 (3, 2),
                 &[]
@@ -1003,14 +1101,14 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                Some(&a1),
+                &sel(&a1),
                 AnchorExposure::SelectionOnly,
                 (4, 2),
                 &[]
             ),
             HitTarget::Body(a1.clone())
         );
-        let ov = overlays(&diagram, &catalog, Some(&a1), AnchorExposure::SelectionOnly);
+        let ov = overlays(&diagram, &catalog, &sel(&a1), AnchorExposure::SelectionOnly);
         assert!(!ov.iter().any(|o| matches!(o, Overlay::ResizeHandle(_))));
         assert_eq!(ov.len(), 1, "just the single anchor dot");
 
@@ -1020,7 +1118,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                Some(&s1),
+                &sel(&s1),
                 AnchorExposure::SelectionOnly,
                 (14, 2),
                 &[]
@@ -1031,7 +1129,7 @@ mod tests {
             }
         );
         // …and the overlay carries its handle marker.
-        let ov = overlays(&diagram, &catalog, Some(&s1), AnchorExposure::SelectionOnly);
+        let ov = overlays(&diagram, &catalog, &sel(&s1), AnchorExposure::SelectionOnly);
         assert!(ov.contains(&Overlay::ResizeHandle((14, 2))));
     }
 
@@ -1043,11 +1141,19 @@ mod tests {
         let diagram = diagram_with(&[("s1", 0, 0), ("s2", 20, 0)]);
 
         // Nothing selected, nothing in flight: no overlay at all.
-        assert!(overlays(&diagram, &catalog, None, AnchorExposure::SelectionOnly).is_empty());
+        assert!(
+            overlays(
+                &diagram,
+                &catalog,
+                &BTreeSet::new(),
+                AnchorExposure::SelectionOnly
+            )
+            .is_empty()
+        );
 
         // Selection: s1's four anchor dots + its bottom-right corner handle.
         let s1 = ObjectId::new("s1").expect("valid id");
-        let sel = overlays(&diagram, &catalog, Some(&s1), AnchorExposure::SelectionOnly);
+        let sel = overlays(&diagram, &catalog, &sel(&s1), AnchorExposure::SelectionOnly);
         assert_eq!(
             sel.iter()
                 .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
@@ -1072,7 +1178,7 @@ mod tests {
         let connecting = overlays(
             &diagram,
             &catalog,
-            None,
+            &BTreeSet::new(),
             AnchorExposure::Connect { source: &source },
         );
         assert_eq!(
@@ -1199,7 +1305,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (11, 6),
                 &routes
@@ -1241,7 +1347,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (19, 2),
                 &routes
@@ -1255,7 +1361,7 @@ mod tests {
         match hit_target(
             &diagram,
             &catalog,
-            None,
+            &BTreeSet::new(),
             AnchorExposure::SelectionOnly,
             (9, 2),
             &routes,
@@ -1272,7 +1378,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (9, 2),
                 &routes
@@ -1308,7 +1414,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (13, 4),
                 &routes
@@ -1324,7 +1430,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (11, 6),
                 &routes
@@ -1371,7 +1477,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (15, 2),
                 &routes
@@ -1387,7 +1493,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (13, 2),
                 &routes
@@ -1402,7 +1508,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                Some(&s1),
+                &sel(&s1),
                 AnchorExposure::SelectionOnly,
                 (8, 2),
                 &routes
@@ -1415,7 +1521,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::All,
                 (28, 2),
                 &routes
@@ -1423,7 +1529,7 @@ mod tests {
             HitTarget::Anchor(ObjectId::new("s2").expect("valid"), "e".to_owned())
         );
         // …and the overlay layer shows all their snap markers.
-        let all = overlays(&diagram, &catalog, None, AnchorExposure::All);
+        let all = overlays(&diagram, &catalog, &BTreeSet::new(), AnchorExposure::All);
         assert_eq!(
             all.iter()
                 .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
@@ -1441,7 +1547,7 @@ mod tests {
         match hit_target(
             &diagram,
             &catalog,
-            None,
+            &BTreeSet::new(),
             AnchorExposure::SelectionOnly,
             (9, 3),
             &routes,
@@ -1462,7 +1568,7 @@ mod tests {
         match hit_target(
             &diagram,
             &catalog,
-            None,
+            &BTreeSet::new(),
             AnchorExposure::SelectionOnly,
             (12, 5),
             &routes,
@@ -1492,7 +1598,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (9, 3),
                 &routes
@@ -1510,7 +1616,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::SelectionOnly,
                 (0, 9),
                 &routes
@@ -1524,7 +1630,7 @@ mod tests {
             hit_target(
                 &diagram,
                 &catalog,
-                None,
+                &BTreeSet::new(),
                 AnchorExposure::Connect { source: &source },
                 (9, 3),
                 &routes
@@ -1538,13 +1644,18 @@ mod tests {
         let (diagram, catalog, c, _route) = bent_connector_scene();
         // Not selected: no bend handles.
         assert!(
-            overlays(&diagram, &catalog, None, AnchorExposure::SelectionOnly)
-                .iter()
-                .all(|o| !matches!(o, Overlay::BendHandle(_)))
+            overlays(
+                &diagram,
+                &catalog,
+                &BTreeSet::new(),
+                AnchorExposure::SelectionOnly
+            )
+            .iter()
+            .all(|o| !matches!(o, Overlay::BendHandle(_)))
         );
         // Selected: one handle at the declared waypoint — same cell `hit_target`
         // answers with a Bend.
-        let handles = overlays(&diagram, &catalog, Some(&c), AnchorExposure::SelectionOnly);
+        let handles = overlays(&diagram, &catalog, &sel(&c), AnchorExposure::SelectionOnly);
         assert_eq!(
             handles
                 .iter()

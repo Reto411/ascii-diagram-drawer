@@ -6,6 +6,8 @@
 //! pointer events into exactly those mutations. Selection, placement and in-flight
 //! gestures are transient *view* state — they never touch the model.
 
+use std::collections::BTreeSet;
+
 use diagram_model::Diagram;
 use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
 use diagram_model::geometry::{CellPos, CellSize};
@@ -25,8 +27,14 @@ use crate::canvas::HitTarget;
 /// `target` is the precomputed interactive hit under the cell (see [`crate::canvas::hit_target`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PointerEvent {
-    /// Primary button pressed on the given grid cell.
-    Down { cell: (u32, u32), target: HitTarget },
+    /// Primary button pressed on the given grid cell. `additive` is true when Ctrl or
+    /// Shift was held at the press — a body click then extends/toggles the selection
+    /// instead of replacing it (S-035 FR20).
+    Down {
+        cell: (u32, u32),
+        target: HitTarget,
+        additive: bool,
+    },
     /// Pointer moved (primary held or hovering) over the given grid cell.
     Move { cell: (u32, u32), target: HitTarget },
     /// Primary button released; `cell` is the release position in model space (`None`
@@ -59,6 +67,9 @@ pub enum EditOutcome {
     Edited { id: ObjectId },
     /// A dragged shape crossed to a new cell and the model was updated live.
     Moved { id: ObjectId, to: CellPos },
+    /// A group move (S-035 FR20) crossed to new cells — `count` movable members were
+    /// updated live with the same delta.
+    GroupMoved { count: usize },
     /// A resize drag changed the selected shape's extent (min 1×1, grid-aligned).
     Resized { id: ObjectId, to: CellSize },
     /// A connection gesture started from an anchor.
@@ -96,19 +107,34 @@ pub enum EditOutcome {
     },
     /// The selected object (and its connectors) left the model.
     Deleted { id: ObjectId, removed: usize },
+    /// A multi-selection delete (S-035 FR20): `count` is the selection set's size and
+    /// `removed` counts everything that actually left the model (the selected objects
+    /// plus their cascaded connectors).
+    BulkDeleted { count: usize, removed: usize },
+    /// A modifier click changed the selection set without replacing it (S-035 FR20)
+    /// — `count` is the set's size after the change.
+    SelectionChanged { count: usize },
     /// An in-flight gesture or placement was cancelled without mutation.
     Cancelled,
+}
+
+/// A movable member of a group move (S-035 FR20): its id plus the grab offset — how
+/// far the member's top-left sat from the press cell — so it follows the pointer with
+/// exactly the same delta as every other member.
+#[derive(Debug, Clone)]
+struct GrabbedMember {
+    id: ObjectId,
+    offset_x: u32,
+    offset_y: u32,
 }
 
 /// An in-flight primary-button gesture (S-013).
 #[derive(Debug, Clone)]
 enum Gesture {
-    /// Move drag: which object and where on it the pointer grabbed.
-    Move {
-        id: ObjectId,
-        offset_x: u32,
-        offset_y: u32,
-    },
+    /// Move drag (S-013; S-035 group move): every movable selected member with its
+    /// grab offset — a plain click produces a one-member group, exactly today's
+    /// single-object behavior; a modifier-clicked selection moves as one.
+    Move { members: Vec<GrabbedMember> },
     /// Resize drag on the selected shape's bottom-right handle — with the catalog's
     /// minimum extent as the clamp (S-024 AC5).
     Resize { id: ObjectId, min_size: CellSize },
@@ -179,8 +205,10 @@ pub enum Placing {
 pub struct EditorState {
     /// The tool picked in the sidebar; the next canvas click places it.
     pub placing: Option<Placing>,
-    /// The currently selected object (if any).
-    pub selection: Option<ObjectId>,
+    /// The currently selected objects — a set since S-035 (FR20): Ctrl/Shift+click
+    /// extends or toggles membership, a plain click replaces the set with one object.
+    /// A `BTreeSet` so iteration order is deterministic (deletion order, overlays).
+    pub selection: BTreeSet<ObjectId>,
     /// The text object being edited inline (S-018), if any.
     pub editing: Option<ObjectId>,
     /// The draft content of the inline edit — the egui `TextEdit` binds to this string
@@ -200,21 +228,21 @@ impl EditorState {
     /// selection so the next click is unambiguously a placement).
     pub fn select_template(&mut self, info: ShapeInfo) {
         self.placing = Some(Placing::Shape(Box::new(info)));
-        self.selection = None;
+        self.selection.clear();
     }
 
     /// Sidebar action: pick the text tool (S-018). Same semantics as
     /// [`Self::select_template`]: replaces a previous pick, clears the selection.
     pub fn select_text_tool(&mut self) {
         self.placing = Some(Placing::Text);
-        self.selection = None;
+        self.selection.clear();
     }
 
     /// Sidebar action: pick the arrow tool (CR-010). The next press-drag on the canvas
     /// draws a connector; the tool stays armed for further drags (Esc stops it).
     pub fn select_arrow_tool(&mut self) {
         self.placing = Some(Placing::Arrow);
-        self.selection = None;
+        self.selection.clear();
     }
 
     /// The anchor exposure for canvas hit-testing/overlays under the current state
@@ -271,32 +299,58 @@ impl EditorState {
         if had_gesture || was_placing {
             return EditOutcome::Cancelled;
         }
-        if self.selection.take().is_some() {
+        if !self.selection.is_empty() {
+            self.selection.clear();
             return EditOutcome::Deselected;
         }
         EditOutcome::Nothing
     }
 
-    /// Delete/Backspace: removes the selected object and every connector referencing
-    /// it (the aggregate keeps endpoints from dangling). No selection → no-op.
+    /// Delete/Backspace (S-013; S-035 FR20): removes every selected object and, with
+    /// each of them, every connector referencing it (the aggregate keeps endpoints
+    /// from dangling). Objects already gone (cascaded by an earlier removal in the
+    /// same pass) are skipped. No selection → no-op.
     pub fn delete_selection(&mut self, diagram: &mut Diagram) -> EditOutcome {
-        let Some(id) = self.selection.clone() else {
+        if self.selection.is_empty() {
             return EditOutcome::Nothing;
-        };
-        match diagram.remove(&id) {
-            Ok(removed) => {
-                self.selection = None;
-                self.gesture = None;
-                EditOutcome::Deleted { id, removed }
+        }
+        let ids: Vec<ObjectId> = self.selection.iter().cloned().collect();
+        let mut removed_total = 0usize;
+        for id in &ids {
+            // `remove` errors on a missing id — one selection member may have been
+            // cascaded away by an earlier member's connector removal.
+            if diagram.get(id).is_some()
+                && let Ok(removed) = diagram.remove(id)
+            {
+                removed_total += removed;
             }
-            Err(_) => EditOutcome::Nothing, // defensive: the selection is always valid
+        }
+        if removed_total == 0 {
+            // Defensive: every member was already gone — nothing actually happened.
+            return EditOutcome::Nothing;
+        }
+        self.selection.clear();
+        self.gesture = None;
+        match ids.len() {
+            1 => EditOutcome::Deleted {
+                id: ids.into_iter().next().expect("len == 1"),
+                removed: removed_total,
+            },
+            _ => EditOutcome::BulkDeleted {
+                count: ids.len(),
+                removed: removed_total,
+            },
         }
     }
 
     /// Applies one pointer event, mutating the model in place. Returns what happened.
     pub fn on_pointer(&mut self, event: PointerEvent, diagram: &mut Diagram) -> EditOutcome {
         match event {
-            PointerEvent::Down { cell, target } => self.on_down(cell, target, diagram),
+            PointerEvent::Down {
+                cell,
+                target,
+                additive,
+            } => self.on_down(cell, target, additive, diagram),
             PointerEvent::Move { cell, .. } => self.on_move(cell, diagram),
             PointerEvent::Up { cell, target } => self.on_up(cell, target, diagram),
             PointerEvent::DoubleClick { cell, target } => {
@@ -332,6 +386,7 @@ impl EditorState {
         &mut self,
         (col, row): (u32, u32),
         target: HitTarget,
+        additive: bool,
         diagram: &mut Diagram,
     ) -> EditOutcome {
         // A pointer press while editing commits the inline edit (blur semantics — AC1)
@@ -357,7 +412,7 @@ impl EditorState {
             HitTarget::Anchor(object_id, name) => {
                 let Ok(from) = AnchorRef::new(object_id.clone(), &name) else {
                     // Defensive: catalog anchor names are valid single tokens.
-                    return self.grab(col, row, object_id, diagram);
+                    return self.grab(col, row, object_id, additive, diagram);
                 };
                 self.gesture = Some(Gesture::Connect { from: from.clone() });
                 EditOutcome::Connecting { from }
@@ -369,8 +424,10 @@ impl EditorState {
                 });
                 EditOutcome::Nothing
             }
-            // Press on a shape or text body: select + start the move gesture (AC2).
-            HitTarget::Body(id) => self.grab(col, row, id, diagram),
+            // Press on a shape or text body: plain = select + start the move gesture
+            // (S-013 AC2); Ctrl/Shift = extend/toggle the selection set and, when a
+            // member was added, grab the whole group (S-035 FR20).
+            HitTarget::Body(id) => self.grab(col, row, id, additive, diagram),
             // CR-007 AC4 — pressing a connector (bend or body) selects it.
             HitTarget::Bend {
                 id,
@@ -381,7 +438,7 @@ impl EditorState {
                 let Some(Object::Connector(_)) = diagram.get(&id) else {
                     return EditOutcome::Nothing; // defensive: stale hit
                 };
-                self.selection = Some(id.clone());
+                self.select_for_gesture(id.clone(), additive);
                 self.gesture = Some(Gesture::BendMove {
                     id: id.clone(),
                     index,
@@ -389,7 +446,7 @@ impl EditorState {
                     next,
                     moved: false,
                 });
-                EditOutcome::Selected(id)
+                self.press_outcome(additive, id)
             }
             HitTarget::ConnectorBody {
                 id,
@@ -400,7 +457,7 @@ impl EditorState {
                 let Some(Object::Connector(_)) = diagram.get(&id) else {
                     return EditOutcome::Nothing; // defensive: stale hit
                 };
-                self.selection = Some(id.clone());
+                self.select_for_gesture(id.clone(), additive);
                 self.gesture = Some(Gesture::BendAdd {
                     id: id.clone(),
                     segment,
@@ -409,7 +466,7 @@ impl EditorState {
                     pressed: CellPos::new(col, row),
                     added: false,
                 });
-                EditOutcome::Selected(id)
+                self.press_outcome(additive, id)
             }
             // CR-010 — pressing an endpoint (or its tip cell) starts a drag: a free
             // end follows the pointer live, an attached end detaches on its first
@@ -419,7 +476,7 @@ impl EditorState {
                 let Some(Object::Connector(connector)) = diagram.get(&id) else {
                     return EditOutcome::Nothing; // defensive: stale hit
                 };
-                self.selection = Some(id.clone());
+                self.select_for_gesture(id.clone(), additive);
                 self.gesture = Some(Gesture::EndpointDrag {
                     id: id.clone(),
                     end,
@@ -430,12 +487,44 @@ impl EditorState {
                     },
                     moved: false,
                 });
-                EditOutcome::Selected(id)
+                self.press_outcome(additive, id)
             }
+            // Plain press on empty space clears the selection (S-013); a modifier
+            // press leaves it untouched (S-035 FR20).
             HitTarget::Empty => {
-                self.selection = None;
-                EditOutcome::Deselected
+                if additive {
+                    EditOutcome::Nothing
+                } else {
+                    self.selection.clear();
+                    EditOutcome::Deselected
+                }
             }
+        }
+    }
+
+    /// Selection update for a press on a connector part (bend / body / endpoint):
+    /// plain press replaces the set with that connector; a modifier press toggles its
+    /// membership, keeping every other selected object (S-035 FR20).
+    fn select_for_gesture(&mut self, id: ObjectId, additive: bool) {
+        if additive {
+            if !self.selection.remove(&id) {
+                self.selection.insert(id);
+            }
+        } else {
+            self.selection.clear();
+            self.selection.insert(id);
+        }
+    }
+
+    /// The press outcome for a target that also starts a gesture: plain presses report
+    /// the (replaced) selection as before; modifier presses report the set's new size.
+    fn press_outcome(&self, additive: bool, id: ObjectId) -> EditOutcome {
+        if additive {
+            EditOutcome::SelectionChanged {
+                count: self.selection.len(),
+            }
+        } else {
+            EditOutcome::Selected(id)
         }
     }
 
@@ -474,29 +563,78 @@ impl EditorState {
             TipStyle::EmptyRhombus => TipStyle::FilledRhombus,
             TipStyle::FilledRhombus => TipStyle::Bare,
         };
-        self.selection = Some(id.clone());
+        self.replace_selection(&id);
         match diagram.set_tip(&id, end, next) {
             Ok(()) => EditOutcome::TipChanged { id, end, tip: next },
             Err(_) => EditOutcome::Nothing, // defensive: the hit was just computed
         }
     }
 
-    /// Press on an object body: select + start the move gesture (shapes and free text —
-    /// S-018 AC2).
-    fn grab(&mut self, col: u32, row: u32, id: ObjectId, diagram: &Diagram) -> EditOutcome {
-        let Some(pos) = object_pos(diagram, &id) else {
+    /// Replaces the selection set with exactly this object — the plain-click
+    /// semantics every non-modifier press uses (S-035 FR20).
+    fn replace_selection(&mut self, id: &ObjectId) {
+        self.selection.clear();
+        self.selection.insert(id.clone());
+    }
+
+    /// Press on an object body (S-013 AC2; S-035 FR20):
+    /// - plain press — selects + starts the move gesture. If the pressed object is
+    ///   already part of a multi-selection, the set is kept and the *whole group*
+    ///   moves (FR20: dragging any selected member moves every member); otherwise
+    ///   the selection becomes exactly this object (S-013's single-object behavior);
+    /// - Ctrl/Shift press — toggles membership: an already-selected member is removed
+    ///   (no drag); otherwise it joins the set and the *whole* group moves, each
+    ///   member keeping its grab offset from the press cell.
+    fn grab(
+        &mut self,
+        col: u32,
+        row: u32,
+        id: ObjectId,
+        additive: bool,
+        diagram: &Diagram,
+    ) -> EditOutcome {
+        if additive && self.selection.remove(&id) {
+            // Toggled off — no drag, the rest of the group stays selected.
+            return EditOutcome::SelectionChanged {
+                count: self.selection.len(),
+            };
+        }
+        if object_pos(diagram, &id).is_none() {
             // Defensive: stale hit (the object left the model this frame).
-            self.selection = None;
-            return EditOutcome::Deselected;
-        };
-        self.selection = Some(id.clone());
-        // Grab immediately: one press-drag gesture both selects and moves.
-        self.gesture = Some(Gesture::Move {
-            id: id.clone(),
-            offset_x: col.saturating_sub(pos.x),
-            offset_y: row.saturating_sub(pos.y),
-        });
-        EditOutcome::Selected(id)
+            if self.selection.is_empty() {
+                return EditOutcome::Deselected;
+            }
+            return EditOutcome::Nothing;
+        }
+        let in_group = self.selection.contains(&id) && self.selection.len() > 1;
+        if !additive && !in_group {
+            // Plain click on an unselected object (or the only selected one):
+            // replace the set — S-013's behavior, unchanged.
+            self.selection.clear();
+        }
+        self.selection.insert(id.clone());
+        // Grab immediately: one press-drag gesture both selects and moves — now the
+        // whole set (S-035), connectors included in the selection but not movable.
+        let members = self
+            .selection
+            .iter()
+            .filter_map(|member| {
+                object_pos(diagram, member).map(|p| GrabbedMember {
+                    id: member.clone(),
+                    offset_x: col.saturating_sub(p.x),
+                    offset_y: row.saturating_sub(p.y),
+                })
+            })
+            .collect();
+        self.gesture = Some(Gesture::Move { members });
+        match (additive, in_group) {
+            // The set changed (Ctrl/Shift join) or stayed a group: report the size.
+            (true, _) | (false, true) => EditOutcome::SelectionChanged {
+                count: self.selection.len(),
+            },
+            // Plain single selection: today's exact outcome.
+            (false, false) => EditOutcome::Selected(id),
+        }
     }
 
     /// Double click (S-018 AC1): opens inline editing of the text object under the
@@ -517,7 +655,7 @@ impl EditorState {
         if self.editing.as_ref() != Some(&id) {
             self.editing = Some(id.clone());
             self.edit_draft = text.text.clone();
-            self.selection = Some(id.clone());
+            self.replace_selection(&id);
         }
         EditOutcome::Editing { id }
     }
@@ -540,7 +678,7 @@ impl EditorState {
             return EditOutcome::Nothing;
         }
         self.placing = None; // one placement per click (v1)
-        self.selection = Some(id.clone());
+        self.replace_selection(&id);
         EditOutcome::Placed {
             id,
             type_id: info.type_id,
@@ -562,7 +700,7 @@ impl EditorState {
             return EditOutcome::Nothing;
         }
         self.placing = None; // one placement per click (v1)
-        self.selection = Some(id.clone());
+        self.replace_selection(&id);
         self.editing = Some(id.clone());
         self.edit_draft = PLACEHOLDER_TEXT.to_owned();
         EditOutcome::PlacedText { id }
@@ -573,27 +711,37 @@ impl EditorState {
             return EditOutcome::Nothing;
         };
         match gesture {
-            Gesture::Move {
-                id,
-                offset_x,
-                offset_y,
-            } => {
-                // The object follows the pointer with the grab offset preserved; saturating
-                // subtraction clamps at the grid origin (positions are unsigned by design).
-                let to = CellPos::new(col.saturating_sub(offset_x), row.saturating_sub(offset_y));
-                // Shapes and free text move identically (S-018 AC2); connectors follow
-                // their bound shapes and cannot be grabbed.
-                let at = match diagram.get(&id) {
-                    Some(Object::Shape(shape)) => shape.pos,
-                    Some(Object::Text(text)) => text.pos,
-                    _ => return EditOutcome::Nothing,
-                };
-                if at == to {
-                    return EditOutcome::Nothing; // no cell crossing — nothing to mutate
+            Gesture::Move { members } => {
+                // Every movable member follows the pointer with its grab offset
+                // preserved (S-035 FR20 — one delta for the whole group); saturating
+                // subtraction clamps at the grid origin (positions are unsigned by
+                // design). Connectors in the selection have no position of their own
+                // and are skipped — attached endpoints follow their bound shapes.
+                let mut moved = Vec::new();
+                for member in &members {
+                    let to = CellPos::new(
+                        col.saturating_sub(member.offset_x),
+                        row.saturating_sub(member.offset_y),
+                    );
+                    let at = match diagram.get(&member.id) {
+                        Some(Object::Shape(shape)) => shape.pos,
+                        Some(Object::Text(text)) => text.pos,
+                        _ => continue,
+                    };
+                    if at == to {
+                        continue; // no cell crossing for this member
+                    }
+                    if diagram.move_object(&member.id, to).is_ok() {
+                        moved.push((member.id.clone(), to));
+                    }
                 }
-                match diagram.move_object(&id, to) {
-                    Ok(()) => EditOutcome::Moved { id, to },
-                    Err(_) => EditOutcome::Nothing,
+                match (members.len(), moved.len()) {
+                    (_, 0) => EditOutcome::Nothing,
+                    (1, 1) => EditOutcome::Moved {
+                        id: moved[0].0.clone(),
+                        to: moved[0].1,
+                    },
+                    _ => EditOutcome::GroupMoved { count: moved.len() },
                 }
             }
             Gesture::Resize { id, min_size } => {
@@ -954,7 +1102,7 @@ mod tests {
         let target = hit_target(
             diagram,
             &catalog(),
-            editor.selection.as_ref(),
+            &editor.selection,
             editor.anchor_exposure(),
             (col, row),
             routes,
@@ -963,6 +1111,33 @@ mod tests {
             PointerEvent::Down {
                 cell: (col, row),
                 target,
+                additive: false,
+            },
+            diagram,
+        )
+    }
+
+    /// A Ctrl/Shift press — the S-035 additive variant of [`down`].
+    fn down_additive(
+        editor: &mut EditorState,
+        diagram: &mut Diagram,
+        col: u32,
+        row: u32,
+        routes: &[(ObjectId, Vec<CellPos>)],
+    ) -> EditOutcome {
+        let target = hit_target(
+            diagram,
+            &catalog(),
+            &editor.selection,
+            editor.anchor_exposure(),
+            (col, row),
+            routes,
+        );
+        editor.on_pointer(
+            PointerEvent::Down {
+                cell: (col, row),
+                target,
+                additive: true,
             },
             diagram,
         )
@@ -978,7 +1153,7 @@ mod tests {
         let target = hit_target(
             diagram,
             &catalog(),
-            editor.selection.as_ref(),
+            &editor.selection,
             editor.anchor_exposure(),
             (col, row),
             routes,
@@ -1002,7 +1177,7 @@ mod tests {
         let target = hit_target(
             diagram,
             &catalog(),
-            editor.selection.as_ref(),
+            &editor.selection,
             editor.anchor_exposure(),
             (col, row),
             routes,
@@ -1067,7 +1242,10 @@ mod tests {
         assert!(shape.label.is_empty());
         // Placement mode is single-shot and the new object is selected.
         assert!(editor.placing.is_none());
-        assert_eq!(editor.selection, Some(ObjectId::generated(1)));
+        assert_eq!(
+            editor.selection,
+            std::iter::once(ObjectId::generated(1)).collect::<std::collections::BTreeSet<_>>(),
+        );
     }
 
     /// S-016 AC3 — a custom (collection) template places at its fixed pattern size;
@@ -1119,7 +1297,253 @@ mod tests {
             down(&mut editor, &mut diagram, 30, 20, &[]),
             EditOutcome::Deselected
         );
-        assert!(editor.selection.is_none());
+        assert!(editor.selection.is_empty());
+    }
+
+    // ── S-035: multi-select + group move (FR20) ─────────────────────────────
+
+    /// A plain click selects exactly one object; a Ctrl/Shift click on a second
+    /// object extends the set instead of replacing it (AC2).
+    #[test]
+    fn ctrl_click_on_a_second_shape_extends_the_selection() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+        let s2 = ObjectId::generated(2);
+
+        assert_eq!(
+            down(&mut editor, &mut diagram, 4, 2, &[]),
+            EditOutcome::Selected(s1.clone())
+        );
+        assert_eq!(editor.selection.len(), 1);
+
+        // s2's body spans cols 20..29; (24,2) is well inside.
+        assert_eq!(
+            down_additive(&mut editor, &mut diagram, 24, 2, &[]),
+            EditOutcome::SelectionChanged { count: 2 }
+        );
+        assert!(editor.selection.contains(&s1));
+        assert!(editor.selection.contains(&s2));
+    }
+
+    /// A Ctrl/Shift click on an already-selected member removes it from the set
+    /// (AC2 — toggle), without starting a drag.
+    #[test]
+    fn ctrl_click_on_a_selected_member_toggles_it_off() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+        let s2 = ObjectId::generated(2);
+
+        down(&mut editor, &mut diagram, 4, 2, &[]);
+        down_additive(&mut editor, &mut diagram, 24, 2, &[]);
+        assert_eq!(editor.selection.len(), 2);
+
+        // A drag may have started after the extending click — release it first so
+        // the toggle click is a clean press.
+        up(&mut editor, &mut diagram, 24, 2, &[]);
+        assert_eq!(
+            down_additive(&mut editor, &mut diagram, 4, 2, &[]),
+            EditOutcome::SelectionChanged { count: 1 }
+        );
+        assert!(!editor.selection.contains(&s1));
+        assert!(editor.selection.contains(&s2));
+    }
+
+    /// Dragging after a Ctrl/Shift click moves the WHOLE group by the same delta —
+    /// each member keeps its grab offset, so relative positions are preserved (AC4).
+    #[test]
+    fn drag_after_ctrl_click_moves_the_whole_group() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+        let s2 = ObjectId::generated(2);
+
+        down(&mut editor, &mut diagram, 4, 2, &[]); // select s1 (0,0)
+        up(&mut editor, &mut diagram, 4, 2, &[]);
+        // Ctrl-click s2's body: press cell (24,2) → offsets s1:(24,2), s2:(4,2).
+        down_additive(&mut editor, &mut diagram, 24, 2, &[]);
+
+        let moved = move_to(&mut editor, &mut diagram, 30, 5, &[]);
+        assert_eq!(moved, EditOutcome::GroupMoved { count: 2 });
+
+        // Both moved by the same (+6,+3) delta; the 20-col spacing is preserved.
+        let p1 = object_pos(&diagram, &s1).expect("s1 exists");
+        let p2 = object_pos(&diagram, &s2).expect("s2 exists");
+        assert_eq!((p1.x, p1.y), (6, 3));
+        assert_eq!((p2.x, p2.y), (26, 3));
+        assert_eq!(p2.x - p1.x, 20);
+    }
+
+    /// A Ctrl/Shift press on empty space leaves the selection untouched (AC5) —
+    /// only a plain click deselects.
+    #[test]
+    fn additive_press_on_empty_space_keeps_the_selection() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+
+        down(&mut editor, &mut diagram, 4, 2, &[]);
+        up(&mut editor, &mut diagram, 4, 2, &[]);
+
+        assert_eq!(
+            down_additive(&mut editor, &mut diagram, 30, 20, &[]),
+            EditOutcome::Nothing
+        );
+        assert_eq!(editor.selection.len(), 1);
+        assert!(editor.selection.contains(&s1));
+    }
+
+    /// Connectors can be part of the selection (Ctrl-click on their body) but have no
+    /// position of their own: a group move shifts only the movable members while the
+    /// connector follows its bound shapes via its endpoints (AC4).
+    #[test]
+    fn group_move_skips_connectors_in_the_selection() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+        let s2 = ObjectId::generated(2);
+        let c = diagram.new_object_id();
+        diagram
+            .connect(ConnectorInstance::between(
+                c.clone(),
+                AnchorRef::new(s1.clone(), "e").unwrap(),
+                AnchorRef::new(s2.clone(), "w").unwrap(),
+                ConnectorStyle::Solid,
+            ))
+            .expect("valid connector");
+
+        let routes = vec![(c.clone(), vec![CellPos::new(8, 2), CellPos::new(20, 2)])];
+
+        down(&mut editor, &mut diagram, 4, 2, &[]); // s1
+        up(&mut editor, &mut diagram, 4, 2, &[]);
+        down_additive(&mut editor, &mut diagram, 24, 2, &routes); // + s2
+        up(&mut editor, &mut diagram, 24, 2, &routes);
+        // Ctrl-click the connector body (its route runs along row 2 between the
+        // boxes) — it joins the selection via the BendAdd press…
+        assert_eq!(
+            down_additive(&mut editor, &mut diagram, 15, 2, &routes),
+            EditOutcome::SelectionChanged { count: 3 }
+        );
+        up(&mut editor, &mut diagram, 15, 2, &routes); // …released without moving
+
+        // A plain drag on any selected member moves the movable ones (the two boxes);
+        // the connector has no position of its own and follows its bound shapes.
+        down(&mut editor, &mut diagram, 4, 2, &routes); // s1 — keeps the group
+        let moved = move_to(&mut editor, &mut diagram, 30, 5, &routes);
+        assert_eq!(moved, EditOutcome::GroupMoved { count: 2 });
+        assert_eq!(diagram.len(), 3);
+        assert!(diagram.get(&c).is_some()); // the connector survived with both ends
+    }
+
+    /// Deleting a multi-selection removes every member plus their connectors in one
+    /// pass (AC6) and clears the selection.
+    #[test]
+    fn delete_with_a_multi_selection_removes_everything() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+        let s2 = ObjectId::generated(2);
+        diagram
+            .connect(ConnectorInstance::between(
+                diagram.new_object_id(),
+                AnchorRef::new(s1.clone(), "e").unwrap(),
+                AnchorRef::new(s2.clone(), "w").unwrap(),
+                ConnectorStyle::Solid,
+            ))
+            .expect("valid connector");
+        assert_eq!(diagram.len(), 3);
+
+        down(&mut editor, &mut diagram, 4, 2, &[]); // s1
+        up(&mut editor, &mut diagram, 4, 2, &[]);
+        down_additive(&mut editor, &mut diagram, 24, 2, &[]); // + s2
+        up(&mut editor, &mut diagram, 24, 2, &[]);
+
+        assert_eq!(
+            editor.delete_selection(&mut diagram),
+            EditOutcome::BulkDeleted {
+                count: 2,
+                removed: 3
+            }
+        );
+        assert_eq!(diagram.len(), 0);
+        assert!(editor.selection.is_empty());
+    }
+
+    /// Escape clears the WHOLE selection at once (S-035 AC4 — FR20), not just one object.
+    #[test]
+    fn escape_clears_the_whole_selection() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+
+        down(&mut editor, &mut diagram, 4, 2, &[]); // s1
+        up(&mut editor, &mut diagram, 4, 2, &[]);
+        down_additive(&mut editor, &mut diagram, 24, 2, &[]); // + s2
+        up(&mut editor, &mut diagram, 24, 2, &[]);
+        assert_eq!(editor.selection.len(), 2);
+
+        assert_eq!(editor.on_escape(), EditOutcome::Deselected);
+        assert!(editor.selection.is_empty());
+    }
+
+    /// FR20 — after a multi-selection exists, a PLAIN click-drag on any selected
+    /// member keeps the set and moves the whole group (not just that member).
+    #[test]
+    fn plain_click_on_a_selected_member_moves_the_group() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+        let s2 = ObjectId::generated(2);
+
+        down(&mut editor, &mut diagram, 4, 2, &[]); // s1
+        up(&mut editor, &mut diagram, 4, 2, &[]);
+        down_additive(&mut editor, &mut diagram, 24, 2, &[]); // + s2
+        up(&mut editor, &mut diagram, 24, 2, &[]);
+
+        // Plain press on the already-selected s2: the group is kept…
+        assert_eq!(
+            down(&mut editor, &mut diagram, 24, 2, &[]),
+            EditOutcome::SelectionChanged { count: 2 }
+        );
+        assert_eq!(editor.selection.len(), 2);
+
+        // …and the drag moves both members (press cell (24,2): offsets s1:(24,2),
+        // s2:(4,2) → target (30,5) gives +6/+3 for each).
+        let moved = move_to(&mut editor, &mut diagram, 30, 5, &[]);
+        assert_eq!(moved, EditOutcome::GroupMoved { count: 2 });
+        let p1 = object_pos(&diagram, &s1).expect("s1 exists");
+        let p2 = object_pos(&diagram, &s2).expect("s2 exists");
+        assert_eq!((p1.x, p1.y), (6, 3));
+        assert_eq!((p2.x, p2.y), (26, 3));
+    }
+
+    /// S-013's base case is preserved: a plain click on the ONLY selected object
+    /// still selects exactly that one and moves only it.
+    #[test]
+    fn plain_click_on_the_only_selected_object_moves_only_it() {
+        let mut editor = EditorState::default();
+        let mut diagram = two_boxes();
+        let s1 = ObjectId::generated(1);
+        let s2 = ObjectId::generated(2);
+
+        down(&mut editor, &mut diagram, 4, 2, &[]); // s1 (0,0)
+        up(&mut editor, &mut diagram, 4, 2, &[]);
+
+        assert_eq!(
+            down(&mut editor, &mut diagram, 4, 2, &[]),
+            EditOutcome::Selected(s1.clone())
+        );
+        let moved = move_to(&mut editor, &mut diagram, 10, 6, &[]);
+        assert_eq!(
+            moved,
+            EditOutcome::Moved {
+                id: s1.clone(),
+                to: CellPos::new(6, 4)
+            }
+        );
+        // s2 did not move.
+        let p2 = object_pos(&diagram, &s2).expect("s2 exists");
+        assert_eq!((p2.x, p2.y), (20, 0));
     }
 
     #[test]
@@ -1210,6 +1634,7 @@ mod tests {
             PointerEvent::Down {
                 cell: (7, 6),
                 target: HitTarget::Body(id.clone()),
+                additive: false,
             },
             &mut diagram,
         ); // offset (2,1)
@@ -1405,7 +1830,8 @@ mod tests {
             )
             .expect("placement is valid");
 
-        editor.selection = Some(id.clone());
+        editor.selection.clear();
+        editor.selection.insert(id.clone());
         // Press the bottom-right handle (9,7) carrying the catalog's 2×2 floor.
         editor.on_pointer(
             PointerEvent::Down {
@@ -1414,6 +1840,7 @@ mod tests {
                     id: id.clone(),
                     min_size: CellSize::new(2, 2).unwrap(),
                 },
+                additive: false,
             },
             &mut diagram,
         );
@@ -1870,7 +2297,7 @@ mod tests {
         // No dangling endpoints: only s2 remains.
         assert_eq!(diagram.len(), 1);
         assert!(diagram.get(&s2).is_some());
-        assert!(editor.selection.is_none());
+        assert!(editor.selection.is_empty());
     }
 
     #[test]
@@ -1935,6 +2362,7 @@ mod tests {
             PointerEvent::Down {
                 cell: (4, 2),
                 target: HitTarget::Empty,
+                additive: false,
             },
             &mut diagram,
         );
@@ -2073,13 +2501,17 @@ mod tests {
             editor.on_pointer(
                 PointerEvent::Down {
                     cell: (2, 3),
-                    target: HitTarget::Body(id.clone())
+                    target: HitTarget::Body(id.clone()),
+                    additive: false,
                 },
                 &mut diagram,
             ),
             EditOutcome::Edited { id: id.clone() }
         );
-        assert_eq!(editor.selection, Some(id.clone())); // stays selected
+        assert_eq!(
+            editor.selection,
+            std::iter::once(id.clone()).collect::<std::collections::BTreeSet<_>>(),
+        ); // stays selected
         assert_eq!(
             move_to(&mut editor, &mut diagram, 9, 9, &[]),
             EditOutcome::Nothing
