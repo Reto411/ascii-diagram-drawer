@@ -46,6 +46,10 @@ const SELECTION_COLOR: Color32 = Color32::from_rgb(90, 160, 255);
 const GHOST_COLOR: Color32 = Color32::from_rgb(140, 200, 140);
 const ERROR_COLOR: Color32 = Color32::from_rgb(255, 96, 96);
 const ANCHOR_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
+/// FR21 / CR-018 — the dedicated resize-symbol color. Deliberately not
+/// `ANCHOR_COLOR` (amber), `SELECTION_COLOR` (blue) or either soft green above,
+/// so the drag-to-resize affordance reads as its own mark.
+const RESIZE_COLOR: Color32 = Color32::from_rgb(76, 175, 80);
 /// Text-region tint in the template editor grid (FR19 / CR-016).
 const REGION_COLOR: Color32 = Color32::from_rgb(140, 220, 140);
 const CONNECT_LINE_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
@@ -1858,17 +1862,31 @@ fn draw_overlays(
                 );
             }
             crate::canvas::Overlay::ResizeHandle((col, row)) => {
-                // The marker sits on the handle cell's CENTER — exactly the cell
-                // `hit_target` answers with a resize gesture for.
+                // FR21 / CR-018 — the dedicated resize symbol: a double-headed
+                // diagonal arrow along the NW–SE cell diagonal (the axis the
+                // handle moves along when dragged), in `RESIZE_COLOR` — never an
+                // anchor dot. Centered on the handle cell's CENTER, exactly the
+                // cell `hit_target` answers with a resize gesture for.
                 let c = center_of(col, row); // already in screen coordinates
-                painter.rect_filled(
-                    egui::Rect::from_min_max(
-                        Pos2::new(c.x - 3.0, c.y - 3.0),
-                        Pos2::new(c.x + 3.0, c.y + 3.0),
-                    ),
-                    0.0,
-                    ANCHOR_COLOR,
-                );
+                // Everything scales with the cell's own diagonal so the symbol
+                // keeps its proportions at any zoom level (monospace cells are
+                // taller than wide — never size off one axis only).
+                let d = egui::vec2(vp.cell_w * 0.5, vp.cell_h * 0.5);
+                let shaft_half = d.length() * 0.70;
+                let dir = d.normalized();
+                let perp = egui::vec2(-dir.y, dir.x);
+                let head_len = shaft_half * 0.42;
+                let head_half_w = head_len * 0.55;
+                let stroke = egui::epaint::Stroke::new((vp.cell_h * 0.13).max(1.5), RESIZE_COLOR);
+                painter.line_segment([c - dir * shaft_half, c + dir * shaft_half], stroke);
+                // Chevron heads at both ends (line segments — no font or mesh
+                // involvement, so the symbol is crisp at every zoom level).
+                for sign in [1.0_f32, -1.0] {
+                    let tip = c + sign * dir * shaft_half;
+                    let back = tip - sign * dir * head_len;
+                    painter.line_segment([tip, back + perp * head_half_w], stroke);
+                    painter.line_segment([tip, back - perp * head_half_w], stroke);
+                }
             }
             crate::canvas::Overlay::BendHandle((col, row)) => {
                 // CR-007 AC7 — the marker sits on the bend cell's CENTER, exactly the

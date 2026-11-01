@@ -37,6 +37,8 @@ const PREVIEW: f32 = 380.0;
 /// Must match `ANCHOR_COLOR` / `SELECTION_COLOR` in `app.rs`.
 const ANCHOR: Color32 = Color32::from_rgb(255, 196, 87);
 const SELECTION: Color32 = Color32::from_rgb(90, 160, 255);
+/// Must match `RESIZE_COLOR` in `app.rs` (FR21 / CR-018).
+const RESIZE: Color32 = Color32::from_rgb(76, 175, 80);
 
 // ─────────────────────────── test harness ───────────────────────────
 
@@ -423,6 +425,19 @@ fn find_text_exact(out: &egui::FullOutput, label: &str) -> Option<Rect> {
         .into_iter()
         .find(|(t, _)| t == label)
         .map(|(_, r)| r)
+}
+
+/// All line segments as `((a, b), stroke_width, color)`.
+fn colored_line_segments(out: &egui::FullOutput) -> Vec<((Pos2, Pos2), f32, Color32)> {
+    out.shapes
+        .iter()
+        .filter_map(|cs| match &cs.shape {
+            egui::epaint::Shape::LineSegment { points, stroke } => {
+                Some(((points[0], points[1]), stroke.width, stroke.color))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// All line segments as `(a, b)` point pairs.
@@ -886,7 +901,7 @@ fn selection_outline_and_hit_test_follow_the_scaled_extent() {
 }
 
 #[test]
-fn resize_handle_marker_sits_on_the_inner_bottom_right_cell() {
+fn resize_symbol_sits_on_the_inner_bottom_right_cell() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let min = gui.canvas_min();
     gui.place_box_via_ui(min, 3, 2);
@@ -894,25 +909,59 @@ fn resize_handle_marker_sits_on_the_inner_bottom_right_cell() {
     let out = gui.frame();
 
     let (x, y, w, h) = gui.first_box();
-    // The marker is a small filled square in ANCHOR color.
-    let markers: Vec<Rect> = filled_rects(&out)
+    // FR21 / CR-018 — the symbol is a double-headed diagonal arrow in RESIZE
+    // color: one long shaft line plus four short chevron lines at its ends.
+    let resize_lines: Vec<(Pos2, Pos2)> = colored_line_segments(&out)
         .into_iter()
-        .filter(|(r, c)| {
-            *c == ANCHOR && (2.0..=8.0).contains(&r.width()) && (2.0..=8.0).contains(&r.height())
-        })
-        .map(|(r, _)| r)
+        .filter(|((_, _), _, c)| *c == RESIZE)
+        .map(|(p, _, _)| p)
         .collect();
-    let marker = markers
-        .into_iter()
-        .next()
-        .expect("resize handle marker is drawn");
+    assert!(!resize_lines.is_empty(), "the resize symbol is drawn");
+    // The shaft is the longest segment; its midpoint must sit on exactly the
+    // cell `hit_target` answers with a resize gesture for (marker/hit parity).
+    let shaft = resize_lines
+        .iter()
+        .max_by(|a, b| {
+            let la = (a.0 - a.1).length().round() as i64;
+            let lb = (b.0 - b.1).length().round() as i64;
+            la.cmp(&lb)
+        })
+        .expect("the shaft segment is present");
+    let mid = shaft.0.lerp(shaft.1, 0.5);
     let expected_center = gui.cell_center(min, x + w - 1, y + h - 1);
     assert!(
-        close(marker.center().x, expected_center.x, 2.0)
-            && close(marker.center().y, expected_center.y, 2.0),
-        "marker at {:?} is on the inner bottom-right cell {expected_center:?} — where \
-         resizing actually works",
-        marker.center()
+        close(mid.x, expected_center.x, 2.0) && close(mid.y, expected_center.y, 2.0),
+        "symbol centered at {mid:?} is on the inner bottom-right cell \
+         {expected_center:?} — where resizing actually works",
+    );
+    // AC2: no filled square marker in anchor color remains anywhere.
+    assert!(
+        !filled_rects(&out).iter().any(|(r, c)| {
+            *c == ANCHOR && (2.0..=8.0).contains(&r.width()) && (2.0..=8.0).contains(&r.height())
+        }),
+        "the old amber square marker is gone"
+    );
+}
+
+#[test]
+fn resize_symbol_absent_for_multi_selection() {
+    // AC3 — the symbol (and its hit target) belong to single-shape selections
+    // only (S-035 rule); a multi-selection shows anchors without any resize mark.
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 2, 2);
+    let out = gui.frame();
+    let label = find_text_exact(&out, "box").expect("sidebar lists the box template");
+    let _ = gui.click_at(label.center());
+    let _ = gui.click_at(gui.cell_center(min, 15, 2));
+    let _ = gui.ctrl_click_at(gui.cell_center(min, 6, 4));
+    let out = gui.frame();
+
+    assert!(
+        colored_line_segments(&out)
+            .iter()
+            .all(|((_, _), _, c)| *c != RESIZE),
+        "no resize symbol under a multi-selection"
     );
 }
 

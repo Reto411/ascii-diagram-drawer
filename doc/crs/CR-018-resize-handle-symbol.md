@@ -2,9 +2,9 @@
 title: CR-018 - resize-handle-symbol
 description: the shape's resize hook is drawn with a dedicated resize symbol (distinct from anchor dots) so users can see it as the drag-to-resize affordance
 scope: gui/interaction
-status: accepted
+status: implemented
 priority: low
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # CR-018: Resize symbol on the shape's resize hook
@@ -23,8 +23,8 @@ Usability: today the handle is rendered as a 6×6 px filled square in the *same 
 
 | Req | Current text (§14) | Proposed text |
 |-----|--------------------|---------------|
-| **FR18** | — new (allocated after pending CR-013…CR-017's proposed FR13–FR17; IDs are appended, never renumbered) — | "The resize handle of the selected shape is drawn with a dedicated resize symbol that is visually distinct from anchor dots and clearly conveys drag-to-resize. The exact glyph and color are specified in the implementing story." |
-| FR2 | "User can move and resize placed shapes on the canvas" | unchanged — contextually affected: the resize affordance becomes discoverable per FR18 |
+| **FR21** | — new (allocated at bulk acceptance after CR-013…CR-017's proposed FR13–FR17; IDs are appended, never renumbered) — | "The resize handle of the selected shape is drawn with a dedicated resize symbol that is visually distinct from anchor dots and clearly conveys drag-to-resize. The exact glyph and color are specified in the implementing story." |
+| FR2 | "User can move and resize placed shapes on the canvas" | unchanged — contextually affected: the resize affordance becomes discoverable per FR21 |
 
 ## Conflict check
 
@@ -46,10 +46,10 @@ Usability: today the handle is rendered as a 6×6 px filled square in the *same 
 
 On acceptance, one commit:
 
-1. §14: add FR18 (appended after pending CR-013…CR-017's proposed FR13–FR17); FR2 unchanged.
+1. §14: add FR21 (appended after the other bulk-accepted CRs' requirements; FR18 went to CR-015's UML set — this file's earlier draft said "FR18", superseded by the final allocation); FR2 unchanged.
 2. ADRs: none.
 3. Concepts: none — rendering detail of an existing interaction, not a concept.
-4. Story board: skeleton **S-027** "gui-app — resize handle symbol (FR18)" — Why cites CR-018; acceptance criteria written by the cr-implementation skill at start.
+4. Story board: skeleton story "gui-app — resize handle symbol (FR21)" — Why cites CR-018; acceptance criteria written by the cr-implementation skill at start. Final allocation: **S-038**.
 
 ## Decision
 
@@ -63,4 +63,4 @@ On acceptance, one commit:
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-038** — <commit> (double-headed diagonal arrow in `RESIZE_COLOR`, line-segment rendering, marker/hit parity preserved).
