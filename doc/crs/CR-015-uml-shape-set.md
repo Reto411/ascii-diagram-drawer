@@ -2,9 +2,9 @@
 title: CR-015 - uml-shape-set
 description: built-in catalog ships the core UML shape set (class/use-case/sequence/component/deployment/state/activity) — the requester's daily standard as a system architect
 scope: shapes/templates
-status: accepted
+status: implemented
 priority: high
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # CR-015: UML shape set in the built-in catalog
@@ -63,6 +63,4 @@ On acceptance, one commit:
 
 ## Implementation
 
-> Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
-
--
+Landed as **S-036**, commit `6327c3d` (2026-11-01): the built-in catalog ships the eleven core UML shapes (lollipop, actor, activation bar, component, port, deployment node, artifact, state, decision diamond, initial/final nodes) as no-rule `Pattern` templates with pinned svgbob art and exactly the four standard anchors each; the compartmented four carry one interior `name` region via CR-016's mechanism. Verified by exact-grid pipeline test, seam metadata test and a tier-0b double-click flow; all 5 ACs green, workspace gates pass (tarpaulin 92.93%).
