@@ -8,6 +8,7 @@
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The UI theme choices (FR13). `Native` is the default: inherit the system /
@@ -75,6 +76,11 @@ pub struct AppConfig {
     /// (FR15 / CR-009 AC6). Absent in pre-FR15 files → empty strip.
     #[serde(default)]
     pub recent_colors: Vec<String>,
+    /// Sidebar collapsing-header open states keyed by "group" or "group/subcategory"
+    /// (FR6 / CR-011 AC3). A missing key means *expanded* — the first-use default —
+    /// so pre-feature files load with everything open.
+    #[serde(default)]
+    pub sidebar_expanded: BTreeMap<String, bool>,
 }
 
 impl AppConfig {
@@ -86,6 +92,11 @@ impl AppConfig {
         if self.recent_colors.len() > MAX_RECENT_COLORS {
             self.recent_colors.truncate(MAX_RECENT_COLORS);
         }
+    }
+
+    /// Records the open state of one sidebar collapsing header (CR-011 AC3).
+    pub fn set_sidebar_expanded(&mut self, key: &str, open: bool) {
+        self.sidebar_expanded.insert(key.to_owned(), open);
     }
 }
 
@@ -175,6 +186,39 @@ mod tests {
             .filter(|h| *h == "#00000a")
             .count();
         assert_eq!(count, 1, "no duplicate");
+    }
+
+    /// FR6 (CR-011) AC3 — sidebar collapse states round-trip through the config
+    /// file, a missing key means expanded, and a pre-feature file (no field at all)
+    /// loads with everything expanded.
+    #[test]
+    fn sidebar_expanded_round_trip_and_absent_field_loads_expanded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut config = AppConfig::default();
+        config.set_sidebar_expanded("Built-in", false);
+        config.set_sidebar_expanded("col-a/Other", true);
+        config.save(&path).unwrap();
+
+        let loaded = AppConfig::load(Some(&path));
+        // Missing key = expanded, the first-use default.
+        let is_expanded = |config: &AppConfig, key: &str| {
+            config.sidebar_expanded.get(key).copied().unwrap_or(true)
+        };
+        assert!(!is_expanded(&loaded, "Built-in"), "collapsed recorded");
+        assert!(
+            is_expanded(&loaded, "col-a/Other"),
+            "explicit open recorded"
+        );
+        assert!(is_expanded(&loaded, "never-seen"), "missing key = expanded");
+
+        // A file written before CR-011 has no `sidebar_expanded` key at all.
+        std::fs::write(&path, "{\"theme\": \"dark\"}\n").unwrap();
+        let legacy = AppConfig::load(Some(&path));
+        assert!(
+            is_expanded(&legacy, "Built-in"),
+            "pre-feature file → expanded"
+        );
     }
 
     /// FR15 (CR-009) AC6 — `recent_colors` round-trips through the config file and is

@@ -334,10 +334,38 @@ impl Gui {
         self.click_at(rect.center())
     }
 
+    /// Click an item nested one level down in a top-bar dropdown (CR-011 AC4):
+    /// open the menu, hover the submenu label until its popup lays out (egui
+    /// `SubMenuButton`s open on hover), then click the item. Returns the release
+    /// frame of the item click.
+    fn click_submenu_item(&mut self, menu: &str, submenu: &str, item: &str) -> egui::FullOutput {
+        let _ = self.click_topbar_button(menu);
+        let out = self.frame();
+        let sub_rect = find_text_exact(&out, submenu).unwrap_or_else(|| {
+            panic!(
+                "menu {menu:?} does not show submenu {submenu:?}; texts: {:?}",
+                texts(&out)
+            )
+        });
+        let _ = self.pump(vec![Event::PointerMoved(sub_rect.center())]);
+        let out = self.frame();
+        let rect = find_text_exact(&out, item).unwrap_or_else(|| {
+            panic!(
+                "submenu {submenu:?} of {menu:?} does not show {item:?}; texts: {:?}",
+                texts(&out)
+            )
+        });
+        self.click_at(rect.center())
+    }
+
     /// Open a path prompt (Save As / Open / Export …) via the File menu and return
-    /// its kind after it appears.
+    /// its kind after it appears. CR-011 AC4 moved the export actions one level
+    /// down, so they are reached through the Export submenu.
     fn open_prompt(&mut self, item: &str) -> PathPrompt {
-        let _ = self.click_menu_item("File ▾", item);
+        let _ = match item {
+            "Export SVG…" | "Export PNG…" => self.click_submenu_item("File ▾", "Export", item),
+            _ => self.click_menu_item("File ▾", item),
+        };
         let prompt = self.app.path_prompt();
         assert!(
             prompt.is_some(),
@@ -1551,13 +1579,18 @@ fn copy_button_puts_the_exact_canvas_bytes_on_the_clipboard() {
 
     // The CopyText command is drained into the *release* frame's FullOutput (egui
     // takes it out of the context at end of pass), so capture that frame directly
-    // instead of going through `click_at`'s settle frame. Copy lives in the File
-    // menu (S-025): open it first, then press/release on the item.
+    // instead of going through `click_at`'s settle frame. Copy lives in the File ▾
+    // → Output submenu (S-025, CR-011 AC4): open the menu, hover Output, then
+    // press/release on the item.
     let out = gui.frame();
     let file = find_text_exact(&out, "File ▾").expect("top bar has File ▾");
     let _ = gui.click_at(file.center());
     let out = gui.frame();
-    let rect = find_text_exact(&out, "Copy").expect("the File menu shows Copy");
+    let output_rect =
+        find_text_exact(&out, "Output").expect("the File menu shows the Output submenu");
+    let _ = gui.pump(vec![Event::PointerMoved(output_rect.center())]);
+    let out = gui.frame();
+    let rect = find_text_exact(&out, "Copy").expect("the Output submenu shows Copy");
     let _ = gui.pump(Gui::press_at(rect.center()));
     let out = gui.pump(Gui::release_at(rect.center()));
     let copied = out.platform_output.commands.iter().find_map(|c| match c {
@@ -2481,27 +2514,61 @@ fn toolbar_is_a_menu_bar_without_flat_action_buttons() {
     }
 }
 
-/// AC1/AC3 — opening File ▾ lists all seven actions in group order.
+/// AC1/AC3 + CR-011 AC4 — opening File ▾ lists the file actions top-level in
+/// group order, with Output and Export nested one level down; hovering a submenu
+/// label reveals its items in their original order, and the moved items are no
+/// longer top-level.
 #[test]
-fn file_menu_lists_the_grouped_actions() {
+fn file_menu_lists_the_grouped_actions_with_submenus() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let _ = gui.click_topbar_button("File ▾");
     let out = gui.frame();
-    let labels: Vec<&str> = [
-        "Open…",
-        "Save",
-        "Save As…",
-        "Copy",
-        "Text .txt",
-        "Export SVG…",
-        "Export PNG…",
-    ]
-    .into_iter()
-    .collect();
+
+    // Top level: file ops, then the two submenu entries — nothing else.
     let mut last_y = f32::MIN;
-    for label in &labels {
+    for label in ["Open…", "Save", "Save As…", "Output", "Export"] {
         let rect = find_text_exact(&out, label)
             .unwrap_or_else(|| panic!("the File menu shows {label:?}; texts: {:?}", texts(&out)));
+        assert!(rect.min.y >= last_y, "{label:?} keeps group order");
+        last_y = rect.min.y;
+    }
+    for label in ["Copy", "Text .txt", "Export SVG…", "Export PNG…"] {
+        assert!(
+            find_text_exact(&out, label).is_none(),
+            "{label:?} moved into a submenu and is no longer top-level"
+        );
+    }
+
+    // Hovering Output reveals its items in the original order.
+    let output_rect = find_text_exact(&out, "Output").expect("the File menu shows Output");
+    let _ = gui.pump(vec![Event::PointerMoved(output_rect.center())]);
+    let out = gui.frame();
+    last_y = f32::MIN;
+    for label in ["Copy", "Text .txt"] {
+        let rect = find_text_exact(&out, label).unwrap_or_else(|| {
+            panic!(
+                "the Output submenu shows {label:?}; texts: {:?}",
+                texts(&out)
+            )
+        });
+        assert!(rect.min.y >= last_y, "{label:?} keeps group order");
+        last_y = rect.min.y;
+    }
+
+    // Hovering Export (Output closes) reveals both export items in order.
+    let file_menu_out = gui.frame();
+    let export_rect =
+        find_text_exact(&file_menu_out, "Export").expect("the File menu still shows Export");
+    let _ = gui.pump(vec![Event::PointerMoved(export_rect.center())]);
+    let out = gui.frame();
+    last_y = f32::MIN;
+    for label in ["Export SVG…", "Export PNG…"] {
+        let rect = find_text_exact(&out, label).unwrap_or_else(|| {
+            panic!(
+                "the Export submenu shows {label:?}; texts: {:?}",
+                texts(&out)
+            )
+        });
         assert!(rect.min.y >= last_y, "{label:?} keeps group order");
         last_y = rect.min.y;
     }
@@ -2552,8 +2619,13 @@ fn export_png_item_is_disabled_while_an_export_runs() {
         tmp.path().join("held.png"),
     );
 
-    // The File menu lists Export PNG…, but clicking it does nothing (disabled).
+    // The File menu's Export submenu lists Export PNG…, but clicking it does
+    // nothing (disabled).
     let _ = gui.click_topbar_button("File ▾");
+    let out = gui.frame();
+    let export_rect =
+        find_text_exact(&out, "Export").expect("the File menu shows the Export submenu");
+    let _ = gui.pump(vec![Event::PointerMoved(export_rect.center())]);
     let out = gui.frame();
     let item = find_text_exact(&out, "Export PNG…").expect("the item is listed");
     let _ = gui.click_at(item.center());

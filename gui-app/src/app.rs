@@ -16,6 +16,7 @@ use core_services::{RgbaImage, Services};
 use diagram_model::geometry::CellSize;
 use diagram_model::{Diagram, objects::Object};
 use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense, Vec2};
+use ui_api::ShapeInfo;
 
 use crate::canvas::{HitTarget, Viewport, hit_target};
 use crate::config::{AppConfig, Theme};
@@ -263,14 +264,38 @@ impl DrawingApp {
             template_editor: None,
             png_export: None,
             pending_png_path: None,
-            config,
             config_path,
+            config,
             applied_theme: None,
             preview: PreviewPane::default(),
             color_dialog: None,
         }
     }
+}
 
+/// FR6 / CR-011 — the sidebar's interaction callbacks: row clicks start placing,
+/// ✎ opens the template editor. Kept behind the trait so the group drawing in
+/// [`crate::sidebar`] stays testable without a full app.
+impl crate::sidebar::SidebarActions for DrawingApp {
+    fn is_placing(&self, type_id: &str) -> bool {
+        Some(type_id)
+            == self.editor.placing.as_ref().map(|p| match p {
+                Placing::Shape(info) => info.type_id.as_str(),
+                _ => "",
+            })
+    }
+
+    fn select_shape(&mut self, info: ShapeInfo) {
+        self.editor.select_template(info.clone());
+        self.status = format!("Placing {} — click the canvas", info.name);
+    }
+
+    fn edit_shape(&mut self, type_id: String) {
+        self.open_template_editor(&type_id);
+    }
+}
+
+impl DrawingApp {
     // ── File IO (S-014) — pure flows in [`crate::fileio`], this is the glue ───────
 
     /// The file the current model was loaded from (`Save` targets it).
@@ -1772,37 +1797,46 @@ impl DrawingApp {
                         self.begin_path_prompt(PathPrompt::SaveAs);
                     }
                     ui.separator();
-                    // AC3 (S-014) — copy the exact canvas bytes to the clipboard.
-                    if ui.button("Copy").clicked() {
-                        match self.text_output() {
-                            Ok(text) => {
-                                let chars = text.chars().count();
-                                ui.ctx().copy_text(text);
-                                self.status = format!("Copied {chars} character(s) to clipboard");
+                    // CR-011 AC4 — output actions nest one level down. Inside a
+                    // menu, `menu_button` renders as a hover-opened submenu with its
+                    // own arrow glyph, so the labels stay plain.
+                    ui.menu_button("Output", |ui| {
+                        // AC3 (S-014) — copy the exact canvas bytes to the clipboard.
+                        if ui.button("Copy").clicked() {
+                            match self.text_output() {
+                                Ok(text) => {
+                                    let chars = text.chars().count();
+                                    ui.ctx().copy_text(text);
+                                    self.status =
+                                        format!("Copied {chars} character(s) to clipboard");
+                                }
+                                Err(e) => self.status = e,
                             }
-                            Err(e) => self.status = e,
                         }
-                    }
-                    if ui.button("Text .txt").clicked() {
-                        match self.save_text() {
-                            Ok(_) => {}
-                            Err(e) => self.status = e,
+                        if ui.button("Text .txt").clicked() {
+                            match self.save_text() {
+                                Ok(_) => {}
+                                Err(e) => self.status = e,
+                            }
                         }
-                    }
+                    });
                     ui.separator();
-                    // AC1 (S-015) — SVG export: the exact exporter bytes to file.
-                    if ui.button("Export SVG…").clicked() {
-                        self.begin_path_prompt(PathPrompt::ExportSvg);
-                    }
-                    // AC2/RS4 (S-015) — PNG export starts non-blocking (ADR 012);
-                    // the status bar shows "exporting" until the job completes.
-                    let exporting = self.png_export.is_some();
-                    if ui
-                        .add_enabled(!exporting, egui::Button::new("Export PNG…"))
-                        .clicked()
-                    {
-                        self.begin_path_prompt(PathPrompt::ExportPng);
-                    }
+                    // CR-011 AC4 — export actions nest one level down.
+                    ui.menu_button("Export", |ui| {
+                        // AC1 (S-015) — SVG export: the exact exporter bytes to file.
+                        if ui.button("Export SVG…").clicked() {
+                            self.begin_path_prompt(PathPrompt::ExportSvg);
+                        }
+                        // AC2/RS4 (S-015) — PNG export starts non-blocking (ADR 012);
+                        // the status bar shows "exporting" until the job completes.
+                        let exporting = self.png_export.is_some();
+                        if ui
+                            .add_enabled(!exporting, egui::Button::new("Export PNG…"))
+                            .clicked()
+                        {
+                            self.begin_path_prompt(PathPrompt::ExportPng);
+                        }
+                    });
                 });
                 // FR15 (CR-009) AC5 — View menu: canvas/diagram presentation; its
                 // first item opens the color dialog. A new feature area is one more
@@ -2054,7 +2088,7 @@ impl DrawingApp {
         // built-in group + one group per loaded collection, each shape with a
         // small preview of its glyph pattern.
         let groups = crate::sidebar::group_templates(&self.services.catalog.list());
-        let (placing_id, placing_text, placing_arrow) = match self.editor.placing.as_ref() {
+        let (_, placing_text, placing_arrow) = match self.editor.placing.as_ref() {
             Some(Placing::Shape(info)) => (Some(info.type_id.clone()), false, false),
             Some(Placing::Text) => (None, true, false),
             Some(Placing::Arrow) => (None, false, true),
@@ -2086,35 +2120,20 @@ impl DrawingApp {
                     for warning in &self.collection_warnings {
                         ui.label(RichText::new(warning.clone()).color(ERROR_COLOR).weak());
                     }
-                    for group in &groups {
-                        ui.add_space(6.0);
-                        ui.strong(&group.label);
-                        for info in &group.shapes {
-                            let selected = Some(info.type_id.as_str()) == placing_id.as_deref();
-                            if ui.selectable_label(selected, &info.name).clicked() {
-                                self.editor.select_template(info.clone());
-                                self.status = format!("Placing {} — click the canvas", info.name);
-                            }
-                            // Small preview of the glyph pattern (S-016 AC1) — the same
-                            // bytes the renderer stamps on placement.
-                            for row in &info.preview {
-                                ui.label(
-                                    RichText::new(row.clone())
-                                        .monospace()
-                                        .size(9.0)
-                                        .color(TEXT_COLOR),
-                                );
-                            }
-                            // S-017 AC3 — entry point: edit this collection template
-                            // (built-ins are code, not files — ADR 007).
-                            if !group.builtins
-                                && ui
-                                    .add_sized([24.0, 18.0], egui::Button::new("✎"))
-                                    .on_hover_text(format!("Edit {}", info.name))
-                                    .clicked()
-                            {
-                                self.open_template_editor(&info.type_id);
-                            }
+                    // CR-011 — collapsible groups with subcategory nesting. Open
+                    // states persist to the options file (AC3) following the FR13
+                    // immediate-save pattern; a missing key means expanded.
+                    let expanded = self.config.sidebar_expanded.clone();
+                    let toggles =
+                        crate::sidebar::draw_shape_groups(ui, &groups, &expanded, TEXT_COLOR, self);
+                    if !toggles.is_empty() {
+                        for (key, open) in toggles {
+                            self.config.set_sidebar_expanded(&key, open);
+                        }
+                        if let Some(path) = &self.config_path
+                            && let Err(e) = self.config.save(path)
+                        {
+                            self.status = format!("Could not save options: {e}");
                         }
                     }
                 });
