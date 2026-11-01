@@ -2,7 +2,7 @@
 title: CR-010 - standalone arrows with attachable/detachable ends
 description: arrows that need not be bound to shapes — each end either attached to a shape anchor or free at an explicit position, attachable and detachable interactively
 scope: model + format + render pipeline + GUI
-status: accepted
+status: implemented
 priority: medium
 updated: 2026-10-31
 ---
@@ -58,4 +58,4 @@ User: "this is needed" for more advanced diagrams — annotation arrows, flows b
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-031** (commit `d9ad17c`): `ConnectorEndpoint { Attached(AnchorRef), Free(CellPos) }` on both ends of every connector — zero/one/two bound ends legal, both-free at the same cell rejected by the aggregate (`ModelError`, the “minimum 1 cell” assumption); `Diagram::set_endpoint(id, end, endpoint)` converts one end between the forms with full re-validation (missing object / non-shape / zero-length result all typed errors). `.ad` `connect` accepts either form per end: attached `<obj>.<anchor>` unchanged, free as two bare integers `x y` — disambiguated by token shape (dot ⇒ attached), no keyword added; positioned parse errors; byte-stable round-trip; every pre-existing golden stayed byte-identical. Pipeline resolves a free end to its stored cell with no side preference (`side: None`) — routing, tips and bends otherwise unchanged (ADR 013 v6); new goldens `standalone-arrow.grid` + `mixed-endpoints.grid`; proptest suite extended so purity/determinism cover unattached endpoints. GUI: new “↘ Arrow” sidebar tool — press-drag-release creates an arrow whose ends are attached when exactly on a shape anchor, else free (press without movement draws nothing; zero-length refused); endpoint drag — `HitTarget::Endpoint` hits endpoint/tip cells below selected-shape anchors/resize handle and above bodies (declared bends keep priority), press without moving still cycles the tip style (S-029 preserved), a free end moves live (`set_endpoint(Free)`), an attached end detaches the moment it leaves its anchor, releasing over an anchor re-attaches (snaps); while drawing/dragging every shape's anchors are exposed as snap targets (`AnchorExposure::All` — same mechanism as the connect drag). ADR 013 v6.
