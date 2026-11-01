@@ -16,7 +16,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 |----|-------|----------|--------|------|
 | CR-001 | Native file dialogs for Open, Save and Export | medium | accepted | [CR-001-native-file-dialogs.md](CR-001-native-file-dialogs.md) |
 | CR-011 | Collapsible groupings with subcategories (menus + sidebar) | low | accepted | [CR-011-collapsible-groupings-subcategories.md](CR-011-collapsible-groupings-subcategories.md) |
-| CR-012 | Shape filter in the template sidebar | low | accepted | [CR-012-shape-filter.md](CR-012-shape-filter.md) |
+| CR-012 | Shape filter in the template sidebar | low | implemented | [CR-012-shape-filter.md](CR-012-shape-filter.md) |
 | CR-013 | Pre-rendered shape previews in the template sidebar (WYSIWYG picking) | medium | accepted | [CR-013-prerendered-shape-previews.md](CR-013-prerendered-shape-previews.md) |
 | CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | high | accepted | [CR-015-uml-shape-set.md](CR-015-uml-shape-set.md) |
 | CR-016 | Shape-owned text boxes — definable text regions on templates (format change, ADR 004) | high | accepted | [CR-016-shape-text-boxes.md](CR-016-shape-text-boxes.md) |

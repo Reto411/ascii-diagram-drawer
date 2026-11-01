@@ -2,9 +2,9 @@
 title: CR-012 - shape filter in the template sidebar
 description: a text filter narrows the shape list in the template sidebar by name — keeps selection usable as the number of native shapes grows
 scope: gui (template sidebar)
-status: accepted
+status: implemented
 priority: low
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # CR-012: Shape filter in the template sidebar
@@ -58,4 +58,4 @@ Note: CR-002 and CR-011 (both pending) also reword FR6. If all are accepted, the
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-033** (commit `96e160e`): a single-line filter input above the shape list narrows the visible shapes live per keystroke — case-insensitive substring match on the shape *name* only (type ids and group/subcategory labels are not matched in v1); groups/subcategories with no matching shape disappear entirely while filtering, a blank query restores the full list. The filter is transient app state (`DrawingApp.filter_query`, deliberately not part of the persisted options) — a restart starts empty. While active, matching groups render forced-open regardless of their persisted collapse state (separate egui `id_salt` slots keep the forced state from leaking; toggle reporting suspended for the duration), so clearing the filter re-applies the persisted open/closed states untouched. 6 new sidebar tests (4 pure + 2 tier-0b incl. real typing/backspacing and the forced-open/no-persistence flow); Material goldens regenerated (diff confined to the sidebar band). No model/format/pipeline/seam change (conflict check held).
