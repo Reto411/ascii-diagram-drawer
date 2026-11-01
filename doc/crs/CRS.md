@@ -16,13 +16,13 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 |----|-------|----------|--------|------|
 | CR-001 | Native file dialogs for Open, Save and Export | medium | accepted | [CR-001-native-file-dialogs.md](CR-001-native-file-dialogs.md) |
 | CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | high | accepted | [CR-015-uml-shape-set.md](CR-015-uml-shape-set.md) |
-| CR-016 | Shape-owned text boxes — definable text regions on templates (format change, ADR 004) | high | accepted | [CR-016-shape-text-boxes.md](CR-016-shape-text-boxes.md) |
 | CR-018 | Resize symbol on the shape's resize hook | low | accepted | [CR-018-resize-handle-symbol.md](CR-018-resize-handle-symbol.md) |
 
 ## Closed
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
+| CR-016 | Shape-owned text boxes — definable text regions on templates (format change, ADR 004) | 2026-11-01 | implemented — S-037, commit `e387db4` (FR19; .adc/.ad v1.1 region clauses, ADR 004 stays v4) |
 | CR-017 | Multi-select (Ctrl/Shift+click) and group move | 2026-11-01 | implemented — S-035, commit `d1bdc82` (FR20; selection set + group move) |
 | CR-013 | Pre-rendered shape previews in the template sidebar (WYSIWYG picking) | 2026-11-01 | implemented — S-034, commit `0e5e610` (FR16) |
 | CR-012 | Shape filter in the template sidebar | 2026-11-01 | implemented — S-033, commit `96e160e` (FR6) |

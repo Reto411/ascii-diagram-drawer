@@ -2,9 +2,9 @@
 title: CR-016 - shape-text-boxes
 description: shape templates can declare named text regions (text boxes) with position/extent that belong to the shape — definable in file and editor; generalizes the single label
 scope: shapes/templates/format
-status: accepted
+status: implemented
 priority: high
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # CR-016: Shape-owned text boxes (definable text regions on templates)
@@ -66,4 +66,4 @@ On acceptance, one commit:
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-037** — commit `e387db4` (2026-11-01). `.adc` 1.1 `region <name> at <x> <y> w <w> h <h>` template declarations (typed parse errors, canonical order, minor bump on first region); `.ad` `shape … [region <name> "<content>"]*` clauses (duplicate names rejected, unvalidated against the catalog, sorted output, region-free files byte-identical); pipeline stamps each region's content proportionally mapped onto the instance extent with the label rules; template editor gains the graphical region tool (drag → auto-named rect, click removes, list, persist/restore); double-click on a region-bearing shape opens the label + per-region content window (Apply writes model, Cancel/Escape/X discard). All ACs verified at tier 0/0b (650 tests green, clippy clean, coverage 92.77%); normative grammar updated in [shape-template](../arc42/12-concepts/shape-template.md) / [diagram-file-format](../arc42/12-concepts/diagram-file-format.md).
