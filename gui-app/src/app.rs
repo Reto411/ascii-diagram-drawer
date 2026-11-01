@@ -25,8 +25,10 @@ use crate::exportio::{self, PngExport};
 use crate::template_editor::TemplateEditorSession;
 
 /// Monospace font size for the canvas; the actual cell size is measured from it at
-/// runtime so glyphs land exactly on cells regardless of font metrics.
-const FONT_SIZE: f32 = 14.0;
+/// runtime so glyphs land exactly on cells regardless of font metrics. Also the base
+/// size of the sidebar's pre-rendered shape previews (FR16): a preview at natural
+/// width renders pixel-identical to what placement stamps (WYSIWYG).
+pub(crate) const FONT_SIZE: f32 = 14.0;
 /// Margin around the grid inside the canvas area.
 const MARGIN_PX: f32 = 8.0;
 /// Fixed width of the template sidebar.
