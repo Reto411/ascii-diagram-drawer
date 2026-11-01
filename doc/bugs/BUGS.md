@@ -3,7 +3,7 @@ title: bug-board
 description: persistent bug board — open / closed; single source of truth for bug status (reports live in doc/bugs/B-NNN-*.md)
 scope: delivery
 status: stable
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # Bug Board
@@ -14,7 +14,7 @@ Filed via the **bug-report skill** (`.agents/skills/bug-report/SKILL.md`). One f
 
 | ID | Title | Severity | Status | File |
 |----|-------|----------|--------|------|
-| — | (none) | | | |
+| [B-004](B-004-window-edge-resize-not-working.md) | Window cannot be resized from its edges or corners on native | major | open | — |
 
 ## Closed
 
