@@ -12,6 +12,7 @@ updated: 2026-11-01
 
 | ID | Title | Priority | Dependencies | Acceptance criteria | Story file |
 |----|-------|----------|--------------|---------------------|------------|
+| S-042 | gui-app — UML category with Class/Component/Activity subcategories + template row clarity (FR6/FR18, CR-021) | High | S-032/S-034/S-036/S-037 (done) | TBD | [S-042](S-042-uml-category-and-template-row-clarity.md) |
 | S-041 | gui-app — arrow object behavior + Visio-style line handles (FR9, CR-020) | High | S-028/S-029/S-031 (done) | TBD | [S-041](S-041-arrow-object-behavior-and-line-handles.md) |
 | S-040 | gui-app — window close button at the top right of the app bar (FR14, CR-019) | Low | S-027 (done) | TBD | [S-040](S-040-window-close-button-top-right.md) |
 | S-019 | web/wasm milestone — bundle build + core tests on wasm32 (QS4) | High | S-012…S-018, S-011 | 5 | [S-019](S-019-wasm-web-milestone.md) |

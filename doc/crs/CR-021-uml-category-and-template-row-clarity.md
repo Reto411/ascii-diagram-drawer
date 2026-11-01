@@ -2,7 +2,7 @@
 title: UML category with per-diagram subcategories and clearer template entries
 description: change request — UML shapes grouped under a UML category with Class/Component/Activity subcategories (each sufficient to draw that diagram type, incl. a new compartmented class shape), whole-row grabability in the template sidebar, and separator lines between entries; filed 2026-11-01
 scope: change request — built-in catalog organization (FR18) + template sidebar usability (FR6)
-status: proposed
+status: accepted
 filed: 2026-11-01
 priority: high
 format-compat: none
@@ -59,8 +59,8 @@ On acceptance: update §14 FR6 and FR18 to the proposed wording (this CR keeps t
 
 ## Decision
 
-- [ ] **Accept** — proceed as proposed
+- [x] **Accept** — proceed as proposed
 - [ ] **Accept with adjustments** — <what changes>
 - [ ] **Reject** — <reason>
 
-Decided: _pending_ (YYYY-MM-DD)
+Decided: accepted (2026-11-01) — blanket acceptance by the user: "Fix all bugs, implement all change requests and do extensive regression testing including End to end tests". Applied on acceptance: §14 FR6 + FR18 updated, skeleton story S-042 on the board; no ADR changes.
