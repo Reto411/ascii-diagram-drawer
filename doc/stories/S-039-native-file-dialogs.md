@@ -2,7 +2,7 @@
 title: S-039-native-file-dialogs
 description: CR-001 — system file dialogs for open/save/export + Save As .txt (FR2/FR4/FR5)
 scope: gui-app
-status: in-progress
+status: done
 updated: 2026-11-01
 ---
 
