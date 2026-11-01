@@ -17,7 +17,7 @@ On the native build, the window cannot be resized by dragging its edges or corne
 
 | | |
 |---|---|
-| OS | unknown (reporter confirmed "native"; OS + display server/WM not given — relevant because undecorated-window resize goes through winit → window manager) |
+| OS | Linux, Wayland (compositor/WM not specified — relevant because undecorated-window resize goes through winit → compositor) |
 | Target | native |
 | Commit | `3480346` |
 | Other | none provided |
@@ -43,7 +43,7 @@ The cursor stays the default arrow — no resize symbol appears on the right edg
 - No screenshot or recording provided by the reporter yet (see "Requested from reporter" below).
 - Headless state at commit `3480346`: tier-0b test `gui_tests::window_edge_grips_queue_begin_resize_once` **passes** — in the headless egui harness, hovering each of the eight grip zones sets the exact expected resize cursor icon (`FullOutput.platform_output.cursor_icon`) and pressing queues exactly one `BeginResize(dir)`. The defect therefore does not reproduce at the egui level; it only manifests with a real native window (eframe/winit → window manager).
 
-**Requested from reporter:** OS + display server / window manager (e.g. Linux/X11, Linux/Wayland, Windows, macOS), and ideally a short screen recording of hovering the right edge + dragging.
+**Provided by reporter:** OS = Linux, Wayland. **Still requested:** which compositor/WM (e.g. GNOME/Mutter, KDE/KWin, Sway/Hyprland) and ideally a short screen recording of hovering the right edge + dragging.
 
 ## Investigation
 
