@@ -215,6 +215,9 @@ pub struct DrawingApp {
     pub(crate) template_editor: Option<TemplateEditorSession>,
     /// FR19 (CR-016) — the open region-content editor for a shape instance, if any.
     pub(crate) shape_text_edit: Option<ShapeTextEditState>,
+    /// B-004 / ADR 017 v3 — the in-flight client-side window-resize gesture
+    /// (an edge/corner grip is being dragged); `None` when idle.
+    resize_grab: Option<crate::appbar::ResizeGrab>,
     /// In-flight PNG export (S-015 RS4): ticked once per frame while the worker
     /// rasterizes; the UI stays responsive meanwhile (ADR 012).
     png_export: Option<PngExport>,
@@ -308,6 +311,7 @@ impl DrawingApp {
             collection_warnings: Vec::new(),
             template_editor: None,
             shape_text_edit: None,
+            resize_grab: None,
             png_export: None,
             pending_png_path: None,
             config_path,
@@ -2678,11 +2682,13 @@ impl DrawingApp {
             Ok((text, width, height)) => self.draw_canvas(ui, &text, width, height),
         });
 
-        // FR14 (CR-006 / ADR 017): window edge/corner resize grips — the window is
-        // undecorated on native, so without these there would be no way to resize
-        // it at all. Foreground layer: shown last, hit-tested first.
+        // FR14 (CR-006 / ADR 017 v3): window edge/corner resize grips — the
+        // window is undecorated on native, so without these there would be no
+        // way to resize it at all. Foreground layer: shown last, hit-tested
+        // first. B-004: the grip drag runs an app-owned gesture (per-frame
+        // `InnerSize`/`OuterPosition`), tracked in `self.resize_grab`.
         #[cfg(not(target_arch = "wasm32"))]
-        crate::appbar::show_resize_grips(ui.ctx());
+        crate::appbar::show_resize_grips(ui.ctx(), &mut self.resize_grab);
     }
 
     // ── SVG preview pane (S-026 / CR-004) ────────────────────────────────────────

@@ -48,4 +48,6 @@ All 6 ACs verified. Evidence per AC:
 
 **Window resizing (FR14):** an undecorated window has no OS border to grab, so `appbar.rs` registers invisible 6 pt grips along all four screen edges plus one square at each corner in a transparent top-layer `Area`. `window_edge_grips_queue_begin_resize_once` pins all eight zones — hover shows the correct `ResizeDirection` cursor, press queues exactly one `BeginResize(dir)` (same one-shot rule as `StartDrag`); `resize_grips_disappear_on_a_degenerate_window` covers a window narrower than two grip bands (grips unregistered, no commands).
 
+> ⚠️ out of date — the `BeginResize` mechanism described above was replaced by [B-004](../bugs/B-004-window-edge-resize-not-working.md) (2026-11-01): the compositor-driven resize path did not work on KDE Plasma/KWin, so the grips now run a client-side gesture (per-frame `InnerSize` + `OuterPosition` re-anchor; [ADR 017 v3](../adr/017-material-design-title-bar.md)). Current tests: `window_edge_grips_show_their_cursor_on_hover`, `edge_grip_press_and_drag_resizes_the_window`, `west_and_north_grips_keep_the_opposite_edge_fixed`.
+
 **Gates:** workspace fmt / clippy(0) / test green — 503 tests passed; tarpaulin (Llvm) **94.68%** ≥ 80%; wasm32 check exits 0 (the S-019 `WebRunner` dead-code warnings are pre-existing and documented).

@@ -161,6 +161,39 @@ impl Gui {
         out
     }
 
+    /// Pump one frame reporting a `(w, h)` viewport whose outer top-left sits at
+    /// `origin` — simulates a real window whose backend reports its position on
+    /// screen (B-004 / ADR 017 v3 re-anchoring). The plain harness leaves the
+    /// `ViewportInfo` rects unknown (`None`), which would skip the anchor step.
+    fn pump_viewport_at(
+        &mut self,
+        origin: Pos2,
+        w: f32,
+        h: f32,
+        events: Vec<Event>,
+    ) -> egui::FullOutput {
+        let mut raw = egui::RawInput {
+            time: Some(self.ts),
+            screen_rect: Some(Rect::from_min_max(Pos2::ZERO, Pos2::new(w, h))),
+            events,
+            ..Default::default()
+        };
+        let rect = Rect::from_min_max(origin, origin + egui::vec2(w, h));
+        // `ViewportIdMap` is a plain `HashMap` (read-only index): mutate via
+        // `get_mut`. The ROOT entry always exists — `RawInput::default()` seeds it.
+        let root = raw
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .expect("ROOT viewport");
+        root.inner_rect = Some(rect);
+        root.outer_rect = Some(rect);
+        self.ts += 1.0 / 60.0;
+        let app = &mut self.app;
+        let mut out = self.ctx.run_ui(raw, |ui| app.show(ui));
+        out.textures_delta.clear();
+        out
+    }
+
     // ── event constructors ──
 
     fn press_at(pos: Pos2) -> Vec<Event> {
@@ -3293,12 +3326,106 @@ fn app_bar_drag_queues_start_drag_exactly_once() {
     assert_eq!(count(&out), 0, "releasing queues no window command");
 }
 
-/// FR14 (ADR 017): an undecorated window has no border to grab, so the app owns
-/// resizing — invisible grips along all four screen edges and at the corners.
-/// Each grip shows its resize cursor on hover and queues exactly one
-/// `BeginResize(dir)` per gesture (the same one-shot rule as `StartDrag`).
+/// B-004 (ADR 017 v3): pure geometry of one client-side resize step — each
+/// direction grows/shrinks exactly its own dimensions, north/west drags
+/// re-anchor the outer top-left so the opposite edge/corner stays fixed, and
+/// sizes are clamped to [`crate::appbar::MIN_WINDOW_SIZE`].
 #[test]
-fn window_edge_grips_queue_begin_resize_once() {
+fn resize_step_geometry_per_direction() {
+    use egui::viewport::ResizeDirection::*;
+    let grab = |dir: egui::viewport::ResizeDirection| crate::appbar::ResizeGrab {
+        direction: dir,
+        start_size: egui::vec2(1000.0, 700.0),
+        start_outer: Some(Pos2::new(50.0, 40.0)),
+        start_pointer: Pos2::new(3.0, 350.0),
+    };
+    let moved = grab(North).start_pointer + egui::vec2(40.0, 25.0);
+    // (direction, expected new size, expected new outer top-left)
+    let cases: [(egui::viewport::ResizeDirection, egui::Vec2, Option<Pos2>); 8] = [
+        (East, egui::vec2(1040.0, 700.0), Some(Pos2::new(50.0, 40.0))),
+        (West, egui::vec2(960.0, 700.0), Some(Pos2::new(90.0, 40.0))),
+        (
+            North,
+            egui::vec2(1000.0, 675.0),
+            Some(Pos2::new(50.0, 65.0)),
+        ),
+        (
+            South,
+            egui::vec2(1000.0, 725.0),
+            Some(Pos2::new(50.0, 40.0)),
+        ),
+        (
+            NorthEast,
+            egui::vec2(1040.0, 675.0),
+            Some(Pos2::new(50.0, 65.0)),
+        ),
+        (
+            SouthEast,
+            egui::vec2(1040.0, 725.0),
+            Some(Pos2::new(50.0, 40.0)),
+        ),
+        (
+            NorthWest,
+            egui::vec2(960.0, 675.0),
+            Some(Pos2::new(90.0, 65.0)),
+        ),
+        (
+            SouthWest,
+            egui::vec2(960.0, 725.0),
+            Some(Pos2::new(90.0, 40.0)),
+        ),
+    ];
+    for (dir, size, outer) in cases {
+        let (s, o) = crate::appbar::resize_step(grab(dir), moved);
+        assert_eq!(s, size, "{dir:?} size");
+        assert_eq!(o, outer, "{dir:?} outer anchor");
+    }
+}
+
+/// B-004 (ADR 017 v3): shrinking past the minimum is clamped — and the anchor
+/// follows the *clamped* size, so the opposite edge still lands exactly where
+/// the geometry says it should.
+#[test]
+fn resize_step_clamps_to_the_minimum_window_size() {
+    use egui::viewport::ResizeDirection::*;
+    let grab = crate::appbar::ResizeGrab {
+        direction: West,
+        start_size: egui::vec2(400.0, 700.0),
+        start_outer: Some(Pos2::new(50.0, 40.0)),
+        start_pointer: Pos2::new(3.0, 350.0),
+    };
+    // Drag the left edge 750 pt to the right → raw width would be -350.
+    let (size, outer) =
+        crate::appbar::resize_step(grab, grab.start_pointer + egui::vec2(750.0, 0.0));
+    assert_eq!(
+        size,
+        egui::vec2(crate::appbar::MIN_WINDOW_SIZE.x, 700.0),
+        "width clamped"
+    );
+    assert_eq!(
+        outer,
+        Some(Pos2::new(130.0, 40.0)),
+        "anchor follows the clamp"
+    );
+
+    // Unknown start position (headless): no anchor is produced, size still computed.
+    let grab = crate::appbar::ResizeGrab {
+        direction: North,
+        start_size: egui::vec2(1000.0, 700.0),
+        start_outer: None,
+        start_pointer: Pos2::new(500.0, 3.0),
+    };
+    let (size, outer) =
+        crate::appbar::resize_step(grab, grab.start_pointer + egui::vec2(0.0, -30.0));
+    assert_eq!(size, egui::vec2(1000.0, 730.0));
+    assert_eq!(outer, None);
+}
+
+/// FR14 (ADR 017 v3): an undecorated window has no border to grab, so the app
+/// owns resizing — invisible grips along all four screen edges and at the
+/// corners. Each grip shows its resize cursor on hover.
+#[test]
+fn window_edge_grips_show_their_cursor_on_hover() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     // Two priming frames: a brand-new `Area` runs one invisible "sizing pass"
     // (its widgets are disabled and therefore not hit-testable), and egui
@@ -3309,82 +3436,194 @@ fn window_edge_grips_queue_begin_resize_once() {
     let (w, h) = (WIN_W, WIN_H);
     let g = 3.0; // well inside the 6-pt grip band
 
-    let cases: [(Pos2, egui::viewport::ResizeDirection, egui::CursorIcon); 8] = [
-        (
-            Pos2::new(g, g),
-            egui::viewport::ResizeDirection::NorthWest,
-            egui::CursorIcon::ResizeNorthWest,
-        ),
-        (
-            Pos2::new(w / 2.0, g),
-            egui::viewport::ResizeDirection::North,
-            egui::CursorIcon::ResizeNorth,
-        ),
-        (
-            Pos2::new(w - g, g),
-            egui::viewport::ResizeDirection::NorthEast,
-            egui::CursorIcon::ResizeNorthEast,
-        ),
-        (
-            Pos2::new(g, h / 2.0),
-            egui::viewport::ResizeDirection::West,
-            egui::CursorIcon::ResizeWest,
-        ),
-        (
-            Pos2::new(w - g, h / 2.0),
-            egui::viewport::ResizeDirection::East,
-            egui::CursorIcon::ResizeEast,
-        ),
-        (
-            Pos2::new(g, h - g),
-            egui::viewport::ResizeDirection::SouthWest,
-            egui::CursorIcon::ResizeSouthWest,
-        ),
-        (
-            Pos2::new(w / 2.0, h - g),
-            egui::viewport::ResizeDirection::South,
-            egui::CursorIcon::ResizeSouth,
-        ),
-        (
-            Pos2::new(w - g, h - g),
-            egui::viewport::ResizeDirection::SouthEast,
-            egui::CursorIcon::ResizeSouthEast,
-        ),
+    let cases: [(Pos2, egui::CursorIcon); 8] = [
+        (Pos2::new(g, g), egui::CursorIcon::ResizeNorthWest),
+        (Pos2::new(w / 2.0, g), egui::CursorIcon::ResizeNorth),
+        (Pos2::new(w - g, g), egui::CursorIcon::ResizeNorthEast),
+        (Pos2::new(g, h / 2.0), egui::CursorIcon::ResizeWest),
+        (Pos2::new(w - g, h / 2.0), egui::CursorIcon::ResizeEast),
+        (Pos2::new(g, h - g), egui::CursorIcon::ResizeSouthWest),
+        (Pos2::new(w / 2.0, h - g), egui::CursorIcon::ResizeSouth),
+        (Pos2::new(w - g, h - g), egui::CursorIcon::ResizeSouthEast),
     ];
 
-    for (i, (pos, dir, icon)) in cases.iter().enumerate() {
-        // Hover: the grip shows its resize cursor.
+    for (i, (pos, icon)) in cases.iter().enumerate() {
         let out = gui.pump(vec![Event::PointerMoved(*pos)]);
         assert_eq!(
             out.platform_output.cursor_icon, *icon,
             "grip {i} ({pos:?}) hover cursor"
         );
-
-        // Press: exactly one `BeginResize(dir)` — on the press frame (drag-only sense).
-        let out = gui.pump(Gui::press_at(*pos));
-        let n = window_commands(&out)
-            .iter()
-            .filter(|c| matches!(c, egui::ViewportCommand::BeginResize(d) if d == dir))
-            .count();
-        assert_eq!(
-            n,
-            1,
-            "grip {i} ({pos:?}) press queues exactly one BeginResize({dir:?}); got {:?}",
-            window_commands(&out)
-        );
-
-        // Move + release: no further commands (same one-shot rule as StartDrag).
-        let out = gui.pump(vec![Event::PointerMoved(*pos + egui::vec2(5.0, 5.0))]);
-        assert!(
-            window_commands(&out).is_empty(),
-            "grip {i} move queues nothing"
-        );
-        let _ = gui.pump(Gui::release_at(*pos));
     }
 }
 
+/// B-004 (ADR 017 v3): pressing and dragging an edge/corner grip resizes the
+/// window — the app queues `InnerSize` with the pointer-driven size while the
+/// button is held, and nothing after release. No `BeginResize` is ever queued
+/// (the compositor-driven path did not work on KDE Plasma/KWin).
+#[test]
+fn edge_grip_press_and_drag_resizes_the_window() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.frame();
+    let _ = gui.frame(); // priming (see the hover test)
+    let (w, h) = (WIN_W, WIN_H);
+    let g = 3.0;
+
+    // (press pos, direction, expected size after dragging (+40, +25))
+    let cases: [(Pos2, egui::viewport::ResizeDirection, egui::Vec2); 8] = [
+        (
+            Pos2::new(g, g),
+            egui::viewport::ResizeDirection::NorthWest,
+            egui::vec2(w - 40.0, h - 25.0),
+        ),
+        (
+            Pos2::new(w / 2.0, g),
+            egui::viewport::ResizeDirection::North,
+            egui::vec2(w, h - 25.0),
+        ),
+        (
+            Pos2::new(w - g, g),
+            egui::viewport::ResizeDirection::NorthEast,
+            egui::vec2(w + 40.0, h - 25.0),
+        ),
+        (
+            Pos2::new(g, h / 2.0),
+            egui::viewport::ResizeDirection::West,
+            egui::vec2(w - 40.0, h),
+        ),
+        (
+            Pos2::new(w - g, h / 2.0),
+            egui::viewport::ResizeDirection::East,
+            egui::vec2(w + 40.0, h),
+        ),
+        (
+            Pos2::new(g, h - g),
+            egui::viewport::ResizeDirection::SouthWest,
+            egui::vec2(w - 40.0, h + 25.0),
+        ),
+        (
+            Pos2::new(w / 2.0, h - g),
+            egui::viewport::ResizeDirection::South,
+            egui::vec2(w, h + 25.0),
+        ),
+        (
+            Pos2::new(w - g, h - g),
+            egui::viewport::ResizeDirection::SouthEast,
+            egui::vec2(w + 40.0, h + 25.0),
+        ),
+    ];
+
+    for (i, (pos, dir, expected)) in cases.iter().enumerate() {
+        // Press: the gesture starts — and no `BeginResize` is queued (B-004).
+        let out = gui.pump(Gui::press_at(*pos));
+        assert!(
+            window_commands(&out)
+                .iter()
+                .all(|c| !matches!(c, egui::ViewportCommand::BeginResize(_))),
+            "grip {i} ({dir:?}) press must not queue BeginResize: {:?}",
+            window_commands(&out)
+        );
+
+        // Drag outward by (40, 25): the app queues exactly the new inner size.
+        let moved = *pos + egui::vec2(40.0, 25.0);
+        let out = gui.pump(vec![Event::PointerMoved(moved)]);
+        let sizes: Vec<egui::Vec2> = window_commands(&out)
+            .iter()
+            .filter_map(|c| match c {
+                egui::ViewportCommand::InnerSize(s) => Some(*s),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sizes,
+            vec![*expected],
+            "grip {i} ({dir:?}) drag size: {:?}",
+            window_commands(&out)
+        );
+
+        // Release: the gesture ends; the next frame queues nothing.
+        let _ = gui.pump(Gui::release_at(moved));
+        let out = gui.frame();
+        assert!(
+            window_commands(&out).is_empty(),
+            "grip {i} ({dir:?}) after release queues nothing: {:?}",
+            window_commands(&out)
+        );
+    }
+}
+
+/// B-004 (ADR 017 v3): dragging a west/north edge keeps the opposite edge
+/// fixed — each step re-anchors the window's outer position (`OuterPosition`),
+/// since `InnerSize` alone would grow/shrink from the top-left corner.
+#[test]
+fn west_and_north_grips_keep_the_opposite_edge_fixed() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let origin = Pos2::new(100.0, 60.0);
+    let (w, h) = (WIN_W, WIN_H);
+    let _ = gui.pump_viewport_at(origin, w, h, Vec::new());
+    let _ = gui.pump_viewport_at(origin, w, h, Vec::new()); // priming
+
+    // West edge, drag outward (left): the window gets wider and its left edge
+    // follows the pointer — right edge stays at 100 + w.
+    let pos = Pos2::new(3.0, h / 2.0);
+    let _ = gui.pump_viewport_at(origin, w, h, Gui::press_at(pos));
+    let out = gui.pump_viewport_at(
+        origin,
+        w,
+        h,
+        vec![Event::PointerMoved(pos + egui::vec2(-40.0, 0.0))],
+    );
+    let cmds = window_commands(&out);
+    assert!(
+        cmds.iter().any(
+            |c| matches!(c, egui::ViewportCommand::InnerSize(s) if *s == egui::vec2(w + 40.0, h))
+        ),
+        "west drag widens the window: {cmds:?}"
+    );
+    assert!(
+        cmds.iter().any(
+            |c| matches!(c, egui::ViewportCommand::OuterPosition(p) if *p == Pos2::new(60.0, 60.0))
+        ),
+        "west drag re-anchors the left edge: {cmds:?}"
+    );
+
+    // Release, then north edge, drag outward (up): taller window, top edge
+    // follows — bottom edge stays at 60 + h.
+    let _ = gui.pump_viewport_at(origin, w, h, Gui::release_at(pos + egui::vec2(-40.0, 0.0)));
+    let npos = Pos2::new(w / 2.0, 3.0);
+    let _ = gui.pump_viewport_at(origin, w, h, Gui::press_at(npos));
+    let out = gui.pump_viewport_at(
+        origin,
+        w,
+        h,
+        vec![Event::PointerMoved(npos + egui::vec2(0.0, -30.0))],
+    );
+    let cmds = window_commands(&out);
+    assert!(
+        cmds.iter().any(
+            |c| matches!(c, egui::ViewportCommand::InnerSize(s) if *s == egui::vec2(w, h + 30.0))
+        ),
+        "north drag grows the height: {cmds:?}"
+    );
+    assert!(
+        cmds.iter().any(
+            |c| matches!(c, egui::ViewportCommand::OuterPosition(p) if *p == Pos2::new(100.0, 30.0))
+        ),
+        "north drag re-anchors the top edge: {cmds:?}"
+    );
+
+    // Release: nothing more.
+    let _ = gui.pump_viewport_at(origin, w, h, Gui::release_at(npos + egui::vec2(0.0, -30.0)));
+    let out = gui.frame();
+    assert!(
+        window_commands(&out).is_empty(),
+        "after release: {:?}",
+        window_commands(&out)
+    );
+}
+
 /// A window narrower than two grip bands has no distinct edge zones: the grips are
-/// not registered at all — no resize cursor on hover, no `BeginResize` on press.
+/// not registered at all — no resize cursor on hover, no resize gesture (and thus
+/// no `InnerSize`/`OuterPosition`) can start on press.
 #[test]
 fn resize_grips_disappear_on_a_degenerate_window() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
@@ -3401,10 +3640,13 @@ fn resize_grips_disappear_on_a_degenerate_window() {
     );
     let out = gui.pump_screen(8.0, WIN_H, Gui::press_at(pos));
     assert!(
-        window_commands(&out)
-            .iter()
-            .all(|c| !matches!(c, egui::ViewportCommand::BeginResize(_))),
-        "no BeginResize on a degenerate window: {:?}",
+        window_commands(&out).iter().all(|c| !matches!(
+            c,
+            egui::ViewportCommand::BeginResize(_)
+                | egui::ViewportCommand::InnerSize(_)
+                | egui::ViewportCommand::OuterPosition(_)
+        )),
+        "no resize commands on a degenerate window: {:?}",
         window_commands(&out)
     );
 }
