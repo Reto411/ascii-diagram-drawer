@@ -158,7 +158,7 @@ impl Diagram {
     /// Sets one end of a connector to a new endpoint — the attach/detach conversion of
     /// CR-010 / ADR 013 v6. Attaching validates the target like [`Self::connect`];
     /// detaching (replacing an attached end with a free position) is always valid subject
-    /// to the zero-length rule.
+    /// to the zero-length rule. A rejected operation leaves the diagram unchanged.
     ///
     /// # Errors
     /// [`ModelError::UnknownObject`] when the id does not exist, [`ModelError::NotAConnector`]
@@ -177,11 +177,19 @@ impl Diagram {
             None => return Err(ModelError::UnknownObject(id.clone())),
             Some(_) => return Err(ModelError::NotAConnector(id.clone())),
         };
+        // Validate the prospective endpoints *before* mutating so a rejected
+        // zero-length result leaves the aggregate unchanged (S-043: property tests
+        // caught the old mutate-then-reject order leaving a zero-length connector).
+        let (from, to) = match end {
+            ConnectorEnd::Source => (&endpoint, &connector.to),
+            ConnectorEnd::Target => (&connector.from, &endpoint),
+        };
+        Self::reject_zero_length(id, from, to)?;
         match end {
             ConnectorEnd::Source => connector.from = endpoint,
             ConnectorEnd::Target => connector.to = endpoint,
-        };
-        Self::reject_zero_length(id, &connector.from, &connector.to)
+        }
+        Ok(())
     }
 
     /// Mutable access to a connector's bend list (aggregate-internal).
@@ -1049,6 +1057,15 @@ mod tests {
                 ConnectorEndpoint::Free(CellPos::new(9, 9))
             ),
             Err(ModelError::ZeroLengthConnector(oid("c1")))
+        );
+        // S-043 regression: a rejected zero-length operation must leave the diagram
+        // unchanged — the target end is still attached where it was before the attempt.
+        let Object::Connector(connector) = diagram.get(&oid("c1")).expect("present") else {
+            panic!("connector missing")
+        };
+        assert_eq!(
+            connector.to,
+            ConnectorEndpoint::Attached(AnchorRef::new(oid("s2"), "w").expect("valid anchor"))
         );
 
         // Unknown object and non-connector targets are rejected.
