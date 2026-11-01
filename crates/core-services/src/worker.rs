@@ -17,6 +17,7 @@ use std::sync::mpsc::{Sender, SyncSender};
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread::JoinHandle;
 
+use diagram_model::color::DiagramColors;
 use render_pipeline::ResolvedGrid;
 use ui_api::{ExportError, Exporter};
 
@@ -84,6 +85,7 @@ impl PngJob {
 #[cfg(not(target_arch = "wasm32"))]
 struct PngWork {
     grid: ResolvedGrid,
+    colors: DiagramColors,
     reply: Sender<Result<Vec<u8>, ExportError>>,
 }
 
@@ -150,15 +152,17 @@ impl PngWorker {
         return Self {};
     }
 
-    /// Submits a job. On threaded workers this never blocks beyond the enqueue —
-    /// a full bounded queue yields [`QueueFull`]; inline workers rasterize now.
-    pub fn submit(&self, grid: &ResolvedGrid) -> Result<PngJob, QueueFull> {
+    /// Submits a job for `grid` with the diagram's per-media colors (FR15). On
+    /// threaded workers this never blocks beyond the enqueue — a full bounded queue
+    /// yields [`QueueFull`]; inline workers rasterize now.
+    pub fn submit(&self, grid: &ResolvedGrid, colors: &DiagramColors) -> Result<PngJob, QueueFull> {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(queue) = &self.queue {
             let (reply_tx, reply_rx) = mpsc::channel();
             queue
                 .try_send(PngWork {
                     grid: grid.clone(),
+                    colors: *colors,
                     reply: reply_tx,
                 })
                 .map_err(|_| QueueFull)?;
@@ -168,7 +172,7 @@ impl PngWorker {
         // Inline path (always on wasm32; native via `inline()`): run the same
         // exporter call and hand back an already-complete job.
         let (reply_tx, reply_rx) = mpsc::channel();
-        let result = GridExporter.to_png(grid);
+        let result = GridExporter.to_png(grid, colors);
         reply_tx
             .send(result)
             .expect("the reply receiver is alive for this call");
@@ -198,7 +202,7 @@ fn run_worker(receiver: mpsc::Receiver<PngWork>) {
     let exporter = GridExporter;
     for work in receiver.iter() {
         // A dropped handle means the send fails — the job is simply unobserved.
-        let _ = work.reply.send(exporter.to_png(&work.grid));
+        let _ = work.reply.send(exporter.to_png(&work.grid, &work.colors));
     }
 }
 
@@ -245,8 +249,9 @@ mod tests {
         let worker = PngWorker::with_capacity(1);
         let grid = large_grid();
 
-        let outcomes: Vec<Result<PngJob, QueueFull>> =
-            (0..3).map(|_| worker.submit(&grid)).collect();
+        let outcomes: Vec<Result<PngJob, QueueFull>> = (0..3)
+            .map(|_| worker.submit(&grid, &DiagramColors::default()))
+            .collect();
         let rejected = outcomes
             .iter()
             .filter(|o| matches!(o, Err(QueueFull)))
@@ -278,7 +283,9 @@ mod tests {
         let grid = large_grid();
 
         let started = Instant::now();
-        let job = worker.submit(&grid).expect("submits");
+        let job = worker
+            .submit(&grid, &DiagramColors::default())
+            .expect("submits");
         let submit_elapsed = started.elapsed();
         assert!(
             submit_elapsed < Duration::from_millis(50),
@@ -307,7 +314,9 @@ mod tests {
         let worker = PngWorker::new();
         let grid = small_grid();
 
-        let job = worker.submit(&grid).expect("submits");
+        let job = worker
+            .submit(&grid, &DiagramColors::default())
+            .expect("submits");
         match wait_for(&job) {
             JobState::Done(png) => {
                 assert_eq!(png, exporters::to_png(&grid).expect("direct call"));
@@ -324,7 +333,9 @@ mod tests {
         let worker = PngWorker::inline();
         let grid = small_grid();
 
-        let job = worker.submit(&grid).expect("submits");
+        let job = worker
+            .submit(&grid, &DiagramColors::default())
+            .expect("submits");
         match job.poll() {
             JobState::Done(png) => {
                 assert_eq!(png, exporters::to_png(&grid).expect("direct call"));
@@ -363,7 +374,9 @@ mod tests {
         assert!(QueueFull.to_string().contains("queue is full"));
 
         let worker = PngWorker::default();
-        let job = worker.submit(&small_grid()).expect("submits");
+        let job = worker
+            .submit(&small_grid(), &DiagramColors::default())
+            .expect("submits");
         match wait_for(&job) {
             JobState::Done(png) => assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n"),
             other => panic!("expected Done, got {other:?}"),
@@ -378,10 +391,14 @@ mod tests {
         let big = large_grid();
         let small = small_grid();
 
-        let first = worker.submit(&big).expect("submits");
+        let first = worker
+            .submit(&big, &DiagramColors::default())
+            .expect("submits");
         // `big` is in flight (rasterization takes >100 ms), so `small` sits queued.
         std::thread::sleep(Duration::from_millis(50));
-        let queued = worker.submit(&small).expect("goes into the queue");
+        let queued = worker
+            .submit(&small, &DiagramColors::default())
+            .expect("goes into the queue");
         drop(worker);
 
         // New submissions are impossible (the sender is gone), but both existing jobs

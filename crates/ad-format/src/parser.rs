@@ -8,6 +8,7 @@
 
 use diagram_model::Diagram;
 use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
+use diagram_model::color::{ColorRole, Rgb};
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::invariants::ModelError;
 use diagram_model::objects::{
@@ -18,8 +19,9 @@ use crate::error::ParseError;
 
 /// The major format version this reader implements.
 const MAJOR: u32 = 1;
-/// The minor version this reader implements; files with a higher minor are read in forward-compat mode.
-const MINOR: u32 = 0;
+/// The minor version this reader implements (1.1 adds the `colors` statement, CR-009);
+/// files with a higher minor are read in forward-compat mode.
+const MINOR: u32 = 1;
 
 /// A parsed `.ad` file: the diagram content plus unknown statements preserved verbatim,
 /// so re-saving after a minor-version upgrade loses nothing (QS7).
@@ -76,6 +78,7 @@ pub fn parse_document(input: &str) -> Result<Document, ParseError> {
     let mut header_seen = false;
     let mut version = (MAJOR, MINOR);
     let mut scale_seen = false;
+    let mut colors_seen = false;
 
     for (index, raw_line) in input.lines().enumerate() {
         let line_no = index.saturating_add(1);
@@ -93,6 +96,7 @@ pub fn parse_document(input: &str) -> Result<Document, ParseError> {
         }
         match first.as_str() {
             "scale" => parse_scale(&tokens, line_no, &mut scale_seen, &mut diagram)?,
+            "colors" => parse_colors(&tokens, line_no, &mut colors_seen, &mut diagram)?,
             "shape" => {
                 let mut cursor = Cursor::new(&tokens);
                 cursor.next(); // consume the matched "shape" keyword
@@ -385,6 +389,102 @@ fn parse_scale(
         .set_scale(value)
         .map_err(|e| model_error(e, line_no, 1))?;
     *scale_seen = true;
+    Ok(())
+}
+
+/// Parses `colors [<role> "#rrggbb"]+` (CR-009); at most one per file and it must
+/// precede every object statement, like `scale`. Roles are bare words (`background`,
+/// `fill`, `lines`), hex values quoted strings; each role at most once per statement.
+fn parse_colors(
+    tokens: &[Token],
+    line_no: usize,
+    colors_seen: &mut bool,
+    diagram: &mut Diagram,
+) -> Result<(), ParseError> {
+    let col = |tokens: &[Token]| tokens.first().map_or(1, |t| t.column);
+    if *colors_seen {
+        return Err(ParseError::new(
+            line_no,
+            col(tokens),
+            "duplicate 'colors' statement — at most one per file",
+        ));
+    }
+    if !diagram.is_empty() {
+        return Err(ParseError::new(
+            line_no,
+            col(tokens),
+            "'colors' must precede every object statement",
+        ));
+    }
+    let mut cursor = Cursor::new(tokens);
+    cursor.next(); // consume the matched "colors" keyword
+    let mut any = false;
+    let mut seen_roles: Vec<ColorRole> = Vec::new();
+    while let Some(role_token) = cursor.peek() {
+        // Copy the token data out: peek borrows the cursor, which the next() calls below need.
+        let role_text = role_token.as_str().to_owned();
+        let role_col = role_token.column;
+        let role = ColorRole::parse(&role_text).ok_or_else(|| {
+            ParseError::new(
+                line_no,
+                role_col,
+                format!(
+                    "unknown color role '{role_text}' — expected 'background', 'fill' or 'lines'"
+                ),
+            )
+        })?;
+        if seen_roles.contains(&role) {
+            return Err(ParseError::new(
+                line_no,
+                role_col,
+                format!("duplicate color role '{role_text}' in one 'colors' statement"),
+            ));
+        }
+        cursor.next(); // consume the role word
+        let Some(hex_token) = cursor.peek() else {
+            return Err(ParseError::new(
+                line_no,
+                1,
+                format!("statement is truncated — expected the {role_text} color value"),
+            ));
+        };
+        // Same: copy out the fields the error paths need before consuming.
+        let (hex_quoted, hex_col, hex_text) = (
+            hex_token.quoted,
+            hex_token.column,
+            hex_token.as_str().to_owned(),
+        );
+        if !hex_quoted {
+            return Err(ParseError::new(
+                line_no,
+                hex_col,
+                format!(
+                    "expected a quoted \"#rrggbb\" value for the {role_text} color, found bare word '{hex_text}'"
+                ),
+            ));
+        }
+        cursor.next(); // consume the quoted hex value
+        let rgb = Rgb::from_hex(&hex_text).map_err(|_| {
+            ParseError::new(
+                line_no,
+                hex_col,
+                format!(
+                    "'{hex_text}' is not a valid color — expected \"#rrggbb\" (six hex digits after '#')"
+                ),
+            )
+        })?;
+        diagram.set_color(role, Some(rgb));
+        seen_roles.push(role);
+        any = true;
+    }
+    if !any {
+        return Err(ParseError::new(
+            line_no,
+            col(tokens),
+            "'colors' statement is empty — expected at least one <role> \"#rrggbb\" pair",
+        ));
+    }
+    *colors_seen = true;
     Ok(())
 }
 
@@ -1055,6 +1155,127 @@ mod tests {
         );
     }
 
+    /// FR15 — the `colors` statement sets presentation colors on the aggregate (CR-009).
+    #[test]
+    fn colors_statement_sets_roles() {
+        let input = "ad 1.1\nscale 2\ncolors background \"#ff0000\" fill \"#ffffff\" lines \"#0a1b2c\"\ntext as t1 \"x\" at 0 0\n";
+        let diagram = parse(input).expect("valid");
+        assert_eq!(
+            diagram.colors().get(ColorRole::Background),
+            Some(Rgb::new(255, 0, 0))
+        );
+        assert_eq!(
+            diagram.colors().get(ColorRole::Fill),
+            Some(Rgb::new(255, 255, 255))
+        );
+        assert_eq!(
+            diagram.colors().get(ColorRole::LineText),
+            Some(Rgb::new(10, 27, 44))
+        );
+    }
+
+    /// A subset of roles in any order within the statement parses; hex is case-insensitive.
+    #[test]
+    fn colors_subset_and_order_independent() {
+        let input = "ad 1.1\ncolors lines \"#AABBCC\" background \"#000001\"\n";
+        let diagram = parse(input).expect("valid");
+        assert_eq!(
+            diagram.colors().get(ColorRole::LineText),
+            Some(Rgb::new(0xaa, 0xbb, 0xcc))
+        );
+        assert_eq!(
+            diagram.colors().get(ColorRole::Background),
+            Some(Rgb::new(0, 0, 1))
+        );
+        assert_eq!(diagram.colors().get(ColorRole::Fill), None);
+    }
+
+    /// A v1.0 file without a `colors` statement still parses (backward compatibility).
+    #[test]
+    fn v1_0_file_without_colors_parses() {
+        let diagram = parse("ad 1.0\nscale 1\ntext as t1 \"x\" at 0 0\n").expect("valid");
+        assert!(!diagram.colors().has_any());
+    }
+
+    #[test]
+    fn colors_unknown_role_is_rejected_with_position() {
+        let err = assert_error("ad 1.1\ncolors border \"#ff0000\"\n", 2, 8);
+        assert!(
+            err.message.contains("unknown color role 'border'"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn colors_duplicate_role_in_one_statement_is_rejected() {
+        let err = assert_error("ad 1.1\ncolors fill \"#ff0000\" fill \"#00ff00\"\n", 2, 23);
+        assert!(
+            err.message.contains("duplicate color role 'fill'"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn colors_invalid_hex_is_rejected_with_position() {
+        // The quoted token starts at its opening quote (column 13).
+        let err = assert_error("ad 1.1\ncolors fill \"#zzz000\"\n", 2, 13);
+        assert!(
+            err.message.contains("not a valid color"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn colors_unquoted_hex_is_rejected() {
+        // A bare `#hex` would be a comment — the unquoted branch fires on a bare word.
+        let err = assert_error("ad 1.1\ncolors fill ff0000\n", 2, 13);
+        assert!(
+            err.message.contains("expected a quoted"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn colors_empty_statement_is_rejected() {
+        let err = assert_error("ad 1.1\ncolors\n", 2, 1);
+        assert!(err.message.contains("empty"), "message: {}", err.message);
+    }
+
+    #[test]
+    fn colors_duplicate_statement_is_rejected() {
+        let err = assert_error(
+            "ad 1.1\ncolors fill \"#ff0000\"\ncolors lines \"#00ff00\"\n",
+            3,
+            1,
+        );
+        assert!(
+            err.message.contains("duplicate 'colors' statement"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn colors_after_objects_is_rejected() {
+        let input = "ad 1.1\ntext as t1 \"x\" at 0 0\ncolors fill \"#ff0000\"\n";
+        let err = assert_error(input, 3, 1);
+        assert!(err.message.contains("precede"), "message: {}", err.message);
+    }
+
+    #[test]
+    fn colors_truncated_after_role_is_rejected() {
+        let err = assert_error("ad 1.1\ncolors fill\n", 2, 1);
+        assert!(
+            err.message.contains("truncated"),
+            "message: {}",
+            err.message
+        );
+    }
+
     #[test]
     fn duplicate_id_is_a_model_error_with_position() {
         let input = "ad 1.0\ntext as t1 \"x\" at 0 0\ntext as t1 \"y\" at 1 1\n";
@@ -1172,7 +1393,7 @@ mod tests {
         let diagram = parse(input).expect("valid");
         assert_eq!(
             serialize(&diagram),
-            "ad 1.0\nscale 2\ntext as t1 \"x\" at 0 0\n"
+            "ad 1.1\nscale 2\ntext as t1 \"x\" at 0 0\n"
         );
     }
 
@@ -1207,7 +1428,7 @@ mod tests {
         let diagram = parse(input).expect("valid");
         assert_eq!(
             serialize(&diagram),
-            "ad 1.0\nscale 2\ntext as t1 \"x\" at 0 0\n"
+            "ad 1.1\nscale 2\ntext as t1 \"x\" at 0 0\n"
         );
     }
 
@@ -1225,7 +1446,7 @@ mod tests {
     #[test]
     fn lenient_three_token_header_version_is_accepted() {
         let diagram = parse("ad 1 . 0\nscale 2\n").expect("valid");
-        assert_eq!(serialize(&diagram), "ad 1.0\nscale 2\n");
+        assert_eq!(serialize(&diagram), "ad 1.1\nscale 2\n");
     }
 
     #[test]

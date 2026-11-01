@@ -129,12 +129,15 @@ mod tests {
             assert!(
                 services
                     .exporter
-                    .to_svg(&grid)
+                    .to_svg(&grid, &diagram.colors())
                     .expect("svg")
                     .starts_with("<svg")
             );
             assert_eq!(
-                &services.exporter.to_png(&grid).expect("png")[..8],
+                &services
+                    .exporter
+                    .to_png(&grid, &diagram.colors())
+                    .expect("png")[..8],
                 b"\x89PNG\r\n\x1a\n"
             );
             assert!(services.catalog.get("box").is_some());
@@ -150,7 +153,7 @@ mod tests {
             renderer: Arc::new(FakeRenderer::with_grid(
                 ResolvedGrid::from_rows(&["+---+"]).expect("valid grid"),
             )),
-            exporter: Arc::new(FakeExporter),
+            exporter: Arc::new(FakeExporter::default()),
             catalog: Arc::new(FakeCatalog::default().add(
                 ShapeInfo::builtin(
                     "box",

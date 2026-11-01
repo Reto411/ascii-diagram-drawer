@@ -887,7 +887,7 @@ fn save_as_types_path_survives_frames_and_writes_the_file() {
 
     assert!(path.exists(), "the file written by Save As exists");
     let content = std::fs::read_to_string(&path).unwrap();
-    assert!(content.starts_with("ad 1.0"), "valid .ad header");
+    assert!(content.starts_with("ad 1.1"), "valid .ad header");
     assert!(content.contains("shape box"), "diagram content serialized");
     assert_eq!(gui.app.current_file().unwrap(), path.as_path());
     assert_status(&out, "Saved");
@@ -2059,7 +2059,10 @@ fn visual_dump() {
     {
         let mut app = DrawingApp::with_config(
             Services::native(),
-            crate::config::AppConfig { theme: Theme::Dark },
+            crate::config::AppConfig {
+                theme: Theme::Dark,
+                ..Default::default()
+            },
             None,
         );
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -2083,6 +2086,7 @@ fn visual_dump() {
             Services::native(),
             crate::config::AppConfig {
                 theme: Theme::Light,
+                ..Default::default()
             },
             None,
         );
@@ -2098,6 +2102,28 @@ fn visual_dump() {
         let mut gui = Gui::new(app);
         let out = gui.frame();
         shot(&gui.ctx, &out, "11-material-light.png");
+    }
+
+    // 12. Diagram colors dialog: all roles at the medium default (FR15 / CR-009).
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let out = gui.open_color_dialog();
+        shot(&gui.ctx, &out, "12-color-dialog-default.png");
+    }
+
+    // 13. Diagram colors dialog with two roles set — swatches + recent strip.
+    {
+        let mut gui = Gui::new(DrawingApp::new(Services::native()));
+        let out = gui.open_color_dialog();
+        gui.click_color_row_field(&out, 1);
+        let _ = gui.type_text("#ff0000");
+        let out = gui.frame();
+        let out = gui.click_color_row_action(&out, 1, "Set");
+        gui.click_color_row_field(&out, 0);
+        let _ = gui.type_text("#3c6ef5");
+        let out = gui.frame();
+        let out = gui.click_color_row_action(&out, 0, "Set");
+        shot(&gui.ctx, &out, "13-color-dialog-filled.png");
     }
 
     eprintln!("visual dump written to {dir:?}");
@@ -2936,8 +2962,14 @@ fn canvas_is_pixel_identical_under_both_palettes() {
         .join("tests/fixtures/two-boxes-connector.ad");
 
     let raster = |theme: Theme| -> (Vec<[u8; 4]>, Rect) {
-        let mut app =
-            DrawingApp::with_config(Services::native(), crate::config::AppConfig { theme }, None);
+        let mut app = DrawingApp::with_config(
+            Services::native(),
+            crate::config::AppConfig {
+                theme,
+                ..Default::default()
+            },
+            None,
+        );
         match app.open(&path) {
             crate::fileio::OpenOutcome::Loaded { .. } => {}
             other => panic!(
@@ -2992,8 +3024,14 @@ fn material_theme_goldens_match_committed_pngs() {
         (Theme::Dark, "material-dark.png"),
         (Theme::Light, "material-light.png"),
     ] {
-        let mut app =
-            DrawingApp::with_config(Services::native(), crate::config::AppConfig { theme }, None);
+        let mut app = DrawingApp::with_config(
+            Services::native(),
+            crate::config::AppConfig {
+                theme,
+                ..Default::default()
+            },
+            None,
+        );
         match app.open(&fixture) {
             crate::fileio::OpenOutcome::Loaded { .. } => {}
             other => panic!(
@@ -3209,5 +3247,265 @@ fn preview_problem_message_shows_in_the_pane() {
     assert!(
         find_text(&out, "Pick a shape").is_some(),
         "canvas unaffected by the pane error"
+    );
+}
+
+// ── Diagram colors dialog (FR15 / CR-009) ───────────────────────────────
+
+impl Gui {
+    /// Open the “Diagram colors” dialog via View ▾ → Diagram colors… and frame.
+    fn open_color_dialog(&mut self) -> egui::FullOutput {
+        let _ = self.click_menu_item("View ▾", "Diagram colors…");
+        self.frame()
+    }
+
+    /// The rects of the three rows' `Set` buttons, top to bottom (row order =
+    /// Background, Fill, Lines & text).
+    fn color_set_buttons(out: &egui::FullOutput) -> Vec<Rect> {
+        texts(out)
+            .into_iter()
+            .filter(|(t, _)| *t == "Set")
+            .map(|(_, r)| r)
+            .collect::<Vec<_>>()
+    }
+
+    /// Click the hex text field of dialog row `row` — it sits just left of that row's
+    /// Set button (90 px wide) — so the following `type_text` lands in it.
+    fn click_color_row_field(&mut self, out: &egui::FullOutput, row: usize) -> egui::FullOutput {
+        let sets = Self::color_set_buttons(out);
+        assert_eq!(sets.len(), 3, "the dialog shows one Set per role");
+        let set = &sets[row];
+        self.click_at(Pos2::new(set.min.x - 50.0, set.center().y))
+    }
+
+    /// Click row `row`'s Set (or Reset) button.
+    fn click_color_row_action(
+        &mut self,
+        out: &egui::FullOutput,
+        row: usize,
+        action: &str,
+    ) -> egui::FullOutput {
+        let sets = texts(out)
+            .into_iter()
+            .filter(|(t, _)| *t == action)
+            .map(|(_, r)| r)
+            .collect::<Vec<_>>();
+        assert_eq!(sets.len(), 3, "the dialog shows one {action} per role");
+        self.click_at(sets[row].center())
+    }
+
+    /// The filled 18×18 swatches below `y` (the recent-colors strip), left to right.
+    fn recent_strip_swatches(out: &egui::FullOutput, y: f32) -> Vec<(Rect, Color32)> {
+        filled_rects(out)
+            .into_iter()
+            .filter(|(r, _)| r.min.y >= y && (15.0..=21.0).contains(&r.width()))
+            .collect()
+    }
+}
+
+/// AC5 — View ▾ → Diagram colors… opens the dialog with one row per role; all roles
+/// unset shows each medium's "(default)" state.
+#[test]
+fn view_menu_opens_the_color_dialog_with_one_row_per_role() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.open_color_dialog();
+    assert!(
+        find_text_exact(&out, "Diagram colors").is_some(),
+        "window title"
+    );
+    for label in ["Background", "Shape fill", "Lines & text"] {
+        assert!(
+            find_text_exact(&out, label).is_some(),
+            "row for {label:?} is shown; texts: {:?}",
+            texts(&out).into_iter().map(|(t, _)| t).collect::<Vec<_>>()
+        );
+    }
+    // No role set yet → every row advertises the medium default.
+    let defaults = texts(&out)
+        .iter()
+        .filter(|(t, _)| *t == "(default)")
+        .count();
+    assert_eq!(defaults, 3, "all three rows show (default)");
+}
+
+/// AC5 — typing a hex into a row and pressing Set writes the model live (the canvas
+/// and preview follow on their own hash gates), records the color in the recent
+/// strip, and persists it to the options file.
+#[test]
+fn color_dialog_set_writes_the_model_and_persists_recent() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.json");
+    let app = DrawingApp::with_config(
+        Services::native(),
+        crate::config::AppConfig::default(),
+        Some(path.clone()),
+    );
+    let mut gui = Gui::new(app);
+    let out = gui.open_color_dialog();
+
+    // Fill row (index 1): focus its field, type the color, press its Set.
+    gui.click_color_row_field(&out, 1);
+    let _ = gui.type_text("#ff0000");
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 1, "Set");
+
+    use diagram_model::color::{ColorRole, Rgb};
+    assert_eq!(
+        gui.app.diagram.colors().get(ColorRole::Fill),
+        Some(Rgb::new(0xff, 0x00, 0x00)),
+        "the model carries the new fill color"
+    );
+    assert_eq!(
+        gui.app.config().recent_colors,
+        vec!["#ff0000".to_owned()],
+        "the color joined the recent strip"
+    );
+    let json = std::fs::read_to_string(&path).expect("options file written");
+    assert!(json.contains("\"recent_colors\""), "persisted: {json}");
+    assert!(json.contains("#ff0000"), "persisted: {json}");
+
+    // The row's swatch now paints the chosen color (WYSIWYG feedback in the dialog).
+    let out = gui.frame();
+    assert!(
+        filled_rects(&out)
+            .iter()
+            .any(|(r, c)| *c == Color32::from_rgb(0xff, 0x00, 0x00) && r.width() > 15.0),
+        "the Fill row shows a red swatch"
+    );
+}
+
+/// AC5 — Reset removes the role from the model (medium default returns) and clears
+/// the row's field.
+#[test]
+fn color_dialog_reset_clears_the_role_and_field() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.open_color_dialog();
+    gui.click_color_row_field(&out, 1);
+    let _ = gui.type_text("#00ff00");
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 1, "Set");
+
+    use diagram_model::color::{ColorRole, Rgb};
+    assert_eq!(
+        gui.app.diagram.colors().get(ColorRole::Fill),
+        Some(Rgb::new(0x00, 0xff, 0x00))
+    );
+
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 1, "Reset");
+    assert_eq!(gui.app.diagram.colors().get(ColorRole::Fill), None);
+    // The field is cleared — the typed hex no longer appears as row text.
+    let out = gui.frame();
+    assert!(
+        !texts(&out).iter().any(|(t, _)| t.contains("00ff00")),
+        "the reset row's field is empty"
+    );
+}
+
+/// AC6 — the recent strip lists used colors newest-first; clicking a swatch applies
+/// it to the active role (the last row touched).
+#[test]
+fn recent_strip_applies_a_color_to_the_active_role() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.open_color_dialog();
+
+    // Fill first, then Background — the strip must read newest-first afterwards.
+    gui.click_color_row_field(&out, 1);
+    let _ = gui.type_text("#123456");
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 1, "Set");
+
+    let out = gui.frame();
+    gui.click_color_row_field(&out, 0);
+    let _ = gui.type_text("#abcdef");
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 0, "Set");
+
+    use diagram_model::color::{ColorRole, Rgb};
+    assert_eq!(
+        gui.app.config().recent_colors,
+        vec!["#abcdef".to_owned(), "#123456".to_owned()],
+        "newest first"
+    );
+
+    // The strip: two swatches below the "Recent (…)" label — left = #abcdef,
+    // right = #123456. Click the OLDER one; it applies to the active role
+    // (Background — the last row touched).
+    let out = gui.frame();
+    let recent_y = find_text(&out, "Recent (applies to")
+        .expect("the strip label is shown")
+        .min
+        .y;
+    let swatches = Gui::recent_strip_swatches(&out, recent_y);
+    assert_eq!(swatches.len(), 2, "two recent colors");
+    assert_eq!(
+        swatches[0].1,
+        Color32::from_rgb(0xab, 0xcd, 0xef),
+        "newest left"
+    );
+    assert_eq!(swatches[1].1, Color32::from_rgb(0x12, 0x34, 0x56));
+
+    let _ = gui.click_at(swatches[1].0.center());
+    assert_eq!(
+        gui.app.diagram.colors().get(ColorRole::Background),
+        Some(Rgb::new(0x12, 0x34, 0x56)),
+        "the swatch applied to the active role"
+    );
+    // And it moved to the front of the strip.
+    assert_eq!(
+        gui.app.config().recent_colors,
+        vec!["#123456".to_owned(), "#abcdef".to_owned()]
+    );
+}
+
+/// AC6 — re-setting a color through the dialog moves it to the front of the recent
+/// strip without duplicating it (the field still holds the value after Set).
+#[test]
+fn recent_colors_deduplicate_when_re_set() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.open_color_dialog();
+
+    // Two distinct colors: Fill, then Background.
+    gui.click_color_row_field(&out, 1);
+    let _ = gui.type_text("#123456");
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 1, "Set");
+
+    let out = gui.frame();
+    gui.click_color_row_field(&out, 0);
+    let _ = gui.type_text("#abcdef");
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 0, "Set");
+    assert_eq!(
+        gui.app.config().recent_colors,
+        vec!["#abcdef".to_owned(), "#123456".to_owned()]
+    );
+
+    // Press Fill's Set again — its field still holds #123456: it must move to the
+    // front, not duplicate.
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 1, "Set");
+    assert_eq!(
+        gui.app.config().recent_colors,
+        vec!["#123456".to_owned(), "#abcdef".to_owned()],
+        "moved to front, no duplicate"
+    );
+}
+
+/// AC4/AC5 — an invalid hex never touches the model and is reported in the status bar.
+#[test]
+fn color_dialog_rejects_invalid_hex() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.open_color_dialog();
+    gui.click_color_row_field(&out, 2);
+    let _ = gui.type_text("zz");
+    let out = gui.frame();
+    gui.click_color_row_action(&out, 2, "Set");
+
+    use diagram_model::color::ColorRole;
+    assert_eq!(gui.app.diagram.colors().get(ColorRole::LineText), None);
+    assert!(
+        find_text(&gui.frame(), "not a #rrggbb color").is_some(),
+        "the parse failure is explained in the status bar"
     );
 }

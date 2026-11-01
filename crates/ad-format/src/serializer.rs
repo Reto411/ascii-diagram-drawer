@@ -7,12 +7,13 @@
 
 use diagram_model::Diagram;
 use diagram_model::anchors::ConnectorEndpoint;
+use diagram_model::color::{ColorRole, DiagramColors};
 use diagram_model::objects::{ConnectorStyle, Object, ShapeInstance, TextInstance, TipStyle};
 
 use crate::parser::{Document, Slot};
 
-/// The version emitted by this writer.
-const VERSION: &str = "ad 1.0";
+/// The version emitted by this writer (1.1 adds the `colors` statement, CR-009).
+const VERSION: &str = "ad 1.1";
 
 /// Serializes a [`Diagram`] to canonical `.ad` text.
 #[must_use]
@@ -21,6 +22,7 @@ pub fn serialize(diagram: &Diagram) -> String {
     out.push_str(VERSION);
     out.push('\n');
     push_scale(&mut out, diagram.scale());
+    push_colors(&mut out, diagram.colors());
     for object in diagram.objects() {
         push_object(&mut out, object);
     }
@@ -36,6 +38,7 @@ pub fn serialize_document(document: &Document) -> String {
     push_version(&mut out, document.version.0, document.version.1);
     out.push('\n');
     push_scale(&mut out, document.diagram.scale());
+    push_colors(&mut out, document.diagram.colors());
     for slot in &document.slots {
         match slot {
             Slot::Object(index) => {
@@ -63,6 +66,26 @@ fn push_version(out: &mut String, major: u32, minor: u32) {
 fn push_scale(out: &mut String, scale: u32) {
     out.push_str("scale ");
     out.push_str(&scale.to_string());
+    out.push('\n');
+}
+
+/// Emits the `colors` statement (CR-009) — only when at least one role is set, so
+/// color-free files keep their historical shape. Roles appear in canonical order
+/// (`background`, `fill`, `lines`) with lowercase hex values.
+fn push_colors(out: &mut String, colors: DiagramColors) {
+    if !colors.has_any() {
+        return;
+    }
+    out.push_str("colors");
+    for role in ColorRole::ALL {
+        if let Some(rgb) = colors.get(role) {
+            out.push(' ');
+            out.push_str(role.name());
+            out.push_str(" \"");
+            out.push_str(&rgb.to_hex());
+            out.push('"');
+        }
+    }
     out.push('\n');
 }
 
@@ -243,13 +266,46 @@ mod tests {
     #[test]
     fn empty_diagram_serializes_to_header_and_default_scale() {
         let diagram = Diagram::new();
-        assert_eq!(serialize(&diagram), "ad 1.0\nscale 1\n");
+        assert_eq!(serialize(&diagram), "ad 1.1\nscale 1\n");
+    }
+
+    /// FR15 — the `colors` statement is emitted only when at least one role is set,
+    /// in canonical role order with lowercase hex, and round-trips byte-stably (CR-009).
+    #[test]
+    fn colors_statement_is_emitted_canonically_and_round_trips() {
+        let mut diagram = Diagram::new();
+        use diagram_model::color::{ColorRole, Rgb};
+        // Set out of canonical order; uppercase input must come back lowercase.
+        diagram.set_color(ColorRole::LineText, Some(Rgb::new(0x0a, 0x1b, 0x2c)));
+        diagram.set_color(ColorRole::Background, Some(Rgb::new(255, 0, 0)));
+
+        let out = serialize(&diagram);
+        assert_eq!(
+            out,
+            "ad 1.1\nscale 1\ncolors background \"#ff0000\" lines \"#0a1b2c\"\n"
+        );
+        let reparsed = crate::parser::parse(&out).expect("round-trips");
+        assert_eq!(serialize(&reparsed), out);
+        assert_eq!(reparsed.colors(), diagram.colors());
+    }
+
+    /// No colors set → no `colors` line: color-free files keep their historical shape.
+    #[test]
+    fn colors_statement_absent_when_unset() {
+        let mut diagram = Diagram::new();
+        assert!(!serialize(&diagram).contains("colors"));
+        // Setting and then clearing a role also removes the statement again.
+        use diagram_model::color::{ColorRole, Rgb};
+        diagram.set_color(ColorRole::Fill, Some(Rgb::new(1, 2, 3)));
+        assert!(serialize(&diagram).contains("colors fill"));
+        diagram.set_color(ColorRole::Fill, None);
+        assert!(!serialize(&diagram).contains("colors"));
     }
 
     #[test]
     fn sample_diagram_matches_expected_canonical_text() {
         let out = serialize(&sample_diagram());
-        let expected = "ad 1.0\n\
+        let expected = "ad 1.1\n\
             scale 2\n\
             shape box \"Server A\" as s1 at 1 1 w 8 h 4\n\
             text as t1 \"hi\" at 3 2\n\
@@ -270,7 +326,7 @@ mod tests {
             .expect("adds bend");
 
         let out = serialize(&diagram);
-        let expected = "ad 1.0\n\
+        let expected = "ad 1.1\n\
             scale 2\n\
             shape box \"Server A\" as s1 at 1 1 w 8 h 4\n\
             text as t1 \"hi\" at 3 2\n\
@@ -367,7 +423,7 @@ mod tests {
             .expect("place");
         assert_eq!(
             serialize(&diagram),
-            "ad 1.0\nscale 1\ntext as t1 \"a\\\"b\\\\c\\nd\" at 0 0\n"
+            "ad 1.1\nscale 1\ntext as t1 \"a\\\"b\\\\c\\nd\" at 0 0\n"
         );
     }
 
@@ -386,7 +442,7 @@ mod tests {
             .expect("place");
         assert_eq!(
             serialize(&diagram),
-            "ad 1.0\nscale 1\ntext as t1 \"tab\there # not a comment\" at 0 0\n"
+            "ad 1.1\nscale 1\ntext as t1 \"tab\there # not a comment\" at 0 0\n"
         );
     }
 
@@ -406,7 +462,7 @@ mod tests {
 
     #[test]
     fn document_without_unknowns_matches_plain_serialize() {
-        let input = "ad 1.0\nscale 2\ntext as t1 \"x\" at 0 0\n";
+        let input = "ad 1.1\nscale 2\ntext as t1 \"x\" at 0 0\n";
         let doc = parse_document(input).expect("valid");
         assert_eq!(serialize_document(&doc), serialize(&doc.diagram));
     }

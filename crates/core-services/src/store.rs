@@ -120,7 +120,7 @@ mod tests {
         let diagram = small_diagram();
         store.save(&path, &diagram).expect("save");
         let text = std::fs::read_to_string(&path).expect("file written");
-        assert!(text.starts_with("ad 1.0"), "canonical header: {text:?}");
+        assert!(text.starts_with("ad 1.1"), "canonical header: {text:?}");
 
         let loaded = store.load(&path).expect("load");
         assert_eq!(loaded.diagram, diagram);

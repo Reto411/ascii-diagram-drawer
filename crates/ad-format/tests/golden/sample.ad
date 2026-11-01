@@ -1,5 +1,6 @@
-ad 1.0
+ad 1.1
 scale 2
+colors background "#f5f5f5" fill "#d2e3fc" lines "#1a73e8"
 shape box "Server A" as s1 at 1 1 w 8 h 4
 shape circle "DB" as s2 at 12 5 w 6 h 3
 text as t1 "hi there" at 3 2

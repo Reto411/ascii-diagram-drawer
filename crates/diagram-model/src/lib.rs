@@ -24,12 +24,14 @@
 //! time in `render-pipeline`, which alone sees both sides — see [`invariants`].
 
 pub mod anchors;
+pub mod color;
 pub mod geometry;
 pub mod glyphs;
 pub mod invariants;
 pub mod objects;
 
 use anchors::ConnectorEndpoint;
+pub use color::{ColorParseError, ColorRole, DiagramColors, Rgb};
 use geometry::{CellPos, CellSize};
 use invariants::ModelError;
 use objects::{
@@ -44,6 +46,9 @@ pub struct Diagram {
     objects: Vec<Object>,
     /// Whole-diagram scale factor applied at render time (FR8); always ≥ 1.
     scale: u32,
+    /// Presentation colors (FR15): never affect grid resolution, stored with the
+    /// diagram in the `.ad` document and applied by the canvas and exporters.
+    colors: DiagramColors,
 }
 
 impl Diagram {
@@ -251,6 +256,7 @@ impl Diagram {
         Self {
             objects: Vec::new(),
             scale: 1,
+            colors: DiagramColors::NONE,
         }
     }
 
@@ -358,6 +364,23 @@ impl Diagram {
     #[must_use]
     pub const fn scale(&self) -> u32 {
         self.scale
+    }
+
+    /// The diagram's presentation colors (FR15); all-unset until set.
+    #[must_use]
+    pub const fn colors(&self) -> DiagramColors {
+        self.colors
+    }
+
+    /// Sets the whole-diagram colors wholesale (FR15).
+    pub fn set_colors(&mut self, colors: DiagramColors) {
+        self.colors = colors;
+    }
+
+    /// Sets (or clears, with `None`) exactly one color role; the other roles are
+    /// untouched (FR15). Presentation data only — grid resolution is unaffected.
+    pub fn set_color(&mut self, role: ColorRole, color: Option<Rgb>) {
+        self.colors.set(role, color);
     }
 
     /// Sets the whole-diagram scale (FR8).
@@ -508,7 +531,7 @@ mod tests {
         );
     }
 
-    /// A fresh diagram is empty with scale 1.
+    /// A fresh diagram is empty with scale 1 and no colors.
     #[test]
     fn new_diagram_is_empty_with_scale_one() {
         let diagram = Diagram::new();
@@ -516,6 +539,7 @@ mod tests {
         assert!(diagram.is_empty());
         assert_eq!(diagram.scale(), 1);
         assert_eq!(diagram.objects().len(), 0);
+        assert_eq!(diagram.colors(), crate::DiagramColors::default());
     }
 
     /// Generated ids are deterministic and skip already-used numbers.
@@ -957,6 +981,35 @@ mod tests {
             Err(ModelError::ScaleTooSmall { scale: 0 })
         );
         assert_eq!(diagram.scale(), 3);
+    }
+
+    /// FR15 — colors are presentation data on the aggregate: one role at a time,
+    /// clearing works, and setting never disturbs objects or other roles.
+    #[test]
+    fn set_color_touches_only_its_role() {
+        use crate::{ColorRole, Rgb};
+        let mut diagram = Diagram::new();
+        diagram.place_shape(shape("s1", "box")).expect("places");
+
+        diagram.set_color(ColorRole::Fill, Some(Rgb::new(200, 100, 50)));
+        assert_eq!(
+            diagram.colors().get(ColorRole::Fill),
+            Some(Rgb::new(200, 100, 50))
+        );
+        assert_eq!(diagram.colors().get(ColorRole::Background), None);
+        assert_eq!(diagram.len(), 1, "objects untouched");
+
+        diagram.set_color(ColorRole::LineText, Some(Rgb::new(1, 2, 3)));
+        assert_eq!(
+            diagram.colors().get(ColorRole::Fill),
+            Some(Rgb::new(200, 100, 50))
+        );
+        diagram.set_color(ColorRole::Fill, None);
+        assert!(!diagram.colors().has_any() || diagram.colors().get(ColorRole::LineText).is_some());
+        assert_eq!(diagram.colors().get(ColorRole::Fill), None);
+
+        diagram.set_colors(crate::DiagramColors::default());
+        assert!(!diagram.colors().has_any());
     }
 
     /// The diagram is a value type: clones are independent.

@@ -50,9 +50,35 @@ const HINT_COLOR: Color32 = Color32::from_rgb(96, 102, 114);
 /// background regardless of palette — light-theme chrome must never wash out the
 /// fixed `TEXT_COLOR`/`GRID_LINE_COLOR` content, so the canvas is pixel-identical
 /// under both Material palettes by construction.
-/// The canvas background — fixed (not themed): the diagram is monochrome art
-/// (FR14 / ADR 017), so the same pixels render under every Material palette.
+/// The default canvas background (not themed): used when the diagram has no
+/// background role set (FR15 / CR-009) — a set role colors the surface instead.
 pub(crate) const CANVAS_BG: Color32 = Color32::from_rgb(26, 29, 35);
+
+/// FR15 (CR-009): a model color as egui's `Color32` — canvas and preview display of
+/// the diagram's per-media roles.
+fn rgb_to_color32(rgb: diagram_model::color::Rgb) -> Color32 {
+    Color32::from_rgb(rgb.r, rgb.g, rgb.b)
+}
+
+/// FR15 (CR-009): a role's index in [`diagram_model::color::ColorRole::ALL`]
+/// (the dialog's hex-field order).
+fn role_index(role: diagram_model::color::ColorRole) -> usize {
+    diagram_model::color::ColorRole::ALL
+        .iter()
+        .position(|r| *r == role)
+        .expect("every role is in ALL")
+}
+
+/// The preview's refresh gate (S-026, FR15): the hash of the exact canvas text AND
+/// the diagram's per-media colors — a change to either re-rasterizes.
+fn preview_hash(text: &str, colors: &diagram_model::color::DiagramColors) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    colors.background.hash(&mut hasher);
+    colors.fill.hash(&mut hasher);
+    colors.line_text.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Right-side SVG preview pane (S-026 / CR-004): a live view of exactly what FR5 would
 /// export — the canvas text rasterized through the same `svg_from_text` → resvg
@@ -113,6 +139,16 @@ pub(crate) struct PathPromptState {
     pub path: String,
 }
 
+/// FR15 (CR-009) AC5/AC6 — the “Diagram colors” dialog state. Like the path prompt,
+/// the typed hex lives in app state: egui's `TextEdit` only edits bound strings.
+#[derive(Debug, Clone)]
+pub(crate) struct ColorDialogState {
+    /// The hex field text per role, in [`diagram_model::color::ColorRole::ALL`] order.
+    pub hex_fields: [String; 3],
+    /// The role recent-color clicks apply to — the last row the user touched.
+    pub active_role: diagram_model::color::ColorRole,
+}
+
 pub struct DrawingApp {
     services: Services,
     /// `pub` like `status`: this is a binary crate — the file-IO tests in
@@ -158,6 +194,8 @@ pub struct DrawingApp {
     applied_theme: Option<Theme>,
     /// Right-side SVG preview pane (S-026 / CR-004) — see [`PreviewPane`].
     preview: PreviewPane,
+    /// The open “Diagram colors” dialog (FR15 / CR-009 AC5); `None` when closed.
+    color_dialog: Option<ColorDialogState>,
 }
 
 /// Builds the app from services, the loaded user options (FR13 / CR-005), an
@@ -229,6 +267,7 @@ impl DrawingApp {
             config_path,
             applied_theme: None,
             preview: PreviewPane::default(),
+            color_dialog: None,
         }
     }
 
@@ -290,9 +329,8 @@ impl DrawingApp {
     /// a no-op and the problem survives the frame.
     #[cfg(test)]
     pub fn set_preview_problem(&mut self, grid_text: &str, problem: String) {
-        let mut hasher = DefaultHasher::new();
-        grid_text.hash(&mut hasher);
-        self.preview.grid_hash = Some(hasher.finish());
+        let colors = self.diagram.colors();
+        self.preview.grid_hash = Some(preview_hash(grid_text, &colors));
         self.preview.image = None;
         self.preview.problem = Some(problem);
     }
@@ -591,6 +629,59 @@ impl DrawingApp {
         }
     }
 
+    /// FR15 (CR-009) AC5 — opens the “Diagram colors” dialog with the fields
+    /// prefilled from the diagram's current roles (empty = medium default).
+    pub fn open_color_dialog(&mut self) {
+        let colors = self.diagram.colors();
+        let mut fields = [String::new(), String::new(), String::new()];
+        for (i, role) in diagram_model::color::ColorRole::ALL.iter().enumerate() {
+            if let Some(rgb) = colors.get(*role) {
+                fields[i] = rgb.to_hex();
+            }
+        }
+        self.color_dialog = Some(ColorDialogState {
+            hex_fields: fields,
+            active_role: diagram_model::color::ColorRole::Fill,
+        });
+    }
+
+    /// FR15 (CR-009) AC5 — sets one role's color from a typed `#rrggbb` value: the
+    /// model changes live (canvas + preview follow), the color joins the persisted
+    /// recent strip, and the options file is saved where available.
+    pub fn apply_role_color(
+        &mut self,
+        role: diagram_model::color::ColorRole,
+        hex_text: &str,
+    ) -> Result<(), String> {
+        let rgb = diagram_model::color::Rgb::from_hex(hex_text)
+            .map_err(|_| format!("\"{hex_text}\" is not a #rrggbb color"))?;
+        self.diagram.set_color(role, Some(rgb));
+        self.config.record_recent_color(&rgb.to_hex());
+        let mut saved = true;
+        if let Some(path) = &self.config_path
+            && self.config.save(path).is_err()
+        {
+            saved = false;
+        }
+        self.status = format!(
+            "{} color set to {}{}",
+            role.label(),
+            rgb.to_hex(),
+            if saved { "" } else { " (options not saved)" }
+        );
+        Ok(())
+    }
+
+    /// FR15 (CR-009) AC5 — resets one role to its medium default (removes it from the
+    /// model; exports drop the option, the canvas falls back).
+    pub fn reset_role_color(&mut self, role: diagram_model::color::ColorRole) {
+        self.diagram.set_color(role, None);
+        if let Some(d) = self.color_dialog.as_mut() {
+            d.hex_fields[role_index(role)].clear();
+        }
+        self.status = format!("{} color reset to default", role.label());
+    }
+
     /// Cancels the inline path prompt.
     pub fn cancel_path_prompt(&mut self) {
         self.path_prompt = None;
@@ -835,9 +926,15 @@ impl DrawingApp {
         let off = |p: Pos2| p + rect.min.to_vec2();
         let off_rect = |r: egui::Rect| r.translate(rect.min.to_vec2());
 
-        // FR14 (ADR 017): the canvas paints its own fixed surface first — the
-        // WYSIWYG region is palette-independent by construction (AC5).
-        painter.rect_filled(rect, 0.0, CANVAS_BG);
+        // FR14 (ADR 017): the canvas paints its own surface first — the WYSIWYG
+        // region is palette-independent by construction (AC5). FR15 (CR-009) AC4:
+        // the background role colors that surface; unset keeps the fixed default.
+        let colors = self.diagram.colors();
+        let bg_color = colors
+            .get(diagram_model::color::ColorRole::Background)
+            .map(rgb_to_color32)
+            .unwrap_or(CANVAS_BG);
+        painter.rect_filled(rect, 0.0, bg_color);
 
         // Subtle full-canvas grid aligned to cell boundaries (graph paper): empty
         // space reads as intentional placement surface instead of a dead void, and
@@ -869,9 +966,39 @@ impl DrawingApp {
             );
         }
 
+        // FR15 (CR-009) AC4 — shape bodies fill with the fill role's color beneath
+        // their glyphs (free text has no body; connectors are ink, not bodies). The
+        // fills sit above the grid paper and below everything else drawn here.
+        if let Some(fill) = colors.get(diagram_model::color::ColorRole::Fill) {
+            let fill_color = rgb_to_color32(fill);
+            for object in self.diagram.objects() {
+                if let Object::Shape(shape) = object {
+                    let (x, y, w, h) = vp.cell_block(
+                        shape.pos.x,
+                        shape.pos.y,
+                        shape.size.width,
+                        shape.size.height,
+                    );
+                    painter.rect_filled(
+                        off_rect(egui::Rect::from_min_max(
+                            Pos2::new(x, y),
+                            Pos2::new(x + w, y + h),
+                        )),
+                        0.0,
+                        fill_color,
+                    );
+                }
+            }
+        }
+
         // The exact text bytes of the resolved grid — one line per row (AC2), offset by
         // the content origin in BOTH axes: the trimmed text starts at the content origin,
         // so rendered cells coincide with model cells (the same mapping hit-testing uses).
+        // FR15 AC4: the line & text role colors the ink; unset keeps the default.
+        let ink_color = colors
+            .get(diagram_model::color::ColorRole::LineText)
+            .map(rgb_to_color32)
+            .unwrap_or(TEXT_COLOR);
         let (x0, y0) = vp.cell_origin(origin_x, origin_y);
         for (row, line) in text.lines().enumerate() {
             if line.is_empty() {
@@ -880,7 +1007,7 @@ impl DrawingApp {
             // Row `row` of the expanded grid is sub-row `row` below the content
             // block's top edge — one screen row per expanded row.
             let pos = off(Pos2::new(x0, y0 + row as f32 * cell_h));
-            painter.text(pos, Align2::LEFT_TOP, line, font_id.clone(), TEXT_COLOR);
+            painter.text(pos, Align2::LEFT_TOP, line, font_id.clone(), ink_color);
         }
 
         // Empty state: a centered hint instead of a silent void — the first thing a
@@ -1677,6 +1804,14 @@ impl DrawingApp {
                         self.begin_path_prompt(PathPrompt::ExportPng);
                     }
                 });
+                // FR15 (CR-009) AC5 — View menu: canvas/diagram presentation; its
+                // first item opens the color dialog. A new feature area is one more
+                // menu_button call (S-025 extensibility).
+                ui.menu_button(RichText::new("View ▾"), |ui| {
+                    if ui.button("Diagram colors…").clicked() {
+                        self.open_color_dialog();
+                    }
+                });
                 // FR13 (CR-005) — Options menu: the home for user preferences; the
                 // theme is its first option. Selections apply live and persist to
                 // the app config file.
@@ -1785,6 +1920,121 @@ impl DrawingApp {
                         }
                     });
                 });
+        }
+
+        // FR15 (CR-009) AC5/AC6 — the “Diagram colors” dialog: one row per role with
+        // a hex field, Set/Reset, plus the persisted recent-colors strip. The window
+        // closure only collects clicks — actions run afterwards so they may touch the
+        // model and config (immediate mode: no borrow may cross `show`).
+        if self.color_dialog.is_some() {
+            let mut dialog = self.color_dialog.take().expect("checked above");
+            let colors = self.diagram.colors();
+            let recents = self.config.recent_colors.clone();
+            let mut open = true;
+            let mut set_click: Option<diagram_model::color::ColorRole> = None;
+            let mut reset_click: Option<diagram_model::color::ColorRole> = None;
+            let mut recent_click: Option<String> = None;
+            egui::Window::new("Diagram colors")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.label("Colors apply to the canvas, the text, and every export:");
+                    for (i, role) in diagram_model::color::ColorRole::ALL.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            // Swatch: the current color, or a gray chip when unset.
+                            let swatch = colors
+                                .get(*role)
+                                .map(rgb_to_color32)
+                                .unwrap_or_else(|| Color32::from_gray(90));
+                            let (rect, resp) = ui
+                                .allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+                            ui.painter().rect_filled(rect, 2.0, swatch);
+                            if resp.clicked() {
+                                dialog.active_role = *role;
+                            }
+                            let label_resp = ui.label(role.label());
+                            if label_resp.clicked() {
+                                dialog.active_role = *role;
+                            }
+                            if colors.get(*role).is_none() {
+                                ui.label(RichText::new("(default)").weak());
+                            }
+                            // Touching the row's field makes it the active role — a
+                            // recent-strip click then lands where the user is working.
+                            let field_resp = ui.add(
+                                egui::TextEdit::singleline(&mut dialog.hex_fields[i])
+                                    .desired_width(90.0)
+                                    .id_source(egui::Id::unique(("color_hex", *role as u8))),
+                            );
+                            if field_resp.clicked() {
+                                dialog.active_role = *role;
+                            }
+                            if ui.button("Set").clicked() {
+                                set_click = Some(*role);
+                            }
+                            if ui.button("Reset").clicked() {
+                                reset_click = Some(*role);
+                            }
+                        });
+                    }
+                    // AC6 — the recent-colors strip, newest first; a click applies the
+                    // color to the active row's role.
+                    if !recents.is_empty() {
+                        ui.separator();
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!(
+                                "Recent (applies to {}):",
+                                dialog.active_role.label()
+                            ));
+                            for hex in &recents {
+                                let Ok(rgb) = diagram_model::color::Rgb::from_hex(hex) else {
+                                    continue;
+                                };
+                                let (rect, resp) = ui.allocate_exact_size(
+                                    egui::vec2(18.0, 18.0),
+                                    egui::Sense::click(),
+                                );
+                                ui.painter().rect_filled(rect, 2.0, rgb_to_color32(rgb));
+                                if resp.clicked() {
+                                    recent_click = Some(hex.clone());
+                                }
+                            }
+                        });
+                    }
+                });
+            self.color_dialog = Some(dialog);
+            if !open {
+                self.color_dialog = None;
+            }
+            if let Some(role) = set_click {
+                let hex = self
+                    .color_dialog
+                    .as_ref()
+                    .map(|d| d.hex_fields[role_index(role)].clone())
+                    .unwrap_or_default();
+                match self.apply_role_color(role, &hex) {
+                    Ok(()) => {}
+                    Err(e) => self.status = e,
+                }
+            }
+            if let Some(role) = reset_click {
+                self.reset_role_color(role);
+            }
+            if let Some(hex) = recent_click {
+                let role = self
+                    .color_dialog
+                    .as_ref()
+                    .map(|d| d.active_role)
+                    .unwrap_or(diagram_model::color::ColorRole::Fill);
+                if let Some(d) = self.color_dialog.as_mut() {
+                    d.hex_fields[role_index(role)] = hex.clone();
+                }
+                match self.apply_role_color(role, &hex) {
+                    Ok(()) => {}
+                    Err(e) => self.status = e,
+                }
+            }
         }
 
         // Status bar (bottom): current file on the left, last-action message beside it
@@ -1905,7 +2155,10 @@ impl DrawingApp {
         // hash-gated (a no-op while the model is unchanged), and side panels must be
         // shown before the central panel to reserve their space.
         if let Ok((text, _, _)) = &frame {
-            self.refresh_preview(text);
+            // Copy out before the `&mut self` borrow (colors are presentation data —
+            // they gate the refresh too: a color change re-rasterizes, AC7).
+            let colors = self.diagram.colors();
+            self.refresh_preview(text, &colors);
         }
         self.draw_preview_pane(ui);
 
@@ -1925,15 +2178,14 @@ impl DrawingApp {
 
     // ── SVG preview pane (S-026 / CR-004) ────────────────────────────────────────
 
-    /// AC1 — re-rasterize the preview when the rendered grid changed. Called once per
-    /// frame with the exact canvas text the character canvas draws; the hash gate makes
-    /// it a no-op while the model is unchanged (throttled refresh — CR assumption).
-    fn refresh_preview(&mut self, canvas_text: &str) {
-        let mut hasher = DefaultHasher::new();
-        canvas_text.hash(&mut hasher);
-        let hash = hasher.finish();
+    /// AC1 — re-rasterize the preview when the rendered grid **or its colors** changed.
+    /// Called once per frame with the exact canvas text the character canvas draws and
+    /// the diagram's per-media colors (FR15); the hash gate makes it a no-op while both
+    /// are unchanged (throttled refresh — CR assumption).
+    fn refresh_preview(&mut self, canvas_text: &str, colors: &diagram_model::color::DiagramColors) {
+        let hash = preview_hash(canvas_text, colors);
         if Some(hash) == self.preview.grid_hash {
-            return; // unchanged grid — the cached raster is still exact.
+            return; // unchanged grid and colors — the cached raster is still exact.
         }
         self.preview.grid_hash = Some(hash);
         if canvas_text.is_empty() {
@@ -1942,7 +2194,8 @@ impl DrawingApp {
             self.preview.problem = None;
             return;
         }
-        let rgba = core_services::preview::text_to_rgba(canvas_text).map_err(|e| e.to_string());
+        let rgba = core_services::preview::text_to_rgba_with_colors(canvas_text, colors)
+            .map_err(|e| e.to_string());
         self.apply_raster(rgba);
     }
 
@@ -2212,7 +2465,7 @@ mod tests {
     #[test]
     fn preview_of_an_empty_diagram_is_a_placeholder_not_an_error() {
         let mut app = app();
-        app.refresh_preview("");
+        app.refresh_preview("", &diagram_model::color::DiagramColors::default());
         assert!(
             app.preview.image.is_none(),
             "no raster for an empty diagram"
@@ -2236,8 +2489,9 @@ mod tests {
         ));
         app.handle_pointer_frame(false, None);
         let (text, _, _) = app.canvas_frame().expect("renders");
+        let colors = app.diagram.colors();
 
-        app.refresh_preview(&text);
+        app.refresh_preview(&text, &colors);
         let first = app
             .preview
             .image
@@ -2246,8 +2500,9 @@ mod tests {
         assert!(app.preview.problem.is_none());
         assert!(first.size[0] > 0 && first.size[1] > 0, "non-empty raster");
 
-        // Unchanged grid → the cached raster is kept (same Arc — no re-rasterization).
-        app.refresh_preview(&text);
+        // Unchanged grid and colors → the cached raster is kept (same Arc — no
+        // re-rasterization).
+        app.refresh_preview(&text, &colors);
         assert!(
             Arc::ptr_eq(&first, app.preview.image.as_ref().expect("still there")),
             "unchanged model must not re-rasterize (AC1 hash gate)"
@@ -2262,10 +2517,40 @@ mod tests {
         app.handle_pointer_frame(false, None);
         let (text2, _, _) = app.canvas_frame().expect("renders");
         assert_ne!(text, text2);
-        app.refresh_preview(&text2);
+        app.refresh_preview(&text2, &colors);
         assert!(
             !Arc::ptr_eq(&first, app.preview.image.as_ref().expect("re-rasterized")),
             "changed model must re-rasterize"
+        );
+    }
+
+    /// FR15 (CR-009) — AC7: a color change alone (same grid) re-rasterizes the
+    /// preview, and the new raster is not the old one.
+    #[test]
+    fn preview_re_rasterizes_when_only_the_colors_change() {
+        let mut app = app();
+        app.editor.select_template(box_info());
+        assert!(matches!(
+            app.handle_pointer_frame(true, Some(((3, 4), HitTarget::Empty))),
+            EditOutcome::Placed { .. }
+        ));
+        app.handle_pointer_frame(false, None);
+        let (text, _, _) = app.canvas_frame().expect("renders");
+
+        let default_colors = app.diagram.colors();
+        app.refresh_preview(&text, &default_colors);
+        let first = app.preview.image.clone().expect("rasterized");
+
+        // Same grid, new background color → the hash gate must not hold.
+        let mut colored = default_colors;
+        colored.set(
+            diagram_model::color::ColorRole::Background,
+            Some(diagram_model::color::Rgb::new(0x20, 0x21, 0x24)),
+        );
+        app.refresh_preview(&text, &colored);
+        assert!(
+            !Arc::ptr_eq(&first, app.preview.image.as_ref().expect("re-rasterized")),
+            "a color change must re-rasterize (AC7)"
         );
     }
 
@@ -2841,7 +3126,7 @@ mod tests {
             renderer: Arc::new(FakeRenderer::with_grid(
                 ui_api::ResolvedGrid::from_rows(&["+---+"]).expect("grid"),
             )),
-            exporter: Arc::new(core_services::fakes::FakeExporter),
+            exporter: Arc::new(core_services::fakes::FakeExporter::default()),
             ..Services::native()
         };
         let mut app = DrawingApp::new(services);
@@ -2866,7 +3151,11 @@ mod tests {
         app.export_svg_to(&path).expect("writes");
         let on_disk = std::fs::read_to_string(&path).expect("reads");
         let grid = app.services.renderer.render(&app.diagram).expect("renders");
-        assert_eq!(on_disk, app.services.exporter.to_svg(&grid).expect("svg"));
+        let colors = app.diagram.colors();
+        assert_eq!(
+            on_disk,
+            app.services.exporter.to_svg(&grid, &colors).expect("svg")
+        );
     }
 
     /// AC2/RS4 — PNG export through the app: start → “Exporting PNG…” state; per-frame

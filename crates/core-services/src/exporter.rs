@@ -3,6 +3,7 @@
 //! degrades to [`ui_api::ExportError::Unsupported`] — the GUI offers SVG-only export
 //! without any code change (ADR 009, risk R3).
 
+use diagram_model::color::{ColorRole, DiagramColors};
 use render_pipeline::ResolvedGrid;
 use ui_api::{ExportError, Exporter};
 
@@ -17,6 +18,18 @@ fn map_error(err: exporters::ExportError) -> ExportError {
     }
 }
 
+/// Maps the diagram's per-media colors (FR15) onto the exporter's color slots. The
+/// roles map 1:1 — background→backdrop, fill→shape fill, line & text→stroke; unset
+/// roles stay unset so svgbob keeps its default for that slot (byte-stable exports).
+pub fn svg_options_for(colors: &DiagramColors) -> exporters::SvgOptions {
+    let hex = |role: ColorRole| colors.get(role).map(|c| c.to_hex());
+    exporters::SvgOptions {
+        background: hex(ColorRole::Background),
+        fill: hex(ColorRole::Fill),
+        stroke: hex(ColorRole::LineText),
+    }
+}
+
 /// Emits the resolved grid as text/SVG/PNG via the `exporters` crate. Stateless.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GridExporter;
@@ -26,12 +39,12 @@ impl Exporter for GridExporter {
         exporters::to_text(grid)
     }
 
-    fn to_svg(&self, grid: &ResolvedGrid) -> Result<String, ExportError> {
-        exporters::to_svg(grid).map_err(map_error)
+    fn to_svg(&self, grid: &ResolvedGrid, colors: &DiagramColors) -> Result<String, ExportError> {
+        exporters::to_svg_with_options(grid, &svg_options_for(colors)).map_err(map_error)
     }
 
-    fn to_png(&self, grid: &ResolvedGrid) -> Result<Vec<u8>, ExportError> {
-        exporters::to_png(grid).map_err(map_error)
+    fn to_png(&self, grid: &ResolvedGrid, colors: &DiagramColors) -> Result<Vec<u8>, ExportError> {
+        exporters::to_png_with_options(grid, &svg_options_for(colors)).map_err(map_error)
     }
 }
 
@@ -53,11 +66,62 @@ mod tests {
 
         assert_eq!(exporter.to_text(&grid), "+---+\n| A |\n+---+");
 
-        let svg = exporter.to_svg(&grid).expect("svg");
+        let svg = exporter
+            .to_svg(&grid, &DiagramColors::default())
+            .expect("svg");
         assert!(svg.starts_with("<svg"), "real svgbob document: {svg:?}");
 
-        let png = exporter.to_png(&grid).expect("png (raster feature on)");
+        let png = exporter
+            .to_png(&grid, &DiagramColors::default())
+            .expect("png (raster feature on)");
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    /// FR15 (CR-009) — the color roles map 1:1 onto the exporter's slots, and unset
+    /// roles stay unset (svgbob defaults keep the export byte-stable).
+    #[test]
+    fn color_roles_map_onto_the_exporter_slots() {
+        use diagram_model::color::Rgb;
+
+        let mut colors = DiagramColors::default();
+        assert_eq!(svg_options_for(&colors), exporters::SvgOptions::default());
+
+        colors.set(
+            ColorRole::Background,
+            Some(Rgb::from_hex("#202124").unwrap()),
+        );
+        colors.set(ColorRole::Fill, Some(Rgb::from_hex("#8ab4f8").unwrap()));
+        colors.set(ColorRole::LineText, Some(Rgb::from_hex("#e8eaed").unwrap()));
+        assert_eq!(
+            svg_options_for(&colors),
+            exporters::SvgOptions {
+                background: Some("#202124".into()),
+                fill: Some("#8ab4f8".into()),
+                stroke: Some("#e8eaed".into()),
+            }
+        );
+
+        // Resetting one role unsets exactly that slot.
+        colors.set(ColorRole::Fill, None);
+        let options = svg_options_for(&colors);
+        assert_eq!(options.fill, None);
+        assert_eq!(options.background.as_deref(), Some("#202124"));
+    }
+
+    /// FR15 (CR-009) — a set color reaches the SVG through the seam.
+    #[test]
+    fn colored_export_through_the_seam() {
+        use diagram_model::color::Rgb;
+        let exporter = GridExporter;
+        let grid = small_grid();
+        let mut colors = DiagramColors::default();
+        colors.set(ColorRole::LineText, Some(Rgb::from_hex("#ff0000").unwrap()));
+
+        let svg = exporter.to_svg(&grid, &colors).expect("svg");
+        assert!(
+            svg.contains("#ff0000"),
+            "line & text role lands in the SVG: {svg}"
+        );
     }
 
     /// The seam never leaks crate-level errors: every `exporters` variant maps to a

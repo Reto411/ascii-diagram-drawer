@@ -3,7 +3,7 @@ title: change-request-board
 description: persistent change-request board — open / closed; single source of truth for CR status (CRs live in doc/crs/CR-NNN-*.md)
 scope: delivery
 status: stable
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # Change Request Board
@@ -15,7 +15,6 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 | ID | Title | Priority | Status | File |
 |----|-------|----------|--------|------|
 | CR-001 | Native file dialogs for Open, Save and Export | medium | accepted | [CR-001-native-file-dialogs.md](CR-001-native-file-dialogs.md) |
-| CR-009 | Diagram colors (background/shape fill/line & text) via color picker, svgbob Settings | medium | accepted | [CR-009-diagram-colors-picker.md](CR-009-diagram-colors-picker.md) |
 | CR-011 | Collapsible groupings with subcategories (menus + sidebar) | low | accepted | [CR-011-collapsible-groupings-subcategories.md](CR-011-collapsible-groupings-subcategories.md) |
 | CR-012 | Shape filter in the template sidebar | low | accepted | [CR-012-shape-filter.md](CR-012-shape-filter.md) |
 | CR-013 | Pre-rendered shape previews in the template sidebar (WYSIWYG picking) | medium | accepted | [CR-013-prerendered-shape-previews.md](CR-013-prerendered-shape-previews.md) |
@@ -28,6 +27,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
+| CR-009 | Diagram colors (background/shape fill/line & text) via color picker, svgbob Settings | 2026-11-01 | implemented — S-030, commit `TBD` (FR15; .ad v1.1, ADR 009 v8) |
 | CR-010 | Standalone arrows with attachable/detachable ends | 2026-10-31 | implemented — S-031, commit `d9ad17c` (FR9, ADR 013 v6) |
 | CR-008 | Selectable arrow tips on both ends + arrow-shaped anchor markers | 2026-10-31 | implemented — S-029, commit `adb1a3f` (FR9, ADR 013 v5) |
 | CR-007 | User-modifiable arrow shapes (manual bends) | 2026-10-31 | implemented — S-028, commit `7010cc1` (FR9, ADR 013 v4) |

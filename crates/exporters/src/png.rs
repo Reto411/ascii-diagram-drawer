@@ -8,14 +8,24 @@
 
 use render_pipeline::ResolvedGrid;
 
-use crate::{ExportError, to_svg};
+use crate::{ExportError, SvgOptions, to_svg_with_options};
 
 /// Exports a resolved grid as a PNG image (RGBA, 8 bits per channel).
 ///
-/// The grid is first exported as SVG ([`to_svg`]); the rasterizer renders that exact
+/// The grid is first exported as SVG ([`crate::to_svg`]); the rasterizer renders that exact
 /// document at its declared size, so the PNG always matches the SVG and text outputs.
 pub fn to_png(grid: &ResolvedGrid) -> Result<Vec<u8>, ExportError> {
-    let svg = to_svg(grid)?;
+    to_png_with_options(grid, &SvgOptions::default())
+}
+
+/// Exports a resolved grid as a PNG image with per-media color overrides (FR15):
+/// the SVG is produced by [`to_svg_with_options`] and rasterized exactly like
+/// [`to_png`], so a colored PNG always matches its colored SVG.
+pub fn to_png_with_options(
+    grid: &ResolvedGrid,
+    options: &SvgOptions,
+) -> Result<Vec<u8>, ExportError> {
+    let svg = to_svg_with_options(grid, options)?;
     #[cfg(feature = "raster")]
     {
         png_from_svg(&svg)
@@ -42,16 +52,27 @@ pub struct RgbaImage {
 }
 
 /// Live-preview rasterization (CR-004 / S-026): render an exact svgbob input string
-/// to raw RGBA — the same [`crate::svg::svg_from_text`] + resvg pipeline as
+/// to raw RGBA — the same [`crate::svg::svg_from_text_with_options`] + resvg pipeline as
 /// [`to_svg`] + [`to_png`], but taking the text bytes directly so the GUI can preview
 /// from the canvas frame it already holds. The pixels are exactly what exporting
-/// those bytes would produce: [`to_svg`] is defined as `svg_from_text(&to_text(grid))`,
+/// those bytes would produce: [`to_svg`] is defined as the default-options render of `&to_text(grid)`,
 /// and this function funnels through the same seam.
 ///
 /// Degrades to [`ExportError::Unsupported`] without the `raster` feature, like
 /// [`to_png`] (AC4 — degradation, not failure).
 pub fn text_to_rgba(text: &str) -> Result<RgbaImage, ExportError> {
-    let svg = crate::svg::svg_from_text(text)?;
+    text_to_rgba_with_options(text, &SvgOptions::default())
+}
+
+/// Live-preview rasterization with per-media color overrides (FR15): the same pipeline
+/// as [`text_to_rgba`], but the SVG is produced by
+/// [`crate::svg::svg_from_text_with_options`], so a colored preview is exactly what a
+/// colored export of the same bytes would produce.
+pub fn text_to_rgba_with_options(
+    text: &str,
+    options: &SvgOptions,
+) -> Result<RgbaImage, ExportError> {
+    let svg = crate::svg::svg_from_text_with_options(text, options)?;
     #[cfg(feature = "raster")]
     {
         rgba_from_svg(&svg)
@@ -127,7 +148,7 @@ mod tests {
     #[test]
     fn png_signature_and_decoded_dimensions_match_the_svg() {
         let grid = small_grid();
-        let svg = to_svg(&grid).expect("renders");
+        let svg = crate::to_svg(&grid).expect("renders");
         let bytes = to_png(&grid).expect("rasterizes");
 
         assert_eq!(
@@ -191,7 +212,7 @@ mod tests {
         let rgba = text_to_rgba(&text).expect("rasterizes");
 
         // Dimensions equal the SVG's declared size (same invariant as the PNG test).
-        let svg = to_svg(&grid).expect("renders");
+        let svg = crate::to_svg(&grid).expect("renders");
         let declared = |attr: &str| -> u32 {
             let start = svg
                 .find(format!("{attr}=").as_str())
@@ -241,6 +262,41 @@ mod tests {
         let img = text_to_rgba("").expect("blank document, not an error");
         assert!(img.width > 0 && img.height > 0);
         assert_eq!(img.rgba.len(), (img.width * img.height * 4) as usize);
+    }
+
+    /// FR15 (CR-009) — the colored PNG path: the preview seam over the same text and
+    /// options yields exactly the pixels of the decoded colored PNG export (the S-026
+    /// WYSIWYG invariant, now with colors), and the backdrop rasterizes to the
+    /// background role's color.
+    #[test]
+    fn png_with_options_matches_the_colored_preview_pixels() {
+        let grid = ResolvedGrid::from_rows(&["+---+", "| A |", "+---+"]).expect("valid grid");
+        let options = crate::SvgOptions {
+            background: Some("#202124".into()),
+            fill: Some("#8ab4f8".into()),
+            stroke: Some("#e8eaed".into()),
+        };
+
+        let png_bytes = to_png_with_options(&grid, &options).expect("rasterizes");
+        assert_eq!(&png_bytes[..8], b"\x89PNG\r\n\x1a\n");
+
+        let rgba = text_to_rgba_with_options(&crate::to_text(&grid), &options).expect("rasterizes");
+        let decoder = png::Decoder::new(&png_bytes[..]);
+        let mut reader = decoder.read_info().expect("decodable PNG");
+        let mut decoded = vec![0u8; reader.output_buffer_size()];
+        let frame = reader.next_frame(&mut decoded).expect("decodes");
+        assert_eq!(
+            &decoded[..frame.buffer_size()],
+            &rgba.rgba,
+            "preview ≠ export pixels"
+        );
+
+        // Top-left corner sits on the backdrop rect → the background role's color.
+        assert_eq!(
+            [rgba.rgba[0], rgba.rgba[1], rgba.rgba[2]],
+            [0x20, 0x21, 0x24],
+            "backdrop rasterizes to the background role"
+        );
     }
 
     /// A grid with connector arrowheads rasterizes too (the S-008 golden scenario).

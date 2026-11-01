@@ -23,7 +23,8 @@ pub const MAX_GUI_SCALE: u32 = 8;
 const _: () = assert!(MAX_GUI_SCALE >= 2);
 
 /// The exact SVG bytes for `diagram`: rendered through the seam renderer and passed
-/// to `Exporter::to_svg` — byte-identical to what the canvas shows (WYSIWYG).
+/// to `Exporter::to_svg` with the diagram's per-media colors (FR15) — byte-identical
+/// to what the canvas shows (WYSIWYG).
 ///
 /// # Errors
 /// A human-readable message when the model cannot be rendered or the exporter fails.
@@ -32,7 +33,10 @@ pub fn svg_bytes(services: &Services, diagram: &Diagram) -> Result<String, Strin
         .renderer
         .render(diagram)
         .map_err(|e| e.to_string())?;
-    services.exporter.to_svg(&grid).map_err(|e| e.to_string())
+    services
+        .exporter
+        .to_svg(&grid, &diagram.colors())
+        .map_err(|e| e.to_string())
 }
 
 /// Sibling file path for an export of `document` with extension `ext`
@@ -61,7 +65,7 @@ pub struct PngExport {
 
 impl PngExport {
     /// Submits `diagram` to the worker (rendering it first) and starts tracking the
-    /// job.
+    /// job, with the diagram's per-media colors (FR15).
     ///
     /// # Errors
     /// A human-readable message when the model cannot be rendered, or the bounded
@@ -71,17 +75,21 @@ impl PngExport {
             .renderer
             .render(diagram)
             .map_err(|e| e.to_string())?;
-        Self::start_grid(&services.png_worker, &grid)
+        Self::start_grid(&services.png_worker, &grid, &diagram.colors())
     }
 
-    /// Submits a pre-rendered `grid` to the worker (separated for tests and for
-    /// callers that already hold the frame's grid).
+    /// Submits a pre-rendered `grid` with its per-media colors to the worker
+    /// (separated for tests and for callers that already hold the frame's grid).
     ///
     /// # Errors
     /// A human-readable message when the bounded job queue is full.
-    pub fn start_grid(worker: &PngWorker, grid: &ResolvedGrid) -> Result<Self, String> {
+    pub fn start_grid(
+        worker: &PngWorker,
+        grid: &ResolvedGrid,
+        colors: &diagram_model::color::DiagramColors,
+    ) -> Result<Self, String> {
         worker
-            .submit(grid)
+            .submit(grid, colors)
             .map(Self::from_job)
             .map_err(|e| e.to_string())
     }
@@ -146,7 +154,7 @@ mod tests {
             renderer: Arc::new(FakeRenderer::with_grid(
                 ResolvedGrid::from_rows(&["+---+"]).expect("valid grid"),
             )),
-            exporter: Arc::new(FakeExporter),
+            exporter: Arc::new(FakeExporter::default()),
             catalog: Arc::new(FakeCatalog::default().add(
                 ShapeInfo::builtin(
                     "box",

@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use diagram_model::{Diagram, geometry::CellPos, objects::ObjectId};
+use diagram_model::{Diagram, color::DiagramColors, geometry::CellPos, objects::ObjectId};
 
 pub mod error;
 pub mod types;
@@ -84,11 +84,15 @@ pub trait Exporter {
     /// The grid as plain monospace text (LF-joined, trailing whitespace trimmed).
     fn to_text(&self, grid: &ResolvedGrid) -> String;
 
-    /// The grid as an SVG document (svgbob interpretation of the exact text bytes).
-    fn to_svg(&self, grid: &ResolvedGrid) -> Result<String, ExportError>;
+    /// The grid as an SVG document (svgbob interpretation of the exact text bytes),
+    /// with per-media colors from `colors` (FR15): unset roles keep svgbob's
+    /// defaults, so an all-default diagram exports byte-identically to a plain render.
+    fn to_svg(&self, grid: &ResolvedGrid, colors: &DiagramColors) -> Result<String, ExportError>;
 
-    /// The grid as a PNG image (rasterization of the SVG output, ADR 016).
-    fn to_png(&self, grid: &ResolvedGrid) -> Result<Vec<u8>, ExportError>;
+    /// The grid as a PNG image (rasterization of the SVG output, ADR 016), with the
+    /// same per-media colors as [`Self::to_svg`] — a colored PNG always matches its
+    /// colored SVG.
+    fn to_png(&self, grid: &ResolvedGrid, colors: &DiagramColors) -> Result<Vec<u8>, ExportError>;
 }
 
 /// Lists and looks up shape types (FR3) and registers user-defined templates

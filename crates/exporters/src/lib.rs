@@ -2,8 +2,10 @@
 //!
 //! Presents the one `ResolvedGrid` in three v1 media:
 //! - **Text** (`to_text`): the grid as-is, LF-joined, per-line trailing whitespace trimmed.
-//! - **SVG** (`to_svg`): the *exact* text bytes passed unchanged to `svgbob::to_svg` — no
-//!   adapter layer; text and SVG input are the same bytes (ADR 005).
+//! - **SVG** (`to_svg`, [`to_svg_with_options`]): the *exact* text bytes passed unchanged
+//!   to `svgbob` — no adapter layer; text and SVG input are the same bytes (ADR 005).
+//!   Per-media colors (FR15) go through svgbob's `Settings`; unset slots keep its
+//!   defaults, so the plain path is byte-stable.
 //! - **PNG** (`to_png`): rasterization of that exact SVG via `resvg`
 //!   ([ADR 016](../../../doc/adr/016-png-rasterizer.md)), behind the default `raster`
 //!   feature — builds without it get [`ExportError::Unsupported`], not a broken build.
@@ -12,8 +14,8 @@ mod png;
 mod svg;
 mod text;
 
-pub use png::{RgbaImage, text_to_rgba, to_png};
-pub use svg::to_svg;
+pub use png::{RgbaImage, text_to_rgba, text_to_rgba_with_options, to_png, to_png_with_options};
+pub use svg::{SvgOptions, to_svg, to_svg_with_options};
 pub use text::to_text;
 
 /// Errors an export can produce.

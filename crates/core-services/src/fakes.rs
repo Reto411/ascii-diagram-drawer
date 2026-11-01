@@ -170,19 +170,33 @@ impl Renderer for FakeRenderer {
 }
 
 /// Exporter that returns fixed media — deterministic bytes for GUI assertions.
-#[derive(Debug)]
-pub struct FakeExporter;
+#[derive(Debug, Default)]
+pub struct FakeExporter {
+    /// The colors of the most recent `to_svg`/`to_png` call (FR15 test seam: lets a
+    /// GUI test assert the diagram's colors reached the exporter).
+    pub last_colors: std::sync::Mutex<Option<diagram_model::color::DiagramColors>>,
+}
 
 impl Exporter for FakeExporter {
     fn to_text(&self, _grid: &ResolvedGrid) -> String {
         "+---+\n|FAKE|\n+---+".into()
     }
 
-    fn to_svg(&self, _grid: &ResolvedGrid) -> Result<String, ui_api::ExportError> {
+    fn to_svg(
+        &self,
+        _grid: &ResolvedGrid,
+        colors: &diagram_model::color::DiagramColors,
+    ) -> Result<String, ui_api::ExportError> {
+        *self.last_colors.lock().expect("not poisoned") = Some(*colors);
         Ok("<svg xmlns=\"http://www.w3.org/2000/svg\">fake</svg>".into())
     }
 
-    fn to_png(&self, _grid: &ResolvedGrid) -> Result<Vec<u8>, ui_api::ExportError> {
+    fn to_png(
+        &self,
+        _grid: &ResolvedGrid,
+        colors: &diagram_model::color::DiagramColors,
+    ) -> Result<Vec<u8>, ui_api::ExportError> {
+        *self.last_colors.lock().expect("not poisoned") = Some(*colors);
         Ok(b"\x89PNG\r\n\x1a\nfake".to_vec())
     }
 }
@@ -313,11 +327,20 @@ mod tests {
         ));
 
         // Exporter: all three media return their fixed payloads.
-        let exporter = FakeExporter;
+        let exporter = FakeExporter::default();
         let grid = ResolvedGrid::from_rows(&["|"]).expect("valid grid");
         assert_eq!(exporter.to_text(&grid), "+---+\n|FAKE|\n+---+");
-        assert!(exporter.to_svg(&grid).expect("svg").contains("fake"));
-        assert_eq!(&exporter.to_png(&grid).expect("png")[..4], b"\x89PNG");
+        let colors = diagram_model::color::DiagramColors::default();
+        assert!(
+            exporter
+                .to_svg(&grid, &colors)
+                .expect("svg")
+                .contains("fake")
+        );
+        assert_eq!(
+            &exporter.to_png(&grid, &colors).expect("png")[..4],
+            b"\x89PNG"
+        );
 
         // Catalog: list/get/anchors, including the empty-anchors and missing cases.
         let info = ShapeInfo::builtin("box", "Box", CellSize::new(9, 5).expect("valid size"));

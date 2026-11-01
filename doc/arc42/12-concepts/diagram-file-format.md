@@ -3,7 +3,7 @@ title: diagram-file-format
 description: the .ad diagram file grammar — versioned, line-based, one statement per line with explicit cell coordinates; read before implementing or changing ad-format (S-004)
 scope: format
 status: stable
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # Concept: Diagram File Format (`.ad`)
@@ -29,16 +29,19 @@ One versioning scheme covers all three file types:
 | Collection | `.adc` | `adc <major>.<minor>` | shape template declarations | [collection](collection.md) |
 | Template | — (inline in `.adc`) | — | grid + anchors | [shape-template](shape-template.md) |
 
-## Diagram file grammar (v1 = `ad 1.0`)
+## Diagram file grammar (v1 family — `ad 1.0` core + `ad 1.1` extensions)
 
 ```ebnf
 file         = header, statement* ; statements in stored object order
 header       = "ad", int, ".", int ; must be the FIRST statement of the file
-statement    = scale-stmt / shape-stmt / text-stmt / connect-stmt / unknown-stmt
+statement    = scale-stmt / colors-stmt / shape-stmt / text-stmt / connect-stmt / unknown-stmt
 scale-stmt   = "scale", int        ; at most once; must precede every object statement
+colors-stmt  = "colors", ( color-role, string )+ ; at most once; must precede every object statement (1.1, CR-009)
+color-role   = "background" / "fill" / "lines" ; each at most once per statement
 shape-stmt   = "shape", type-id, string, "as", id, "at", int, int, "w", int, "h", int
 text-stmt    = "text", "as", id, string, "at", int, int
-connect-stmt = "connect", "as", id, "from", anchor-ref, "to", anchor-ref, [ "dashed" ], [ "tip", tip-style, tip-style ], [ "via", via-cell ( "," via-cell )* ]
+connect-stmt = "connect", "as", id, "from", endpoint, "to", endpoint, [ "dashed" ], [ "tip", tip-style, tip-style ], [ "via", via-cell ( "," via-cell )* ]
+endpoint     = anchor-ref / int, int ; attached '<id>.<anchor>' or free at a bare cell (1.1, CR-010)
 tip-style    = "none" / "arrow" / "rhombus-open" / "rhombus-filled"
 via-cell     = int, int
 anchor-ref   = id, ".", anchor     ; split at the LAST dot (ids/anchors may contain dots); both parts non-empty
@@ -53,17 +56,19 @@ int          = "0" / digit1to9, digit* ; canonical decimal — no leading zeros;
 
 - **`shape <type-id> "<label>" as <id> at <x> <y> w <width> <height>`** — a `ShapeInstance`. `type-id` is the only reference into the Shape Catalog context (built-in or `collection/name`). Label may be empty (`""`).
 - **`text`** — a `TextInstance`: `text as <id> "<content>" at <x> <y>`. Content must be non-empty (model invariant). No size: text occupies exactly the cells its (possibly multi-line) content needs.
-- **`connect as <id> from <obj>.<anchor> to <obj>.<anchor> [dashed] [tip <src> <tgt>] [via <x> <y>, …]`** — a `ConnectorInstance`. Style omitted = solid (the model default); `dashed` = dashed. `tip <src> <tgt>` sets the per-end tip styles (CR-008): omitted = legacy default (source none, target arrow). `via` is the ordered list of manual waypoints in model-space cells (CR-007). Endpoints must reference existing *shape* objects.
+- **`connect as <id> from <endpoint> to <endpoint> [dashed] [tip <src> <tgt>] [via <x> <y>, …]`** — a `ConnectorInstance`. Style omitted = solid (the model default); `dashed` = dashed. `tip <src> <tgt>` sets the per-end tip styles (CR-008): omitted = legacy default (source none, target arrow). `via` is the ordered list of manual waypoints in model-space cells (CR-007). Each endpoint is either `<id>.<anchor>` (attached — must reference an existing *shape* object) or two bare integers `<x> <y>` (free at a model-space cell, CR-010); the token shape disambiguates (a dot ⇒ attached), and both-free endpoints may not share a cell.
 - **`scale <n>`** — whole-diagram scale (FR8), `n ≥ 1`; omitted means 1. The canonical serializer always emits it.
+- **`colors [<role> "#rrggbb"]+`** — diagram-level presentation colors (CR-009, FR15): bare role words (`background`, `fill`, `lines`) in any order, each at most once, with a quoted lowercase-compatible hex value; at least one pair required. Like `scale`, it must precede every object statement and appear at most once per file. Omitted = all roles unset (the monochrome default).
 
 ### Canonical serialization (Q1/NFR3)
 
 The writer is deterministic; "canonical form" means:
 
-1. Header first, then the `scale` statement (always emitted, even `scale 1`), then all objects **in stored order** — shapes, text, and connectors interleaved exactly as in the model's object list (file order = z-order).
+1. Header first, then the `scale` statement (always emitted, even `scale 1`), then the `colors` statement (only when any role is set — rule 4), then all objects **in stored order** — shapes, text, and connectors interleaved exactly as in the model's object list (file order = z-order).
 2. Exactly one space between tokens; no leading indentation; no trailing whitespace; LF line endings; no blank lines; no comments (comments/blank lines are decoration, never model data).
 3. Integers in canonical decimal (no leading zeros); style keyword `dashed` emitted only for the non-default style; the `tip` clause only when the pair differs from the defaults; `via` only when non-empty.
-4. Property: `serialize(parse(serialize(d))) == serialize(d)` for all models `d`, and `parse` of a canonical file is byte-stable under re-serialization (QS7).
+4. The `colors` statement is emitted only when at least one role is set, immediately after `scale`, with roles in canonical order (`background`, `fill`, `lines`) and lowercase hex.
+5. Property: `serialize(parse(serialize(d))) == serialize(d)` for all models `d`, and `parse` of a canonical file is byte-stable under re-serialization (QS7).
 
 ### Parsing rules (lenient in, strict out)
 
@@ -111,8 +116,9 @@ Round-trip (QS7) and byte-stability extend to every new field: each model field 
 | `ShapeInstance.pos` / `TextInstance.pos` | `at <x> <y>` |
 | `ShapeInstance.size` | `w <width> h <height>` (both ≥ 1) |
 | `TextInstance.text` | quoted `<string>` (non-empty) |
-| `ConnectorInstance.from` / `.to` | `from <id>.<anchor>` / `to <id>.<anchor>` |
+| `ConnectorInstance.from` / `.to` | `from <endpoint>` / `to <endpoint>` — `<id>.<anchor>` (attached) or `<x> <y>` (free, CR-010) |
 | `ConnectorInstance.style` | absent = solid; `dashed` = dashed |
+| `Diagram.colors` (`background`/`fill`/`lines`) | `colors` statement — one quoted `#rrggbb` per set role; absent = all unset (CR-009) |
 
 No model field is omitted or duplicated; nothing in the file maps to no model field (except preserved unknown statements, which are opaque pass-throughs).
 

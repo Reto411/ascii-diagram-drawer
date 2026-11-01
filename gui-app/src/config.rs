@@ -61,6 +61,9 @@ impl Theme {
     }
 }
 
+/// Most recent colors first; the strip shows at most this many (FR15 / CR-009 AC6).
+pub const MAX_RECENT_COLORS: usize = 16;
+
 /// The persisted user options. Extensible: future settings add fields here and to
 /// the Options menu without a format change (unknown/absent fields never break).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -68,6 +71,22 @@ pub struct AppConfig {
     /// The UI theme choice (FR13).
     #[serde(default)]
     pub theme: Theme,
+    /// Recently used diagram colors as lowercase `#rrggbb` strings, newest first
+    /// (FR15 / CR-009 AC6). Absent in pre-FR15 files → empty strip.
+    #[serde(default)]
+    pub recent_colors: Vec<String>,
+}
+
+impl AppConfig {
+    /// Records `hex` (`#rrggbb`) as the most recently used color: deduplicated, kept
+    /// newest-first, capped at [`MAX_RECENT_COLORS`].
+    pub fn record_recent_color(&mut self, hex: &str) {
+        self.recent_colors.retain(|h| h != hex);
+        self.recent_colors.insert(0, hex.to_owned());
+        if self.recent_colors.len() > MAX_RECENT_COLORS {
+            self.recent_colors.truncate(MAX_RECENT_COLORS);
+        }
+    }
 }
 
 impl AppConfig {
@@ -119,9 +138,66 @@ mod tests {
         for theme in [Theme::Light, Theme::Dark, Theme::Native] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.json");
-            AppConfig { theme }.save(&path).unwrap();
+            AppConfig {
+                theme,
+                ..Default::default()
+            }
+            .save(&path)
+            .unwrap();
             assert_eq!(AppConfig::load(Some(&path)).theme, theme);
         }
+    }
+
+    /// FR15 (CR-009) AC6 — the recent strip deduplicates (re-recording moves the
+    /// color to the front) and caps at [`MAX_RECENT_COLORS`].
+    #[test]
+    fn record_recent_color_deduplicates_and_caps() {
+        let mut config = AppConfig::default();
+        for i in 0..(MAX_RECENT_COLORS + 4) {
+            config.record_recent_color(&format!("#{i:06x}"));
+        }
+        assert_eq!(config.recent_colors.len(), MAX_RECENT_COLORS, "capped");
+        // 20 distinct colors were recorded; the strip keeps the newest 16:
+        // #000004 … #000013, newest first.
+        assert_eq!(config.recent_colors[0], "#000013", "newest first");
+        assert!(
+            !config.recent_colors.contains(&"#000003".to_owned()),
+            "the oldest entries fell off"
+        );
+
+        // Re-recording an existing color moves it to the front without duplicating.
+        config.record_recent_color("#00000a");
+        assert_eq!(config.recent_colors[0], "#00000a");
+        assert_eq!(config.recent_colors.len(), MAX_RECENT_COLORS);
+        let count = config
+            .recent_colors
+            .iter()
+            .filter(|h| *h == "#00000a")
+            .count();
+        assert_eq!(count, 1, "no duplicate");
+    }
+
+    /// FR15 (CR-009) AC6 — `recent_colors` round-trips through the config file and is
+    /// absent-tolerant: a pre-FR15 file (no field) loads as an empty strip.
+    #[test]
+    fn recent_colors_round_trip_and_absent_field_loads_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut config = AppConfig::default();
+        config.record_recent_color("#123456");
+        config.save(&path).unwrap();
+        assert_eq!(
+            AppConfig::load(Some(&path)).recent_colors,
+            vec!["#123456".to_owned()]
+        );
+
+        // A file written before FR15 has no `recent_colors` key at all.
+        std::fs::write(&path, "{\"theme\": \"dark\"}\n").unwrap();
+        let loaded = AppConfig::load(Some(&path));
+        assert!(
+            loaded.recent_colors.is_empty(),
+            "absent field → empty strip"
+        );
     }
 
     #[test]
@@ -162,6 +238,7 @@ mod tests {
         let path = dir.path().join("a/b/config.json");
         AppConfig {
             theme: Theme::Light,
+            ..Default::default()
         }
         .save(&path)
         .unwrap();
