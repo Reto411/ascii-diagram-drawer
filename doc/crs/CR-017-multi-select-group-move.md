@@ -2,7 +2,7 @@
 title: CR-017 - multi-select-group-move
 description: select several shapes with Ctrl/Shift+click and move them as a group — standard editor behavior for working with related elements
 scope: gui/interaction
-status: accepted
+status: implemented
 priority: medium
 updated: 2026-10-31
 ---
@@ -64,4 +64,4 @@ On acceptance, one commit:
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-035** — commit `d1bdc82` (2026-10-31). Selection set (`BTreeSet<ObjectId>`), Ctrl/Shift extend/toggle, group move with per-member grab offsets, bulk delete with connector cascade, Escape clears the whole set, per-member outlines + anchors, resize stays single-selection. All ACs verified at tier 0/0b plus a pixel-level check of visual_dump shot 14.
