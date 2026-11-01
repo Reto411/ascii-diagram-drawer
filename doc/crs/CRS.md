@@ -14,14 +14,15 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Priority | Status | File |
 |----|-------|----------|--------|------|
-| CR-001 | Native file dialogs for Open, Save and Export | medium | implemented | [CR-001-native-file-dialogs.md](CR-001-native-file-dialogs.md) |
-| CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | high | implemented | [CR-015-uml-shape-set.md](CR-015-uml-shape-set.md) |
-| CR-018 | Resize symbol on the shape's resize hook | low | implemented | [CR-018-resize-handle-symbol.md](CR-018-resize-handle-symbol.md) |
+| CR-019 | Window close button at the top right (rightmost of the app-bar controls) | low | proposed | [CR-019-close-button-at-top-right.md](CR-019-close-button-at-top-right.md) |
 
 ## Closed
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
+| CR-001 | Native file dialogs for Open, Save and Export | 2026-11-01 | implemented — S-039, commit `5f3edd1` (FR2/FR4/FR5; rfd + xdg-portal seam) |
+| CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | 2026-11-01 | implemented — S-036, commit `6327c3d` (FR18) |
+| CR-018 | Resize symbol on the shape's resize hook | 2026-11-01 | implemented — S-038, commit `0c05452` (FR21) |
 | CR-016 | Shape-owned text boxes — definable text regions on templates (format change, ADR 004) | 2026-11-01 | implemented — S-037, commit `e387db4` (FR19; .adc/.ad v1.1 region clauses, ADR 004 stays v4) |
 | CR-017 | Multi-select (Ctrl/Shift+click) and group move | 2026-11-01 | implemented — S-035, commit `d1bdc82` (FR20; selection set + group move) |
 | CR-013 | Pre-rendered shape previews in the template sidebar (WYSIWYG picking) | 2026-11-01 | implemented — S-034, commit `0e5e610` (FR16) |
