@@ -2,7 +2,7 @@
 title: Arrow object behavior and Visio-style line handles
 description: change request — connectors/arrows behave as normal objects (drag body moves the whole arrow), selected arrows show visible draggable handles at both endpoints and all bends, double-click on a segment inserts a bend, and an in-canvas dropdown selects the tip style per end; filed 2026-11-01
 scope: change request — connector/arrow interaction model (FR9)
-status: proposed
+status: accepted
 filed: 2026-11-01
 priority: high
 format-compat: none
@@ -53,8 +53,8 @@ On acceptance: update §14 FR9 to the proposed wording (this CR keeps the verbat
 
 ## Decision
 
-- [ ] **Accept** — proceed as proposed
+- [x] **Accept** — proceed as proposed
 - [ ] **Accept with adjustments** — <what changes>
 - [ ] **Reject** — <reason>
 
-Decided: _pending_ (YYYY-MM-DD)
+Decided: accepted (2026-11-01) — blanket acceptance by the user: "Fix all bugs, implement all change requests and do extensive regression testing including End to end tests". Applied on acceptance: §14 FR9 updated, concept C9 GUI paragraph updated, skeleton story S-041 on the board. ADR 013 untouched (routing stays a pure function of endpoint/bend positions — no version bump).
