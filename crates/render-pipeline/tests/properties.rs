@@ -136,6 +136,85 @@ fn random_diagram() -> impl Strategy<Value = Diagram> {
         })
 }
 
+/// S-043 / ADR 018 — the operation vocabulary from `diagram-model`'s property tests,
+/// so render properties also cover diagrams built through *operation sequences*.
+fn op_strategy() -> impl Strategy<Value = diagram_model::testgen::Op> {
+    use diagram_model::testgen::{ANCHORS, Op};
+    prop_oneof![
+        (0u32..32, 0u32..32, 0u32..12, 0u32..12).prop_map(|(x, y, w, h)| Op::PlaceShape {
+            x,
+            y,
+            w,
+            h
+        }),
+        (0u32..32, 0u32..32, any::<bool>()).prop_map(|(x, y, empty)| Op::PlaceText { x, y, empty }),
+        (0usize..8, 0u32..40, 0u32..40).prop_map(|(shape_index, x, y)| Op::Move {
+            shape_index,
+            x,
+            y
+        }),
+        (0usize..8, 0u32..16, 0u32..16).prop_map(|(shape_index, w, h)| Op::Resize {
+            shape_index,
+            w,
+            h
+        }),
+        (0usize..12).prop_map(|object_index| Op::Remove { object_index }),
+        (0usize..8, 0usize..8, any::<usize>(), any::<usize>()).prop_map(|(a, b, ai, bi)| {
+            Op::Connect {
+                a,
+                b,
+                anchor_a: ANCHORS[ai % ANCHORS.len()],
+                anchor_b: ANCHORS[bi % ANCHORS.len()],
+            }
+        }),
+        (0usize..6, 0u8..2, 0usize..8, any::<usize>()).prop_map(
+            |(conn_index, end, shape_index, ai)| Op::AttachEnd {
+                conn_index,
+                end,
+                shape_index,
+                anchor: ANCHORS[ai % ANCHORS.len()]
+            }
+        ),
+        (0usize..6, 0u8..2, 0u32..40, 0u32..40).prop_map(|(conn_index, end, x, y)| Op::FreeEnd {
+            conn_index,
+            end,
+            x,
+            y
+        }),
+        (0usize..6, 0usize..4, 0u32..40, 0u32..40).prop_map(|(conn_index, index, x, y)| {
+            Op::AddBend {
+                conn_index,
+                index,
+                x,
+                y,
+            }
+        }),
+        (0usize..6, 0usize..4, 0u32..40, 0u32..40).prop_map(|(conn_index, index, x, y)| {
+            Op::MoveBend {
+                conn_index,
+                index,
+                x,
+                y,
+            }
+        }),
+        (0usize..6, 0usize..4).prop_map(|(conn_index, index)| Op::RemoveBend { conn_index, index }),
+        (0usize..6, 0u8..2, 0u8..4).prop_map(|(conn_index, end, style)| Op::SetTip {
+            conn_index,
+            end,
+            style
+        }),
+        (0u32..10).prop_map(|scale| Op::SetScale { scale }),
+        (
+            any::<u8>(),
+            any::<bool>(),
+            any::<u8>(),
+            any::<u8>(),
+            any::<u8>()
+        )
+            .prop_map(|(role, set, r, g, b)| Op::SetColor { role, set, r, g, b }),
+    ]
+}
+
 proptest! {
     /// AC1 — purity/determinism: rendering the same model twice yields byte-identical grids.
     #[test]
@@ -198,6 +277,55 @@ proptest! {
                 prop_assert!(
                     c == ' ' || render_pipeline::is_line_glyph(c),
                     "cell ({x},{y}) emits {c:?} — structural output must be line glyphs only"
+                );
+            }
+        }
+    }
+
+    /// S-043 / ADR 018 — rendering an *operation-sequence* diagram (move/resize/connect/
+    /// attach/detach/bends/tips/scale/colors via `diagram_model::testgen`) never panics:
+    /// on success the grid is deterministic (two renders byte-equal) and alphabet-pure;
+    /// on failure only typed `RenderError` variants occur — for these box-only diagrams
+    /// that means a missing anchor (the vocabulary's `weird-anchor`) or an anchor outside
+    /// a resized shape's extent.
+    #[test]
+    fn operation_generated_diagrams_render_deterministically_or_fail_typed(
+        ops in prop::collection::vec(op_strategy(), 1..40)
+    ) {
+        let d = diagram_model::testgen::replay(&ops);
+        match render_pipeline::render(&d, &ShapeRegistry::builtin()) {
+            Ok(grid) => {
+                let again =
+                    render_pipeline::render(&d, &ShapeRegistry::builtin()).expect("renders twice");
+                prop_assert_eq!(grid.to_text(), again.to_text());
+                for y in 0..grid.height() {
+                    for x in 0..grid.width() {
+                        let c = grid.get(x, y).unwrap_or(' ');
+                        // The operation vocabulary sets tip styles: the rhombi (ADR 013 v5)
+                        // are intentional non-ASCII *content* glyphs, not svgbob alphabet —
+                        // everything else must stay inside svgbob's printable domain.
+                        prop_assert!(
+                            c == ' ' || c.is_ascii_graphic() || c == '◇' || c == '◆',
+                            "cell ({x},{y}) emits {c:?} — outside the allowed output alphabet"
+                        );
+                        if !c.is_ascii_alphanumeric() && c != ' ' && c != '◇' && c != '◆' {
+                            prop_assert!(
+                                render_pipeline::is_svgbob_glyph(c),
+                                "cell ({x},{y}) emits {c:?} — not a literal-text or svgbob glyph"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                let message = format!("{err:?}");
+                prop_assert!(
+                    matches!(
+                        err,
+                        render_pipeline::RenderError::UnknownAnchor { .. }
+                            | render_pipeline::RenderError::AnchorOutsideExtent { .. }
+                    ),
+                    "unexpected render error for a box-only operation-sequence diagram: {message}"
                 );
             }
         }

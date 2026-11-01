@@ -149,6 +149,86 @@ fn build(
     diagram
 }
 
+/// S-043 / ADR 018 — the same operation vocabulary as `diagram-model`'s property tests,
+/// so losslessness is checked on diagrams built through *operation sequences* (move,
+/// resize, attach/detach, bends, tips, scale, colors) rather than direct specs.
+fn op_strategy() -> impl Strategy<Value = diagram_model::testgen::Op> {
+    use diagram_model::testgen::{ANCHORS, Op};
+    prop_oneof![
+        (0u32..32, 0u32..32, 0u32..12, 0u32..12).prop_map(|(x, y, w, h)| Op::PlaceShape {
+            x,
+            y,
+            w,
+            h
+        }),
+        (0u32..32, 0u32..32, any::<bool>()).prop_map(|(x, y, empty)| Op::PlaceText { x, y, empty }),
+        (0usize..8, 0u32..40, 0u32..40).prop_map(|(shape_index, x, y)| Op::Move {
+            shape_index,
+            x,
+            y
+        }),
+        (0usize..8, 0u32..16, 0u32..16).prop_map(|(shape_index, w, h)| Op::Resize {
+            shape_index,
+            w,
+            h
+        }),
+        (0usize..12).prop_map(|object_index| Op::Remove { object_index }),
+        (0usize..8, 0usize..8, any::<usize>(), any::<usize>()).prop_map(|(a, b, ai, bi)| {
+            Op::Connect {
+                a,
+                b,
+                anchor_a: ANCHORS[ai % ANCHORS.len()],
+                anchor_b: ANCHORS[bi % ANCHORS.len()],
+            }
+        }),
+        (0usize..6, 0u8..2, 0usize..8, any::<usize>()).prop_map(
+            |(conn_index, end, shape_index, ai)| Op::AttachEnd {
+                conn_index,
+                end,
+                shape_index,
+                anchor: ANCHORS[ai % ANCHORS.len()]
+            }
+        ),
+        (0usize..6, 0u8..2, 0u32..40, 0u32..40).prop_map(|(conn_index, end, x, y)| Op::FreeEnd {
+            conn_index,
+            end,
+            x,
+            y
+        }),
+        (0usize..6, 0usize..4, 0u32..40, 0u32..40).prop_map(|(conn_index, index, x, y)| {
+            Op::AddBend {
+                conn_index,
+                index,
+                x,
+                y,
+            }
+        }),
+        (0usize..6, 0usize..4, 0u32..40, 0u32..40).prop_map(|(conn_index, index, x, y)| {
+            Op::MoveBend {
+                conn_index,
+                index,
+                x,
+                y,
+            }
+        }),
+        (0usize..6, 0usize..4).prop_map(|(conn_index, index)| Op::RemoveBend { conn_index, index }),
+        (0usize..6, 0u8..2, 0u8..4).prop_map(|(conn_index, end, style)| Op::SetTip {
+            conn_index,
+            end,
+            style
+        }),
+        (0u32..10).prop_map(|scale| Op::SetScale { scale }),
+        (
+            any::<u8>(),
+            any::<bool>(),
+            any::<u8>(),
+            any::<u8>(),
+            any::<u8>()
+        )
+            .prop_map(|(role, set, r, g, b)| Op::SetColor { role, set, r, g, b }),
+    ]
+}
+
 proptest! {
     #[test]
     fn round_trip_is_lossless(d in diagram_strategy()) {
@@ -158,6 +238,21 @@ proptest! {
         // Byte-stable re-save (QS7).
         prop_assert_eq!(ad_format::serialize(&parsed), text);
         // Model equality covers objects, order, geometry, labels and anchors.
+        prop_assert_eq!(parsed, d);
+    }
+
+    /// S-043 / ADR 018 — losslessness also holds for diagrams built through random
+    /// *operation sequences* (not just directly generated specs): after any sequence,
+    /// `parse(serialize(d)) == d` and re-serialization is byte-stable (QS7).
+    #[test]
+    fn operation_generated_diagrams_round_trip(ops in prop::collection::vec(op_strategy(), 1..40)) {
+        let d = diagram_model::testgen::replay(&ops);
+        let text = ad_format::serialize(&d);
+        let parsed = ad_format::parse(&text)
+            .unwrap_or_else(|err| panic!("canonical serialization must parse: {err}\n{text}"));
+        // Byte-stable re-save (QS7).
+        prop_assert_eq!(ad_format::serialize(&parsed), text);
+        // Model equality covers objects, order, geometry, labels, anchors, tips and colors.
         prop_assert_eq!(parsed, d);
     }
 }

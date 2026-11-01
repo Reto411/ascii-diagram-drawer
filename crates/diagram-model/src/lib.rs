@@ -29,6 +29,8 @@ pub mod geometry;
 pub mod glyphs;
 pub mod invariants;
 pub mod objects;
+/// Test support for property-based tests (operation replay + invariant checks) — S-043.
+pub mod testgen;
 
 use anchors::ConnectorEndpoint;
 pub use color::{ColorParseError, ColorRole, DiagramColors, Rgb};
