@@ -57,6 +57,6 @@ User feedback while using the GUI: the inline path prompt (typed file path + OK)
 
 ## Implementation
 
-- **S-039** — <commit> (rfd 0.17 + xdg-portal behind the new `FileDialogBackend` seam in `gui-app dialogs.rs`; flat File menu; in-app format-choice fallback; Save As `.txt` via `write_text_to`).
+- **S-039** — `5f3edd1` (rfd 0.17 + xdg-portal behind the new `FileDialogBackend` seam in `gui-app dialogs.rs`; flat File menu; in-app format-choice fallback; Save As `.txt` via `write_text_to`).
 
 -
