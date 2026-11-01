@@ -1,8 +1,9 @@
-//! Sidebar view model (S-016 AC1, CR-011): groups a flat catalog listing into
-//! collapsible groups with subcategory nesting. The grouping is pure data; the
-//! egui drawing in [`draw_shape_groups`] is driven by plain inputs plus
-//! [`SidebarActions`] callbacks so it can be exercised headlessly (tier 0b)
-//! without a full app — the app glue in `app.rs` stays thin.
+//! Sidebar view model (S-016 AC1, CR-011, CR-012): groups a flat catalog
+//! listing into collapsible groups with subcategory nesting and filters it by
+//! shape name. The grouping/filtering is pure data; the egui drawing in
+//! [`draw_shape_groups`] is driven by plain inputs plus [`SidebarActions`]
+//! callbacks so it can be exercised headlessly (tier 0b) without a full app —
+//! the app glue in `app.rs` stays thin.
 
 use eframe::egui;
 use std::collections::BTreeMap;
@@ -129,6 +130,45 @@ fn push_subgroup(group: &mut SidebarGroup, info: &ShapeInfo) {
     }
 }
 
+/// Narrows `groups` by shape name (CR-012 AC1): a case-insensitive substring
+/// match on each shape's *name* only — group labels, subcategory labels, and
+/// type ids are not matched in v1. Subcategories with no matching shape are
+/// dropped; groups left with no subcategories disappear entirely (AC2). A
+/// blank query returns the input unchanged (cloned).
+#[must_use]
+pub fn filter_groups(groups: &[SidebarGroup], query: &str) -> Vec<SidebarGroup> {
+    let needle = query.trim();
+    if needle.is_empty() {
+        return groups.to_vec();
+    }
+    let needle = needle.to_lowercase();
+    groups
+        .iter()
+        .map(|group| {
+            let subgroups = group
+                .subgroups
+                .iter()
+                .map(|sub| SidebarSubgroup {
+                    label: sub.label.clone(),
+                    shapes: sub
+                        .shapes
+                        .iter()
+                        .filter(|info| info.name.to_lowercase().contains(&needle))
+                        .cloned()
+                        .collect(),
+                })
+                .filter(|sub| !sub.shapes.is_empty())
+                .collect();
+            SidebarGroup {
+                label: group.label.clone(),
+                builtins: group.builtins,
+                subgroups,
+            }
+        })
+        .filter(|group| !group.subgroups.is_empty())
+        .collect()
+}
+
 /// Interaction callbacks between [`draw_shape_groups`] and the app (CR-011 AC2):
 /// the drawing stays decoupled from `DrawingApp` so it is testable headlessly.
 pub trait SidebarActions {
@@ -144,18 +184,34 @@ pub trait SidebarActions {
 /// Draws the shape groups of `groups` (CR-011): one collapsing header per group,
 /// expanded by default or per `expanded`; a group holding ≥ 2 subcategories nests
 /// one collapsing header per subcategory, a single-subgroup group renders its
-/// shapes flat (no redundant nesting level). Returns the `(key, open)` pairs
-/// whose state changed this frame — keys are `"group"` and `"group/subcategory"`;
-/// the caller persists them to the config file (AC3).
+/// shapes flat (no redundant nesting level). Above the list sits the CR-012
+/// filter input (`filter_query`, transient — owned by the app): while it holds a
+/// non-blank query only matching groups are drawn and they render forced-open
+/// (AC3), with toggle reporting suspended for the duration. Returns the `(key,
+/// open)` pairs whose state changed this frame — keys are `"group"` and
+/// `"group/subcategory"`; the caller persists them to the config file (CR-011 AC3).
 pub fn draw_shape_groups(
     ui: &mut egui::Ui,
     groups: &[SidebarGroup],
     expanded: &BTreeMap<String, bool>,
     preview_color: egui::Color32,
+    filter_query: &mut String,
     actions: &mut dyn SidebarActions,
 ) -> Vec<(String, bool)> {
+    // CR-012 — single-line filter above the shape list; narrows live per keystroke.
+    ui.add(egui::TextEdit::singleline(filter_query).hint_text("Filter shapes…"));
+    let filtering = !filter_query.trim().is_empty();
+    // Force matching groups open while filtering (AC3) so a match is visible
+    // without first expanding; `None` otherwise keeps the persisted state.
+    let force_open = if filtering { Some(true) } else { None };
+    // Filtered draws use their own id slots: `.open(Some(true))` toggles egui's
+    // remembered state, and that must not leak into the unfiltered slots —
+    // clearing the filter has to re-apply the persisted open/closed states.
+    let salt_suffix = if filtering { "filtered" } else { "" };
+    let filtered = filter_groups(groups, filter_query);
+
     let mut toggles = Vec::new();
-    for group in groups {
+    for group in &filtered {
         let key = group.label.clone();
         // The state this frame started with — the map is kept in sync by the
         // caller after every reported toggle, so a change flips exactly this.
@@ -163,7 +219,8 @@ pub fn draw_shape_groups(
         let response =
             egui::CollapsingHeader::new(egui::RichText::new(group.label.clone()).strong())
                 .default_open(expanded.get(&key).copied().unwrap_or(true))
-                .id_salt(("sidebar_group", group.label.as_str()))
+                .open(force_open)
+                .id_salt(("sidebar_group", group.label.as_str(), salt_suffix))
                 .show(ui, |ui| {
                     if group.subgroups.len() >= 2 {
                         for sub in &group.subgroups {
@@ -171,10 +228,12 @@ pub fn draw_shape_groups(
                             let sub_was_open = expanded.get(&sub_key).copied().unwrap_or(true);
                             let sub_response = egui::CollapsingHeader::new(sub.label.clone())
                                 .default_open(expanded.get(&sub_key).copied().unwrap_or(true))
+                                .open(force_open)
                                 .id_salt((
                                     "sidebar_subgroup",
                                     group.label.as_str(),
                                     sub.label.as_str(),
+                                    salt_suffix,
                                 ))
                                 .show(ui, |ui| {
                                     for info in &sub.shapes {
@@ -183,8 +242,10 @@ pub fn draw_shape_groups(
                                 });
                             // `body_response` follows the *animation* (still Some while
                             // the body animates shut), so report the logical state:
-                            // a change flips what the frame started with.
-                            if sub_response.header_response.changed() {
+                            // a change flips what the frame started with. Suspended
+                            // while filtering — the forced-open marks the header
+                            // changed on its own, and that is not user intent.
+                            if !filtering && sub_response.header_response.changed() {
                                 toggles.push((sub_key, !sub_was_open));
                             }
                         }
@@ -196,7 +257,7 @@ pub fn draw_shape_groups(
                         }
                     }
                 });
-        if response.header_response.changed() {
+        if !filtering && response.header_response.changed() {
             toggles.push((key, !was_open));
         }
     }
@@ -449,6 +510,7 @@ mod tests {
         ts: f64,
         groups: Vec<SidebarGroup>,
         expanded: BTreeMap<String, bool>,
+        filter: String,
         last_toggles: Vec<(String, bool)>,
     }
 
@@ -461,6 +523,7 @@ mod tests {
                 ts: 1.0,
                 groups,
                 expanded,
+                filter: String::new(),
                 last_toggles: Vec::new(),
             }
         }
@@ -480,13 +543,77 @@ mod tests {
             let expanded = &self.expanded;
             let mut out = self.ctx.run_ui(raw, |ui| {
                 ui.vertical(|ui| {
-                    self.last_toggles =
-                        draw_shape_groups(ui, groups, expanded, egui::Color32::WHITE, &mut Noop);
+                    self.last_toggles = draw_shape_groups(
+                        ui,
+                        groups,
+                        expanded,
+                        egui::Color32::WHITE,
+                        &mut self.filter,
+                        &mut Noop,
+                    );
                 });
             });
             // Headless: no GPU to upload glyph textures — clear the pending deltas.
             out.textures_delta.clear();
             out
+        }
+
+        /// Clicks the filter input (located via its placeholder galley) and types
+        /// `s` into it, one `Event::Text` per frame — the CR-012 typing pattern.
+        fn type_filter(&mut self, out: &egui::FullOutput, s: &str) -> egui::FullOutput {
+            let rect = out
+                .shapes
+                .iter()
+                .filter_map(|cs| match &cs.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == "Filter shapes…" => {
+                        Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                    }
+                    _ => None,
+                })
+                .next()
+                .expect("filter placeholder drawn")
+                .expand(10.0);
+            let center = rect.center();
+            self.pump(vec![
+                egui::Event::PointerMoved(center),
+                egui::Event::PointerButton {
+                    pos: center,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]);
+            let mut out = self.pump(vec![egui::Event::PointerButton {
+                pos: center,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }]);
+            for c in s.chars() {
+                out = self.pump(vec![egui::Event::Text(c.to_string())]);
+            }
+            out
+        }
+
+        /// Deletes `n` trailing characters of the filter (press+release per key).
+        fn backspace_filter(&mut self, n: usize) -> egui::FullOutput {
+            let mut out = self.frame();
+            for _ in 0..n {
+                let key = |pressed: bool| egui::Event::Key {
+                    key: egui::Key::Backspace,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: Default::default(),
+                };
+                let _ = self.pump(vec![key(true)]);
+                out = self.pump(vec![key(false)]);
+            }
+            out
+        }
+
+        fn frame(&mut self) -> egui::FullOutput {
+            self.pump(Vec::new())
         }
     }
 
@@ -525,6 +652,148 @@ mod tests {
         assert!(texts.contains(&"mystery".to_owned()));
         assert!(texts.contains(&"box".to_owned()));
         assert!(texts.contains(&"a".to_owned()));
+    }
+
+    // ── CR-012: filter_groups (pure, tier 0) ──
+
+    /// AC1 — case-insensitive substring match on the shape *name* only.
+    #[test]
+    fn filter_matches_case_insensitive_substring_of_name() {
+        let groups = group_templates(&[info("box", None), info("ellipse", None)]);
+
+        // "bo" matches "Box"; "BOX" (uppercase query) does too.
+        let filtered = filter_groups(&groups, "bo");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(
+            filtered[0].subgroups[0]
+                .shapes
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["box"]
+        );
+        assert_eq!(filter_groups(&groups, "BOX").len(), 1);
+
+        // No match at all → the group disappears entirely (AC2).
+        assert!(filter_groups(&groups, "square").is_empty());
+    }
+
+    /// AC1 — matching is on the name, not the type id or labels: a shape whose
+    /// type id contains the needle but whose name does not is excluded.
+    #[test]
+    fn filter_matches_name_not_type_id() {
+        let mut star = info("col/star", Some("col"));
+        star.name = "Compass".to_owned(); // name ≠ type id
+        let groups = group_templates(&[star]);
+
+        assert!(
+            filter_groups(&groups, "star").is_empty(),
+            "type id is not matched"
+        );
+        assert_eq!(filter_groups(&groups, "comp").len(), 1);
+    }
+
+    /// AC2 — empty subcategories are dropped, groups with none left disappear;
+    /// a blank query returns the input unchanged.
+    #[test]
+    fn filter_drops_empty_groups_and_subgroups() {
+        let groups = group_templates(&[
+            info("box", None),
+            info("ellipse", None),
+            info("col/a", Some("col")),
+        ]);
+
+        // "b" matches only "box": the built-in group keeps one shape, the
+        // collection group vanishes.
+        let filtered = filter_groups(&groups, "b");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].label, "Built-in");
+        assert_eq!(filtered[0].subgroups.len(), 1);
+
+        // Blank queries (empty or whitespace-only) change nothing.
+        assert_eq!(filter_groups(&groups, ""), groups);
+        assert_eq!(filter_groups(&groups, "   "), groups);
+    }
+
+    /// AC2 — a multi-subcategory group keeps only the matching subcategories,
+    /// in their original order.
+    #[test]
+    fn filter_keeps_matching_subcategories_in_order() {
+        let mut alpha = info("mystery", None); // → "Other"
+        alpha.name = "Zebra".to_owned();
+        let groups = group_templates(&[info("box", None), alpha, info("ellipse", None)]);
+
+        let filtered = filter_groups(&groups, "zebra");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].subgroups.len(), 1);
+        assert_eq!(filtered[0].subgroups[0].label, OTHER_CATEGORY);
+    }
+
+    // ── CR-012: drawing with a filter (tier 0b) ──
+
+    /// AC1 — typing into the filter input narrows the drawn rows live per
+    /// keystroke; groups without matches are not drawn at all.
+    #[test]
+    fn typing_filter_narrows_visible_rows() {
+        let groups = group_templates(&[
+            info("box", None),
+            info("ellipse", None),
+            info("col/a", Some("col")),
+        ]);
+        let mut pump = Pump::new(groups, BTreeMap::new());
+        let out = pump.pump(Vec::new());
+
+        // "bo" → only the built-in group with its one matching shape remains.
+        let out = pump.type_filter(&out, "bo");
+        let texts = drawn_texts(&out);
+        assert!(texts.contains(&"box".to_owned()));
+        assert!(!texts.contains(&"ellipse".to_owned()), "non-match hidden");
+        assert!(
+            !texts.contains(&"col".to_owned()),
+            "empty group header hidden"
+        );
+
+        // Backspacing to an empty query restores the full list (AC2).
+        let out = pump.backspace_filter(2);
+        let texts = drawn_texts(&out);
+        assert!(texts.contains(&"box".to_owned()));
+        assert!(texts.contains(&"ellipse".to_owned()));
+        assert!(texts.contains(&"col".to_owned()));
+    }
+
+    /// AC3 — while the filter is active a persisted-collapsed group renders its
+    /// matching rows (forced open) and reports no toggles, so the persisted
+    /// state survives the filtering; clearing the filter re-applies it.
+    #[test]
+    fn filter_forces_open_without_persisting_toggles() {
+        let groups = group_templates(&[info("box", None), info("ellipse", None)]);
+        let mut expanded = BTreeMap::new();
+        expanded.insert("Built-in".to_owned(), false); // persisted closed
+        let mut pump = Pump::new(groups, expanded);
+
+        // Collapsed: rows hidden, no toggles.
+        let out = pump.pump(Vec::new());
+        assert!(!drawn_texts(&out).contains(&"box".to_owned()));
+        assert!(pump.last_toggles.is_empty());
+
+        // Filter "bo": the match must be visible despite the persisted collapse,
+        // and nothing may be reported for persistence.
+        let out = pump.type_filter(&out, "bo");
+        assert!(
+            drawn_texts(&out).contains(&"box".to_owned()),
+            "forced open shows match"
+        );
+        assert!(pump.last_toggles.is_empty(), "no toggles while filtering");
+
+        // Clear the filter: the persisted closed state applies again.
+        let mut out = pump.backspace_filter(2);
+        for _ in 0..12 {
+            out = pump.frame(); // let the closing animation settle
+        }
+        assert!(
+            !drawn_texts(&out).contains(&"box".to_owned()),
+            "persisted state re-applied"
+        );
     }
 
     /// AC1/AC3 — a collapsed group (persisted `expanded` state) hides its rows,

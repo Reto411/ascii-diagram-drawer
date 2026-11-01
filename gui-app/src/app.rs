@@ -197,6 +197,9 @@ pub struct DrawingApp {
     preview: PreviewPane,
     /// The open “Diagram colors” dialog (FR15 / CR-009 AC5); `None` when closed.
     color_dialog: Option<ColorDialogState>,
+    /// The template sidebar's shape filter query (CR-012): transient by design —
+    /// deliberately *not* part of the persisted options; a restart starts empty.
+    filter_query: String,
 }
 
 /// Builds the app from services, the loaded user options (FR13 / CR-005), an
@@ -269,6 +272,7 @@ impl DrawingApp {
             applied_theme: None,
             preview: PreviewPane::default(),
             color_dialog: None,
+            filter_query: String::new(),
         }
     }
 }
@@ -2124,8 +2128,22 @@ impl DrawingApp {
                     // states persist to the options file (AC3) following the FR13
                     // immediate-save pattern; a missing key means expanded.
                     let expanded = self.config.sidebar_expanded.clone();
-                    let toggles =
-                        crate::sidebar::draw_shape_groups(ui, &groups, &expanded, TEXT_COLOR, self);
+                    // CR-012 — the filter query is transient app state; while it
+                    // holds a non-blank text no toggles are reported (the forced-
+                    // open headers mark themselves changed), so persistence only
+                    // ever sees real user clicks on an unfiltered list.
+                    // Take/restore around the call: the query and the actions
+                    // trait object both borrow `self`.
+                    let mut filter = std::mem::take(&mut self.filter_query);
+                    let toggles = crate::sidebar::draw_shape_groups(
+                        ui,
+                        &groups,
+                        &expanded,
+                        TEXT_COLOR,
+                        &mut filter,
+                        self,
+                    );
+                    self.filter_query = filter;
                     if !toggles.is_empty() {
                         for (key, open) in toggles {
                             self.config.set_sidebar_expanded(&key, open);
