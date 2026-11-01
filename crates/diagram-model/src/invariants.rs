@@ -20,6 +20,8 @@ pub(crate) enum TokenField {
     ObjectId,
     /// A shape type id.
     ShapeTypeId,
+    /// A text region name (CR-016).
+    RegionName,
 }
 
 impl fmt::Display for TokenField {
@@ -28,6 +30,7 @@ impl fmt::Display for TokenField {
             Self::AnchorName => f.write_str("anchor name"),
             Self::ObjectId => f.write_str("object id"),
             Self::ShapeTypeId => f.write_str("shape type id"),
+            Self::RegionName => f.write_str("region name"),
         }
     }
 }
@@ -64,6 +67,10 @@ pub enum ModelError {
     NotAShape(ObjectId),
     /// An operation requires a free text object, but the object is another kind.
     NotAText(ObjectId),
+    /// Region names must not be empty.
+    EmptyRegionName,
+    /// Region names must be single tokens (no whitespace).
+    RegionNameContainsWhitespace(String),
     /// The diagram scale factor must be at least one.
     ScaleTooSmall {
         /// The rejected scale value.
@@ -118,6 +125,11 @@ impl fmt::Display for ModelError {
             Self::NotAText(id) => {
                 write!(f, "expected free text but found another object kind: {id}")
             }
+            Self::EmptyRegionName => f.write_str("region name must not be empty"),
+            Self::RegionNameContainsWhitespace(name) => write!(
+                f,
+                "region name must be a single token (no whitespace): '{name}'"
+            ),
             Self::ScaleTooSmall { scale } => {
                 write!(f, "scale factor must be at least 1 (got {scale})")
             }
@@ -151,6 +163,7 @@ pub(crate) fn validate_single_token(value: &str, field: TokenField) -> Result<()
             TokenField::AnchorName => ModelError::EmptyAnchorName,
             TokenField::ObjectId => ModelError::EmptyId,
             TokenField::ShapeTypeId => ModelError::EmptyShapeTypeId,
+            TokenField::RegionName => ModelError::EmptyRegionName,
         });
     }
     if value.chars().any(char::is_whitespace) {
@@ -158,6 +171,7 @@ pub(crate) fn validate_single_token(value: &str, field: TokenField) -> Result<()
             TokenField::AnchorName => ModelError::AnchorNameContainsWhitespace(value.to_owned()),
             TokenField::ObjectId => ModelError::IdContainsWhitespace(value.to_owned()),
             TokenField::ShapeTypeId => ModelError::ShapeTypeIdContainsWhitespace(value.to_owned()),
+            TokenField::RegionName => ModelError::RegionNameContainsWhitespace(value.to_owned()),
         });
     }
     Ok(())
@@ -198,6 +212,15 @@ mod tests {
             validate_single_token("a\tb", TokenField::ShapeTypeId),
             Err(ModelError::ShapeTypeIdContainsWhitespace("a\tb".to_owned()))
         );
+        assert_eq!(
+            validate_single_token("", TokenField::RegionName),
+            Err(ModelError::EmptyRegionName)
+        );
+        assert_eq!(
+            validate_single_token("a b", TokenField::RegionName),
+            Err(ModelError::RegionNameContainsWhitespace("a b".to_owned()))
+        );
+        assert_eq!(validate_single_token("r1", TokenField::RegionName), Ok(()));
         assert_eq!(
             validate_single_token("", TokenField::AnchorName),
             Err(ModelError::EmptyAnchorName)

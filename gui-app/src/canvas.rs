@@ -1053,6 +1053,7 @@ mod tests {
             resizable: false,
             min_size: CellSize::new(1, 1).expect("valid size"),
             resize_rules: None,
+            regions: Vec::new(),
         };
         // A rule-bearing custom shape: resizable down to its computed 2×2 floor.
         let star = ShapeInfo {
@@ -1064,6 +1065,7 @@ mod tests {
             resizable: true,
             min_size: CellSize::new(2, 2).expect("valid size"),
             resize_rules: None,
+            regions: Vec::new(),
         };
         let anchors_for = |x: u32| {
             [("e", CellPos::new(x, 1))]

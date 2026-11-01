@@ -60,6 +60,23 @@ impl fmt::Display for AnchorSetError {
 
 impl std::error::Error for AnchorSetError {}
 
+/// A region-set invariant violation ([`RegionSet`](crate::types::RegionSet)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegionSetError {
+    /// The region name is already declared in this set.
+    DuplicateName(String),
+}
+
+impl fmt::Display for RegionSetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateName(name) => write!(f, "region '{name}' is already declared"),
+        }
+    }
+}
+
+impl std::error::Error for RegionSetError {}
+
 /// A type-id could not be resolved against the registry (C8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LookupError {
@@ -220,6 +237,10 @@ mod tests {
         assert_eq!(
             AnchorSetError::DuplicateName("n".to_owned()).to_string(),
             "anchor 'n' is already declared"
+        );
+        assert_eq!(
+            RegionSetError::DuplicateName("r1".to_owned()).to_string(),
+            "region 'r1' is already declared"
         );
         assert_eq!(
             LookupError::UnknownBuiltin {

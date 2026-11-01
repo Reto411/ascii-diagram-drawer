@@ -11,8 +11,8 @@ use diagram_model::objects::{ConnectorInstance, ConnectorStyle, ObjectId, ShapeI
 use render_pipeline::render;
 use shape_registry::CellPos as RegCellPos;
 use shape_registry::{
-    AnchorSet, Collection, EdgeRule, GeometryKind, ResizeRules, ShapeRegistry, ShapeType,
-    TemplateGrid,
+    AnchorSet, Collection, EdgeRule, GeometryKind, RegionSet, ResizeRules, ShapeRegistry,
+    ShapeType, TemplateGrid,
 };
 
 /// The canonical box: `+--+` / `|  |` / `+--+` with the matching rule set.
@@ -48,6 +48,7 @@ fn registry() -> ShapeRegistry {
         anchor_set: anchors,
         geometry: GeometryKind::Pattern,
         resize_rules: Some(box_rules()),
+        regions: RegionSet::new(),
     };
     let plain = ShapeType {
         type_id: "c/plain".to_owned(),
@@ -56,6 +57,7 @@ fn registry() -> ShapeRegistry {
         anchor_set: AnchorSet::new(),
         geometry: GeometryKind::Pattern,
         resize_rules: None,
+        regions: RegionSet::new(),
     };
     let mut registry = ShapeRegistry::builtin();
     registry.add_collection(Collection {

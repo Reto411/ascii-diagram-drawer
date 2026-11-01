@@ -248,6 +248,7 @@ mod tests {
                     name: "star".into(),
                     rows: vec!["#.#".into(), "###".into(), "#.#".into()],
                     resize_rules: None,
+                    regions: Vec::new(),
                     anchors: vec![ui_api::AnchorInfo {
                         name: "n".into(),
                         position: diagram_model::geometry::CellPos { x: 1, y: 0 },

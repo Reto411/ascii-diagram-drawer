@@ -159,6 +159,48 @@ impl SharedRegistry {
                 })?;
         }
 
+        // FR19 (CR-016): declared text regions — names are single tokens, unique per
+        // template (RegionSet enforces both), and every rect must fit inside the grid
+        // with extents ≥ 1.
+        let mut region_set = shape_registry::RegionSet::new();
+        for region in &template.regions {
+            invalid_token(&region.name, "region name")?;
+            if region.size.width == 0 || region.size.height == 0 {
+                return Err(CatalogError::Invalid {
+                    message: format!("region '{}' has a zero extent", region.name),
+                });
+            }
+            if region.pos.x.saturating_add(region.size.width) > glyph_pattern.width()
+                || region.pos.y.saturating_add(region.size.height) > glyph_pattern.height()
+            {
+                return Err(CatalogError::Invalid {
+                    message: format!(
+                        "region '{}' at ({}, {}) with {}x{} exceeds the {}x{} grid",
+                        region.name,
+                        region.pos.x,
+                        region.pos.y,
+                        region.size.width,
+                        region.size.height,
+                        glyph_pattern.width(),
+                        glyph_pattern.height()
+                    ),
+                });
+            }
+            region_set
+                .add(
+                    &region.name,
+                    shape_registry::Region {
+                        x: region.pos.x,
+                        y: region.pos.y,
+                        width: region.size.width,
+                        height: region.size.height,
+                    },
+                )
+                .map_err(|e| CatalogError::Invalid {
+                    message: e.to_string(),
+                })?;
+        }
+
         // S-024 AC4: optional resize rules — the spec is complete by construction
         // (all four edges always present), so only the characters need validation.
         let resize_rules = match &template.resize_rules {
@@ -179,6 +221,7 @@ impl SharedRegistry {
             anchor_set,
             geometry: GeometryKind::Pattern,
             resize_rules,
+            regions: region_set,
         })
     }
 
@@ -275,6 +318,7 @@ mod tests {
             name: "star".to_owned(),
             rows: rows.into_iter().map(String::from).collect(),
             resize_rules: None,
+            regions: Vec::new(),
             anchors: anchors
                 .iter()
                 .map(|(n, x, y)| AnchorInfo {
@@ -338,6 +382,7 @@ mod tests {
                     name: "new".to_owned(),
                     rows: vec!["x".to_owned()],
                     resize_rules: None,
+                    regions: Vec::new(),
                     anchors: vec![AnchorInfo {
                         name: "e".into(),
                         position: diagram_model::geometry::CellPos { x: 0, y: 0 },
@@ -357,6 +402,7 @@ mod tests {
                     name: "old".to_owned(),
                     rows: vec!["z".to_owned()],
                     resize_rules: None,
+                    regions: Vec::new(),
                     anchors: vec![AnchorInfo {
                         name: "s".into(),
                         position: diagram_model::geometry::CellPos { x: 0, y: 0 },

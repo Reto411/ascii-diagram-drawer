@@ -46,6 +46,8 @@ const SELECTION_COLOR: Color32 = Color32::from_rgb(90, 160, 255);
 const GHOST_COLOR: Color32 = Color32::from_rgb(140, 200, 140);
 const ERROR_COLOR: Color32 = Color32::from_rgb(255, 96, 96);
 const ANCHOR_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
+/// Text-region tint in the template editor grid (FR19 / CR-016).
+const REGION_COLOR: Color32 = Color32::from_rgb(140, 220, 140);
 const CONNECT_LINE_COLOR: Color32 = Color32::from_rgb(255, 196, 87);
 /// Muted hint text on an empty canvas (first-run affordance).
 const HINT_COLOR: Color32 = Color32::from_rgb(96, 102, 114);
@@ -152,6 +154,15 @@ pub(crate) struct ColorDialogState {
     pub active_role: diagram_model::color::ColorRole,
 }
 
+/// FR19 (CR-016) — the open region-content editor for a shape instance: its id,
+/// a label buffer, and one content buffer per declared region (`(name, content)`).
+/// The buffers live in app state because egui's `TextEdit` only edits bound strings.
+pub struct ShapeTextEditState {
+    pub id: diagram_model::objects::ObjectId,
+    pub label: String,
+    pub fields: Vec<(String, String)>,
+}
+
 pub struct DrawingApp {
     services: Services,
     /// `pub` like `status`: this is a binary crate — the file-IO tests in
@@ -181,7 +192,9 @@ pub struct DrawingApp {
     /// fatal: startup always succeeds with at least the built-ins.
     collection_warnings: Vec<String>,
     /// The open template editor session (S-017); `None` when the window is closed.
-    template_editor: Option<TemplateEditorSession>,
+    pub(crate) template_editor: Option<TemplateEditorSession>,
+    /// FR19 (CR-016) — the open region-content editor for a shape instance, if any.
+    pub(crate) shape_text_edit: Option<ShapeTextEditState>,
     /// In-flight PNG export (S-015 RS4): ticked once per frame while the worker
     /// rasterizes; the UI stays responsive meanwhile (ADR 012).
     png_export: Option<PngExport>,
@@ -267,6 +280,7 @@ impl DrawingApp {
             path_prompt: None,
             collection_warnings: Vec::new(),
             template_editor: None,
+            shape_text_edit: None,
             png_export: None,
             pending_png_path: None,
             config_path,
@@ -1186,13 +1200,22 @@ impl DrawingApp {
             self.status = message;
         }
 
-        // Double click (S-018 AC1): open inline editing of a text object under the pointer.
+        // Double click (S-018 AC1): open inline editing of a text object under the
+        // pointer; shapes open their region-content editor (FR19 / CR-016, S-037).
         if ctx.input(|i| {
             i.pointer
                 .button_double_clicked(egui::PointerButton::Primary)
-        }) && let Some(message) = status_for(self.handle_pointer_double(hit))
-        {
-            self.status = message;
+        }) {
+            match self.handle_pointer_double(hit) {
+                EditOutcome::DoubleClickShape { id } => {
+                    self.open_shape_text_edit(&id);
+                }
+                outcome => {
+                    if let Some(message) = status_for(outcome) {
+                        self.status = message;
+                    }
+                }
+            }
         }
 
         // Inline text editing (S-018 AC1): a TextEdit bound to the editor's draft,
@@ -1283,6 +1306,121 @@ impl DrawingApp {
                 &mut self.diagram,
             ),
             None => EditOutcome::Nothing,
+        }
+    }
+
+    /// FR19 (CR-016, S-037 AC5) — double-clicking a shape opens a window with a label
+    /// field plus one field per declared region of its type, pre-filled with the
+    /// instance's current content. Shapes without regions get a status hint instead.
+    pub fn open_shape_text_edit(&mut self, id: &diagram_model::objects::ObjectId) {
+        let Some(Object::Shape(shape)) = self.diagram.get(id) else {
+            return;
+        };
+        let type_id = shape.type_id.clone();
+        let regions = self
+            .services
+            .catalog
+            .list()
+            .into_iter()
+            .find(|info| info.type_id == type_id)
+            .map(|info| info.regions)
+            .unwrap_or_default();
+        if regions.is_empty() {
+            self.status = format!(
+                "{id} has no text regions — double-click a shape whose template declares some"
+            );
+            return;
+        }
+        let label = shape.label.clone();
+        let fields: Vec<(String, String)> = regions
+            .iter()
+            .map(|r| {
+                (
+                    r.name.clone(),
+                    shape.region_content(&r.name).unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        self.shape_text_edit = Some(ShapeTextEditState {
+            id: id.clone(),
+            label,
+            fields,
+        });
+    }
+
+    /// FR19 (CR-016, S-037 AC5) — the region-content editor window: a label field
+    /// plus one field per declared region; Apply writes them all to the instance,
+    /// Cancel/Escape/X close without applying.
+    fn draw_shape_text_edit(&mut self, ui: &mut egui::Ui) {
+        let Some(state) = self.shape_text_edit.as_ref() else {
+            return;
+        };
+        // The buffers live in `self` (label + one per declared region); the window
+        // closure borrows them for the duration of the synchronous `show`.
+        let id = state.id.clone();
+        let count = state.fields.len();
+        let mut apply = false;
+        let mut cancel = false;
+        let mut open = true;
+        egui::Window::new(format!("Text regions — {id}"))
+            .open(&mut open)
+            .collapsible(false)
+            // One row for the label plus one per region.
+            .default_size([320.0, 80.0 + (count + 1) as f32 * 76.0])
+            .show(ui.ctx(), |ui| {
+                {
+                    let label_buffer =
+                        &mut self.shape_text_edit.as_mut().expect("window is open").label;
+                    ui.horizontal(|ui| {
+                        ui.label("Label:");
+                        ui.add_sized(
+                            [240.0, 64.0],
+                            egui::TextEdit::multiline(label_buffer)
+                                .id_source(egui::Id::new(("region_field", "label")))
+                                .font(egui::TextStyle::Monospace),
+                        );
+                    });
+                }
+                for (name, buffer) in self
+                    .shape_text_edit
+                    .as_mut()
+                    .expect("window is open")
+                    .fields
+                    .iter_mut()
+                {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{name}:"));
+                        ui.add_sized(
+                            [240.0, 64.0],
+                            egui::TextEdit::multiline(buffer)
+                                .id_source(egui::Id::new(("region_field", name.clone())))
+                                .font(egui::TextStyle::Monospace),
+                        );
+                    });
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Apply").clicked() {
+                        apply = true;
+                    } else if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        let escape = ui.ctx().input(|i| i.key_pressed(Key::Escape));
+        if apply {
+            let state = self.shape_text_edit.as_ref().expect("window is open");
+            // The id was live when the window opened; it cannot vanish mid-frame.
+            let _ = self.diagram.set_shape_label(&id, &state.label);
+            for (name, content) in &state.fields {
+                // Unknown names are rejected by the model — they cannot happen: the
+                // fields came from the catalog this frame.
+                let _ = self.diagram.set_shape_region(&id, name, content);
+            }
+            self.status = format!("Updated text regions of {id}");
+            self.shape_text_edit = None;
+        } else if cancel || !open || escape {
+            self.status = format!("Cancelled text-region edit of {id}");
+            self.shape_text_edit = None;
         }
     }
 
@@ -1402,6 +1540,12 @@ impl DrawingApp {
                 &mut session.anchor_mode,
                 "Anchor mode (click cells to add/remove anchors)",
             );
+            // FR19 (CR-016, S-037 AC4) — the region toolset: click a cell for a 1×1
+            // region, drag for a rect; clicking an existing region removes it.
+            ui.checkbox(
+                &mut session.region_mode,
+                "Region mode (click/drag cells for text regions)",
+            );
             if ui.button("Clear cell").clicked()
                 && let Some((x, y)) = session.selected_cell
             {
@@ -1411,13 +1555,17 @@ impl DrawingApp {
         });
 
         // The grid: one row of cells per template row. Empty cells show a faint dot;
-        // anchored cells are tinted; the selected cell is highlighted. Clicks land in
-        // a local (the closure only reads `session`) and are applied below.
+        // anchored cells are tinted; region cells get the region tint; the selected
+        // cell is highlighted. Clicks land in a local (the closure only reads
+        // `session`) and are applied below. Cell rects are collected for the region
+        // drag selection (FR19 / CR-016).
         let mut clicked_cell: Option<((u32, u32), char)> = None;
+        let mut cell_rects: Vec<Vec<egui::Rect>> = Vec::new();
         egui::ScrollArea::both().max_height(200.0).show(ui, |ui| {
             for y in 0..session.draft.height() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("{y:>2}")).monospace().weak());
+                    cell_rects.push(Vec::new());
                     for x in 0..session.draft.width() {
                         let ch = session
                             .draft
@@ -1430,9 +1578,12 @@ impl DrawingApp {
                             .anchors
                             .iter()
                             .any(|a| a.position.x == x && a.position.y == y);
+                        let in_region = session.draft.regions.iter().any(|r| r.contains(x, y));
                         let selected = session.selected_cell == Some((x, y));
                         let fill = if anchored {
                             ANCHOR_COLOR.gamma_multiply(0.45)
+                        } else if in_region {
+                            REGION_COLOR.gamma_multiply(0.35)
                         } else if selected {
                             SELECTION_COLOR.gamma_multiply(0.35)
                         } else {
@@ -1445,20 +1596,59 @@ impl DrawingApp {
                         } else {
                             RichText::new(ch.to_string()).monospace().color(TEXT_COLOR)
                         };
-                        if ui
-                            .add_sized([16.0, 18.0], egui::Button::new(glyph).fill(fill))
-                            .clicked()
-                        {
+                        let response =
+                            ui.add_sized([16.0, 18.0], egui::Button::new(glyph).fill(fill));
+                        cell_rects.last_mut().unwrap().push(response.rect);
+                        if response.clicked() {
                             clicked_cell = Some(((x, y), ch));
                         }
                     }
                 });
             }
         });
+
+        // FR19 (CR-016) — region-mode pointer handling: a press starts the drag on
+        // the cell under the pointer; release over the same cell toggles a 1×1
+        // region, over another cell adds the dragged rect.
+        if session.region_mode {
+            let cell_at = |pos: egui::Pos2| -> Option<(u32, u32)> {
+                cell_rects.iter().enumerate().find_map(|(y, row)| {
+                    row.iter().enumerate().find_map(|(x, rect)| {
+                        if rect.contains(pos) {
+                            Some((x as u32, y as u32))
+                        } else {
+                            None
+                        }
+                    })
+                })
+            };
+            let (pressed, cell) = ui.input(|i| {
+                (
+                    i.pointer.button_pressed(egui::PointerButton::Primary),
+                    i.pointer.interact_pos().and_then(cell_at),
+                )
+            });
+            if pressed {
+                if session.region_drag_start.is_none() {
+                    session.region_drag_start = cell;
+                }
+            } else if let Some(start) = session.region_drag_start.take() {
+                match cell {
+                    Some(end) if end != start => {
+                        let _ = session.draft.add_region_drag(start, end);
+                    }
+                    Some(same) => {
+                        let _ = session.draft.toggle_region(same.0, same.1);
+                    }
+                    None => {}
+                }
+            }
+        }
         if let Some(((x, y), ch)) = clicked_cell {
             if session.anchor_mode {
                 session.draft.toggle_anchor(x, y);
-            } else {
+            } else if !session.region_mode {
+                // Region mode owns the pointer (drag selection above).
                 session.selected_cell = Some((x, y));
                 session.cell_input = if ch == ' ' {
                     String::new()
@@ -1507,6 +1697,25 @@ impl DrawingApp {
                 .join("  ")
         };
         ui.label(RichText::new(format!("Anchors: {anchors}")).weak());
+
+        // FR19 (CR-016) — the declared regions, like the anchor list.
+        let regions = if session.draft.regions.is_empty() {
+            "none".to_owned()
+        } else {
+            session
+                .draft
+                .regions
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{}@({},{}) {}x{}",
+                        r.name, r.pos.x, r.pos.y, r.size.width, r.size.height
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("  ")
+        };
+        ui.label(RichText::new(format!("Regions: {regions}")).weak());
 
         // S-024 AC6 — the resize toolset: per-edge insert/remove characters, parity
         // pairs behind their toggles, and a preview size for the live preview.
@@ -2194,6 +2403,12 @@ impl DrawingApp {
             }
         }
 
+        // Region-content editor (FR19 / CR-016, S-037 AC5) — open after a double
+        // click on a shape whose template declares text regions.
+        if self.shape_text_edit.is_some() {
+            self.draw_shape_text_edit(ui);
+        }
+
         // Keyboard edges: open dialogs own the keyboard first (a text field must be
         // able to receive Delete/Backspace; Escape closes the innermost dialog), only
         // then do they reach the canvas gestures (S-013 AC3).
@@ -2389,6 +2604,8 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
             "Text placed as {id} — type its content (Enter commits, Esc cancels)"
         )),
         EditOutcome::Editing { id } => Some(format!("Editing {id} — Enter commits, Esc cancels")),
+        // Handled at the call site (opens the region-content window / a hint).
+        EditOutcome::DoubleClickShape { .. } => None,
         EditOutcome::Edited { id } => Some(format!("Text updated [{id}]")),
         EditOutcome::Moved { id, to } => Some(format!("{id} moved to ({}, {})", to.x, to.y)),
         EditOutcome::GroupMoved { count } => {
@@ -3310,5 +3527,70 @@ mod tests {
         app.current_file = Some(std::path::PathBuf::from("/tmp/diagram.ad"));
         assert_eq!(app.default_export_path("svg"), "/tmp/diagram.svg");
         assert_eq!(app.default_export_path("png"), "/tmp/diagram.png");
+    }
+}
+
+#[cfg(test)]
+mod shape_region_double_click {
+    use super::*;
+    use crate::template_editor::TemplateEditorSession;
+    use core_services::Services;
+
+    #[test]
+    fn region_template_round_trips_and_double_click_reports_shape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (services, _w) = Services::native_with_collections(Some(tmp.path()));
+        let mut app = DrawingApp::new(services);
+        let mut session = TemplateEditorSession::new_blank("testcol", "tag");
+        assert!(session.draft.set_art("# #\n###"));
+        session.draft.toggle_anchor(1, 0);
+        session.draft.add_region_drag((0, 0), (2, 1));
+        app.template_editor = Some(session);
+        let msg = app.save_template().expect("saves");
+        assert!(msg.contains("tag"));
+
+        // Re-open via the editor path and inspect what the catalog serves.
+        app.open_template_editor("testcol/tag");
+        let session = app.template_editor.as_ref().unwrap();
+        assert_eq!(
+            session.draft.regions.len(),
+            1,
+            "the region round-trips through the seam"
+        );
+        assert_eq!(session.draft.regions[0].name, "r1");
+
+        // Place a tag at (3,3) through the seam-free pointer API.
+        app.template_editor = None;
+        let info = app
+            .services
+            .catalog
+            .get("testcol/tag")
+            .expect("tag in catalog");
+        assert_eq!(
+            info.regions.len(),
+            1,
+            "the catalog serves the declared region"
+        );
+        app.editor.select_template(info.clone());
+        let outcome = app.handle_pointer_frame(true, Some(((3, 3), HitTarget::Empty)));
+        assert!(matches!(outcome, EditOutcome::Placed { .. }));
+        app.handle_pointer_frame(false, None);
+        let id = app
+            .diagram
+            .objects()
+            .iter()
+            .find_map(|o| match o {
+                diagram_model::objects::Object::Shape(s) => Some(s.id.clone()),
+                _ => None,
+            })
+            .expect("shape placed");
+        // Explicit double-click on the body reports DoubleClickShape, and opening
+        // the editor populates one field per declared region.
+        let outcome = app.handle_pointer_double(Some(((3, 3), HitTarget::Body(id.clone()))));
+        assert!(matches!(outcome, EditOutcome::DoubleClickShape { .. }));
+        app.open_shape_text_edit(&id);
+        let state = app.shape_text_edit.as_ref().expect("the editor opened");
+        assert_eq!(state.label, "", "no label yet — the field starts empty");
+        assert_eq!(state.fields, &[("r1".to_owned(), String::new())]);
     }
 }

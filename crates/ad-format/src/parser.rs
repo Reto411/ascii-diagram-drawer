@@ -6,6 +6,8 @@
 //! only when the file's minor version is higher than this reader's (forward compatibility,
 //! QS7 across minor upgrades).
 
+use std::collections::BTreeMap;
+
 use diagram_model::Diagram;
 use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
 use diagram_model::color::{ColorRole, Rgb};
@@ -501,17 +503,37 @@ fn parse_shape(cursor: &mut Cursor, line_no: usize) -> Result<ShapeInstance, Par
     let width = cursor.expect_int("width", line_no)?;
     cursor.expect_keyword("h", line_no)?;
     let height = cursor.expect_int("height", line_no)?;
+    // Optional region clauses (FR19 / CR-016): `region <name> "<content>"` — zero or
+    // more, in any order; names are unique per statement.
+    let mut regions: BTreeMap<String, String> = BTreeMap::new();
+    while let Some(tok) = cursor.peek() {
+        if tok.as_str() != "region" {
+            break;
+        }
+        cursor.next();
+        let name = cursor.expect_word("a region name", line_no)?;
+        let content = cursor.expect_quoted("the region content", line_no)?;
+        if regions.insert(name.clone(), content).is_some() {
+            return Err(ParseError::new(
+                line_no,
+                1,
+                format!("region '{name}' is declared more than once in this shape statement"),
+            ));
+        }
+    }
     cursor.expect_end("shape statement", line_no)?;
 
     let size = CellSize::new(width, height).map_err(|e| model_error(e, line_no, 1))?;
-    ShapeInstance::new(
+    let mut shape = ShapeInstance::new(
         ObjectId::new(&id).map_err(|e| model_error(e, line_no, 1))?,
         &type_id,
         &label,
         CellPos::new(x, y),
         size,
     )
-    .map_err(|e| model_error(e, line_no, 1))
+    .map_err(|e| model_error(e, line_no, 1))?;
+    shape.regions = regions;
+    Ok(shape)
 }
 
 /// Parses `text as <id> "<content>" at <x> <y>` (keyword consumed).
@@ -1395,6 +1417,54 @@ mod tests {
             serialize(&diagram),
             "ad 1.1\nscale 2\ntext as t1 \"x\" at 0 0\n"
         );
+    }
+
+    /// AC2 (S-037): shape statements accept zero or more `region <name> "<content>"`
+    /// clauses after the size — content uses the standard escapes and may be empty,
+    /// clauses appear in any order, and region-free files parse unchanged.
+
+    #[test]
+    fn shape_region_clauses_parse() {
+        let input = "ad 1.1\nscale 2\nshape box \"Srv\" as s1 at 1 1 w 8 h 4 region title \"Server A\" region body \"\\nempty ok: \\\"q\\\"\"\n";
+        let diagram = parse(input).expect("valid");
+        match &diagram.objects()[0] {
+            Object::Shape(shape) => {
+                assert_eq!(shape.region_content("title"), Some("Server A"));
+                assert_eq!(shape.region_content("body"), Some("\nempty ok: \"q\""));
+                assert_eq!(shape.region_content("nope"), None);
+            }
+            other => panic!("expected shape, got {other:?}"),
+        }
+    }
+
+    /// AC2 (S-037): region clauses round-trip — serialized by name after the size,
+    /// and a shape without regions serializes byte-identically to the old form.
+    #[test]
+    fn shape_region_clauses_round_trip() {
+        let input = "ad 1.1\nscale 2\nshape box \"Srv\" as s1 at 1 1 w 8 h 4 region zeta \"z\" region alpha \"a\"\n";
+        let diagram = parse(input).expect("valid");
+        assert_eq!(
+            serialize(&diagram),
+            "ad 1.1\nscale 2\nshape box \"Srv\" as s1 at 1 1 w 8 h 4 region alpha \"a\" region zeta \"z\"\n"
+        );
+
+        let plain =
+            parse("ad 1.0\nscale 2\nshape box \"x\" as s1 at 0 0 w 2 h 1\n").expect("valid");
+        assert_eq!(
+            serialize(&plain),
+            "ad 1.1\nscale 2\nshape box \"x\" as s1 at 0 0 w 2 h 1\n"
+        );
+    }
+
+    /// AC2 (S-037): a region name declared twice in one shape statement is an error.
+    #[test]
+    fn shape_duplicate_region_clause_is_an_error() {
+        let err = assert_error(
+            "ad 1.1\nscale 2\nshape box \"x\" as s1 at 0 0 w 2 h 1 region r \"a\" region r \"b\"\n",
+            3,
+            1,
+        );
+        assert!(err.to_string().contains("more than once"), "{err}");
     }
 
     #[test]

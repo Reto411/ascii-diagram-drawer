@@ -278,6 +278,7 @@ impl ShapeCatalog for FakeCatalog {
             resizable,
             min_size,
             resize_rules: template.resize_rules.clone(),
+            regions: template.regions.clone(),
         };
         self.entries
             .lock()

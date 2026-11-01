@@ -17,6 +17,7 @@
 
 use crate::app::{DrawingApp, PathPrompt};
 use crate::config::Theme;
+use crate::template_editor::TemplateEditorSession;
 use core_services::Services;
 use diagram_model::objects::{ConnectorInstance, Object, TipStyle};
 // The app depends on eframe only; egui is reached through its re-export.
@@ -3676,4 +3677,90 @@ fn color_dialog_rejects_invalid_hex() {
         find_text(&gui.frame(), "not a #rrggbb color").is_some(),
         "the parse failure is explained in the status bar"
     );
+}
+
+/// AC5 (FR19 / CR-016, S-037) — end-to-end: a region-bearing template is saved,
+/// placed from the sidebar, double-clicked; the region-content window opens with one
+/// field per declared region, and Apply writes the typed content to the instance.
+#[test]
+fn double_click_shape_opens_region_editor_and_apply_writes_model() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (services, _warnings) = Services::native_with_collections(Some(tmp.path()));
+    let mut gui = Gui::new(DrawingApp::new(services));
+
+    // Register a 3×2 "tag" with one region covering it, via the editor save path —
+    // this also exercises the NewTemplate seam carrying regions.
+    let mut session = TemplateEditorSession::new_blank("testcol", "tag");
+    assert!(session.draft.set_art("# #\n###"), "the 3×2 art parses");
+    session.draft.toggle_anchor(1, 0); // drafts need ≥1 anchor
+    assert_eq!(
+        session.draft.add_region_drag((0, 0), (2, 1)).as_deref(),
+        Some("r1")
+    );
+    gui.app.template_editor = Some(session);
+    let msg = gui.app.save_template().expect("tag saves with its region");
+    assert!(msg.contains("tag"));
+
+    // Place it from the sidebar, then double-click its top-left cell.
+    let min = gui.canvas_min();
+    let out = gui.frame();
+    let label = find_text_exact(&out, "tag").expect("sidebar lists the custom tag template");
+    let _ = gui.click_at(label.center());
+    let center = gui.cell_center(min, 3, 3);
+    let _ = gui.click_at(center);
+    assert_eq!(gui.object_count(), 1, "clicking the canvas placed one tag");
+
+    // egui chains clicks closer than 0.3 s into multi-clicks: settle past that window
+    // so the following pair reads as a fresh double-click (not a triple).
+    for _ in 0..25 {
+        gui.frame();
+    }
+
+    let _ = gui.double_click_at(center);
+    assert!(
+        gui.app.shape_text_edit.is_some(),
+        "double-click opened the region editor"
+    );
+    // The window block runs before the canvas in `show`, so it appears one frame
+    // after the double-click that opened it.
+    let out = gui.frame();
+    assert!(
+        find_text(&out, "Text regions").is_some(),
+        "the window title is drawn"
+    );
+
+    // Type into the label field and the r1 field, then Apply.
+    let out = gui.frame();
+    let label_rect = find_text_exact(&out, "Label:").expect("the label field is labelled");
+    // Click well inside the 240 px-wide field (past the label + item spacing) and
+    // type into it. The buffers live in the app state, so they can be asserted on.
+    let _ = gui.click_at(Pos2::new(label_rect.max.x + 30.0, label_rect.center().y));
+    let _ = gui.type_text("Main");
+
+    let out = gui.frame();
+    let region_rect = find_text_exact(&out, "r1:").expect("the region field is labelled");
+    let _ = gui.click_at(Pos2::new(region_rect.max.x + 30.0, region_rect.center().y));
+    let _ = gui.type_text("hello");
+
+    let out = gui.frame();
+    let apply = find_text_exact(&out, "Apply").expect("the Apply button is drawn");
+    let _ = gui.click_at(apply.center());
+
+    // The label and region content landed on the instance; the status confirms it.
+    let shape = gui
+        .app
+        .diagram
+        .objects()
+        .iter()
+        .find_map(|o| match o {
+            diagram_model::objects::Object::Shape(s) => Some(s),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        shape.label, "Main",
+        "the label field wrote the instance label"
+    );
+    assert_eq!(shape.region_content("r1"), Some("hello"));
+    assert!(gui.app.status.contains("Updated text regions"));
 }

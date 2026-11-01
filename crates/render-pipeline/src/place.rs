@@ -25,7 +25,9 @@
 use diagram_model::Diagram;
 use diagram_model::objects::{Object, ShapeInstance, TextInstance};
 use shape_registry::CellPos;
-use shape_registry::{GeometryKind, ShapeRegistry, ShapeType, TemplateGrid, min_size, rasterize};
+use shape_registry::{
+    GeometryKind, RegionSet, ShapeRegistry, ShapeType, TemplateGrid, min_size, rasterize,
+};
 
 use crate::edges::EdgeSet;
 use crate::ellipse::rasterize_ellipse;
@@ -175,7 +177,7 @@ fn place_shape(
 ) -> Result<(), RenderError> {
     let shape = lookup_shape(instance, registry)?;
     match shape.geometry {
-        GeometryKind::Rect => place_rect(grid, instance),
+        GeometryKind::Rect => place_rect(grid, instance, shape),
         GeometryKind::Ellipse => place_ellipse(grid, instance, shape),
         GeometryKind::Pattern => place_pattern(grid, instance, shape),
     }
@@ -237,6 +239,9 @@ fn place_ellipse(grid: &mut PlacedGrid, instance: &ShapeInstance, shape: &ShapeT
             py,
         },
     );
+
+    // 4. FR19 (CR-016): shape-owned text regions, mapped from template coordinates.
+    stamp_template_regions(grid, instance, &shape.regions, glyph, &art, px, py);
 }
 
 /// Proportional per-axis mapping of a template coordinate onto an instance extent
@@ -258,8 +263,9 @@ pub(crate) fn map_proportional(
 }
 
 /// Stamps a `Rect` shape: borders from the instance's own pos/size (any size), label
-/// in the strict interior. A zero-width or zero-height instance draws nothing.
-fn place_rect(grid: &mut PlacedGrid, instance: &ShapeInstance) {
+/// and text-region content in the strict interior. A zero-width or zero-height
+/// instance draws nothing.
+fn place_rect(grid: &mut PlacedGrid, instance: &ShapeInstance, shape: &ShapeType) {
     let px = instance.pos.x;
     let py = instance.pos.y;
     let w = instance.size.width;
@@ -297,6 +303,44 @@ fn place_rect(grid: &mut PlacedGrid, instance: &ShapeInstance) {
                 h: h - 2,
             },
         );
+        // FR19 (CR-016): region rects map from template coordinates onto the instance
+        // extent, then clamp to the strict interior so border art always wins.
+        for (name, rect) in shape.regions.iter() {
+            let Some(content) = instance.region_content(name) else {
+                continue;
+            };
+            let x0 = map_proportional(rect.x, shape.glyph_pattern.width(), w);
+            let y0 = map_proportional(rect.y, shape.glyph_pattern.height(), h);
+            let x1 = map_proportional(
+                rect.x.saturating_add(rect.width).saturating_sub(1),
+                shape.glyph_pattern.width(),
+                w,
+            );
+            let y1 = map_proportional(
+                rect.y.saturating_add(rect.height).saturating_sub(1),
+                shape.glyph_pattern.height(),
+                h,
+            );
+            // Intersect with the strict interior; skip when empty.
+            let cx0 = x0.max(px + 1);
+            let cy0 = y0.max(py + 1);
+            let cx1 = x1.min(px + w - 2);
+            let cy1 = y1.min(py + h - 2);
+            if cx1 < cx0 || cy1 < cy0 {
+                continue;
+            }
+            stamp_label(
+                grid,
+                content,
+                LabelRegion::Mapped {
+                    x0: cx0,
+                    y0: cy0,
+                    w: cx1 - cx0 + 1,
+                    h: cy1 - cy0 + 1,
+                    art: None,
+                },
+            );
+        }
     }
 }
 
@@ -365,6 +409,9 @@ fn place_pattern(grid: &mut PlacedGrid, instance: &ShapeInstance, shape: &ShapeT
             py,
         },
     );
+
+    // 4. FR19 (CR-016): shape-owned text regions, mapped from template coordinates.
+    stamp_template_regions(grid, instance, &shape.regions, glyph, &art, px, py);
 }
 
 /// The passive base edges of an anchor cell: one direction per drawn neighbor
@@ -404,8 +451,9 @@ fn place_text_object(grid: &mut PlacedGrid, text: &TextInstance) {
     }
 }
 
-/// Where a shape label may land: the strict interior of a `Rect` border, or the space
-/// cells of a `Pattern` template at its instance position.
+/// Where a shape label or text-region content may land: the strict interior of a
+/// `Rect` border, the space cells of a `Pattern` template at its instance position, or
+/// an absolute rectangle for a shape-owned text region (FR19 / CR-016).
 enum LabelRegion<'a> {
     Interior {
         x0: u32,
@@ -418,6 +466,16 @@ enum LabelRegion<'a> {
         px: u32,
         py: u32,
     },
+    /// A mapped text region: `art` is the rendered art grid (offset by `px`/`py`) whose
+    /// non-space cells always win over region text; `None` when the bounds already
+    /// exclude drawn art (the strict interior of a `Rect`).
+    Mapped {
+        x0: u32,
+        y0: u32,
+        w: u32,
+        h: u32,
+        art: Option<(&'a TemplateGrid, u32, u32)>,
+    },
 }
 
 impl<'a> LabelRegion<'a> {
@@ -426,6 +484,7 @@ impl<'a> LabelRegion<'a> {
         match self {
             Self::Interior { x0, y0, w, h } => (*x0, *y0, *w, *h),
             Self::Pattern { glyph, px, py } => (*px, *py, glyph.width(), glyph.height()),
+            Self::Mapped { x0, y0, w, h, .. } => (*x0, *y0, *w, *h),
         }
     }
 
@@ -435,12 +494,65 @@ impl<'a> LabelRegion<'a> {
             Self::Interior { x0, y0, w, h } => {
                 x >= *x0 && x < x0.saturating_add(*w) && y >= *y0 && y < y0.saturating_add(*h)
             }
-            Self::Pattern { glyph, px, py } => {
+            Self::Pattern { glyph, px, py }
+            | Self::Mapped {
+                art: Some((glyph, px, py)),
+                ..
+            } => {
                 let dx = x.saturating_sub(*px);
                 let dy = y.saturating_sub(*py);
                 matches!(glyph.get(CellPos::new(dx, dy)), Some(' '))
             }
+            // Bounds were already clamped to the strict interior (Rect).
+            Self::Mapped { art: None, .. } => true,
         }
+    }
+}
+
+/// Stamps every shape-owned text region (FR19 / CR-016) that carries content: each
+/// region rect maps proportionally from template coordinates onto the rendered extent
+/// (identity at natural size), and content is stamped with the same centering/clipping/
+/// quoting rules as the label. Drawn art always wins over region text.
+fn stamp_template_regions(
+    grid: &mut PlacedGrid,
+    instance: &ShapeInstance,
+    regions: &RegionSet,
+    template: &TemplateGrid,
+    art: &TemplateGrid,
+    px: u32,
+    py: u32,
+) {
+    for (name, rect) in regions.iter() {
+        let Some(content) = instance.region_content(name) else {
+            continue;
+        };
+        // Map the region's corner coordinates (first and last cell of each axis).
+        let x0 = map_proportional(rect.x, template.width(), art.width());
+        let y0 = map_proportional(rect.y, template.height(), art.height());
+        let x1 = map_proportional(
+            rect.x.saturating_add(rect.width).saturating_sub(1),
+            template.width(),
+            art.width(),
+        );
+        let y1 = map_proportional(
+            rect.y.saturating_add(rect.height).saturating_sub(1),
+            template.height(),
+            art.height(),
+        );
+        if x1 < x0 || y1 < y0 {
+            continue; // degenerate after mapping
+        }
+        stamp_label(
+            grid,
+            content,
+            LabelRegion::Mapped {
+                x0: px + x0,
+                y0: py + y0,
+                w: x1 - x0 + 1,
+                h: y1 - y0 + 1,
+                art: Some((art, px, py)),
+            },
+        );
     }
 }
 
@@ -785,6 +897,7 @@ mod tests {
                     a
                 },
                 resize_rules: None,
+                regions: RegionSet::new(),
             }],
         };
         registry.add_collection(collection);
@@ -838,6 +951,7 @@ mod tests {
                     .expect("valid art"),
                 anchor_set: shape_registry::AnchorSet::new(),
                 resize_rules: Some(rules),
+                regions: RegionSet::new(),
             }],
         });
         registry
@@ -912,5 +1026,142 @@ mod tests {
         // border edges (F1), and does not claim structural top.
         assert_eq!(g.cell(5, 0).content, Some('_'));
         assert!(!g.cell(5, 0).structural_top);
+    }
+
+    /// A `Pattern` template with a single region over its space cells.
+    fn region_pattern_registry() -> ShapeRegistry {
+        let mut regions = RegionSet::new();
+        // Template (5x3): art frame with a 3x1 space run in the middle row.
+        let glyph = TemplateGrid::from_rows(&["abcde", "f   g", "hijkl"]).expect("valid art");
+        regions
+            .add(
+                "mid",
+                shape_registry::Region {
+                    x: 1,
+                    y: 1,
+                    width: 3,
+                    height: 1,
+                },
+            )
+            .expect("fresh name");
+        let mut registry = ShapeRegistry::builtin();
+        registry.add_collection(shape_registry::Collection {
+            name: "mine".to_owned(),
+            types: vec![shape_registry::ShapeType {
+                type_id: "mine/regioned".to_owned(),
+                name: "regioned".to_owned(),
+                geometry: GeometryKind::Pattern,
+                glyph_pattern: glyph,
+                anchor_set: shape_registry::AnchorSet::new(),
+                resize_rules: None,
+                regions,
+            }],
+        });
+        registry
+    }
+
+    fn regioned_shape(x: u32, y: u32, w: u32, h: u32, mid: &str) -> ShapeInstance {
+        let mut s = ShapeInstance::new(
+            ObjectId::generated(0),
+            "mine/regioned",
+            "",
+            CellPos::new(x, y),
+            CellSize::new(w, h).expect("non-zero test size"),
+        )
+        .expect("valid shape");
+        s.regions.insert("mid".to_owned(), mid.to_owned());
+        s
+    }
+
+    /// FR19 (CR-016): region content stamps centered in its rect at natural size;
+    /// art cells always win over region text.
+    #[test]
+    fn region_content_stamps_in_mapped_rect() {
+        let registry = region_pattern_registry();
+        let d = diagram_with(vec![Object::Shape(regioned_shape(0, 0, 5, 3, "XY"))]);
+        let g = place(&d, &registry).expect("renders");
+        // Centered in the 3-wide rect at (1..=3, 1): x_off = (3-2)/2 = 0.
+        assert_eq!(g.cell(1, 1).content, Some('X'));
+        assert_eq!(g.cell(2, 1).content, Some('Y'));
+        // Art around it untouched.
+        assert_eq!(g.cell(0, 1).content, Some('f'));
+        assert_eq!(g.cell(4, 1).content, Some('g'));
+    }
+
+    /// FR19 (CR-016): region text never overwrites art — a line longer than the rect is
+    /// clipped to the space cells of the mapped rect (same rules as the label).
+    #[test]
+    fn region_content_never_overwrites_art() {
+        let registry = region_pattern_registry();
+        let d = diagram_with(vec![Object::Shape(regioned_shape(0, 0, 5, 3, "XYZWV"))]);
+        let g = place(&d, &registry).expect("renders");
+        // Centering starts one cell left of the rect (x_off = -1): X and V are
+        // clipped outside it; Y/Z/W fill the three space cells.
+        assert_eq!(g.cell(1, 1).content, Some('Y'));
+        assert_eq!(g.cell(2, 1).content, Some('Z'));
+        assert_eq!(g.cell(3, 1).content, Some('W'));
+        // Art around the rect untouched.
+        assert_eq!(g.cell(0, 1).content, Some('f'));
+        assert_eq!(g.cell(4, 1).content, Some('g'));
+    }
+
+    /// FR19 (CR-016): a region with no instance content renders nothing extra.
+    #[test]
+    fn region_without_content_is_inert() {
+        let registry = region_pattern_registry();
+        let d = diagram_with(vec![Object::Shape(regioned_shape(0, 0, 5, 3, ""))]);
+        let g = place(&d, &registry).expect("renders");
+        assert!(!g.cell(1, 1).occupied());
+        assert!(!g.cell(2, 1).occupied());
+        assert!(!g.cell(3, 1).occupied());
+    }
+
+    /// FR19 (CR-016): a `Rect` geometry with a region clamps the mapped rect to the
+    /// strict interior — border art always wins.
+    #[test]
+    fn rect_region_clamps_to_interior() {
+        let mut regions = RegionSet::new();
+        // Template (5x3) whose region covers the whole template incl. borders.
+        regions
+            .add(
+                "all",
+                shape_registry::Region {
+                    x: 0,
+                    y: 0,
+                    width: 5,
+                    height: 3,
+                },
+            )
+            .expect("fresh name");
+        let mut registry = ShapeRegistry::builtin();
+        registry.add_collection(shape_registry::Collection {
+            name: "mine".to_owned(),
+            types: vec![shape_registry::ShapeType {
+                type_id: "mine/rectregion".to_owned(),
+                name: "rectregion".to_owned(),
+                geometry: GeometryKind::Rect,
+                glyph_pattern: TemplateGrid::from_rows(&["abcde", "fghij", "klmno"])
+                    .expect("valid art"),
+                anchor_set: shape_registry::AnchorSet::new(),
+                resize_rules: None,
+                regions,
+            }],
+        });
+        let mut s = ShapeInstance::new(
+            ObjectId::generated(0),
+            "mine/rectregion",
+            "",
+            CellPos::new(0, 0),
+            CellSize::new(5, 3).expect("non-zero test size"),
+        )
+        .expect("valid shape");
+        s.regions.insert("all".to_owned(), "T".to_owned());
+        let d = diagram_with(vec![Object::Shape(s)]);
+        let g = place(&d, &registry).expect("renders");
+        // Only the single interior cell (2,1) may carry content.
+        assert_eq!(g.cell(2, 1).content, Some('T'));
+        // Border cells keep their border glyphs (edges resolve to box-drawing).
+        assert!(!g.cell(0, 0).content.is_some_and(|c| c == 'T'));
+        assert!(!g.cell(4, 2).content.is_some_and(|c| c == 'T'));
     }
 }

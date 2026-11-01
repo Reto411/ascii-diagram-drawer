@@ -9,16 +9,16 @@
 
 use std::collections::BTreeMap;
 
-use crate::error::{AnchorSetError, ParseError};
-use crate::geometry::CellPos;
+use crate::error::{AnchorSetError, ParseError, RegionSetError};
+use crate::geometry::{CellPos, Region};
 use crate::types::{
-    AnchorSet, Collection, EdgeRule, GeometryKind, ResizeRules, ShapeType, TemplateGrid,
+    AnchorSet, Collection, EdgeRule, GeometryKind, RegionSet, ResizeRules, ShapeType, TemplateGrid,
 };
 
 /// The major format version this reader implements.
 const MAJOR: u32 = 1;
 /// The minor version this reader implements; files with a higher minor are read in forward-compat mode.
-/// 1.1 adds `resize` statements (C10, S-024).
+/// 1.1 adds `resize` statements (C10, S-024) and `region` statements (FR19, S-037).
 const MINOR: u32 = 1;
 
 /// A parsed `.adc` file: the collection content plus unknown statements preserved
@@ -136,6 +136,18 @@ pub fn parse_collection(name: &str, text: &str) -> Result<CollectionFile, ParseE
                 };
                 parse_resize(&tokens, line_no, builder)?;
             }
+            // FR19 (S-037): text regions exist from v1.1 up; in older files the
+            // statement falls through to the unknown-statement arm below.
+            "region" if version.1 >= MINOR => {
+                let Some(builder) = open.as_mut() else {
+                    return Err(ParseError::new(
+                        line_no,
+                        first.column,
+                        "region statement outside a template block — regions belong to exactly one template",
+                    ));
+                };
+                parse_region(&tokens, line_no, builder)?;
+            }
             other => {
                 if version.1 > MINOR {
                     // Forward-compat: preserve verbatim in its original position — inside the open
@@ -218,6 +230,9 @@ struct TemplateBuilder {
     rows: Vec<String>,
     /// Anchor statements declared in the block's anchor phase.
     anchors: AnchorSet,
+    /// Text regions declared in the anchor phase (FR19); each rect was bounds-checked
+    /// against the declared grid as it arrived.
+    regions: RegionSet,
     /// Resize rules declared in the anchor phase: edge → draft (base + optional parity
     /// overrides). All four base rules are required — checked on finalize (C10).
     resize: BTreeMap<Edge, EdgeDraft>,
@@ -255,6 +270,7 @@ fn finalize(
         geometry: GeometryKind::Pattern,
         glyph_pattern,
         anchor_set: builder.anchors,
+        regions: builder.regions,
         resize_rules,
     });
     slots.push(Slot::Template(types.len() - 1, builder.unknowns));
@@ -385,6 +401,7 @@ fn parse_template_decl(
         height,
         rows: Vec::new(),
         anchors: AnchorSet::default(),
+        regions: RegionSet::default(),
         resize: BTreeMap::new(),
         resize_last_line: 0,
         unknowns: Vec::new(),
@@ -430,6 +447,86 @@ fn parse_anchor(
             name_tok.column,
             format!(
                 "anchor '{name}' is already declared in template '{}'",
+                builder.name
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Parses `region <name> at <x> <y> w <w> h <h>` (keyword consumed) into the open
+/// template's region set. The rect must fit inside the declared grid with extents ≥ 1;
+/// names are single tokens, unique per template (FR19).
+fn parse_region(
+    tokens: &[Token],
+    line_no: usize,
+    builder: &mut TemplateBuilder,
+) -> Result<(), ParseError> {
+    let what = "region statement — expected 'region <name> at <x> <y> w <w> h <h>'";
+    let name_tok = need(tokens, 1, line_no, what)?;
+    let name = name_tok.as_str().to_owned();
+    let at_tok = need(tokens, 2, line_no, what)?;
+    if at_tok.as_str() != "at" {
+        return Err(ParseError::new(
+            line_no,
+            at_tok.column,
+            format!(
+                "expected 'at' in the region statement, found '{}'",
+                at_tok.as_str()
+            ),
+        ));
+    }
+    let x = parse_int(need(tokens, 3, line_no, what)?, line_no)?;
+    let y = parse_int(need(tokens, 4, line_no, what)?, line_no)?;
+    let w_kw = need(tokens, 5, line_no, what)?;
+    if w_kw.as_str() != "w" {
+        return Err(ParseError::new(
+            line_no,
+            w_kw.column,
+            format!(
+                "expected 'w' after the region origin, found '{}'",
+                w_kw.as_str()
+            ),
+        ));
+    }
+    let width = parse_int(need(tokens, 6, line_no, what)?, line_no)?;
+    let h_kw = need(tokens, 7, line_no, what)?;
+    if h_kw.as_str() != "h" {
+        return Err(ParseError::new(
+            line_no,
+            h_kw.column,
+            format!(
+                "expected 'h' after the region width, found '{}'",
+                h_kw.as_str()
+            ),
+        ));
+    }
+    let height = parse_int(need(tokens, 8, line_no, what)?, line_no)?;
+    expect_no_leftover(&tokens[9..], line_no, "the region statement")?;
+    if width == 0 || height == 0 {
+        return Err(ParseError::new(
+            line_no,
+            name_tok.column,
+            "region extents must each be at least 1",
+        ));
+    }
+    let rect = Region::new(x, y, width, height);
+    if !rect.fits(builder.width, builder.height) {
+        return Err(ParseError::new(
+            line_no,
+            name_tok.column,
+            format!(
+                "region '{name}' at ({x}, {y}) with extent {width} x {height} does not fit the {} x {} template grid",
+                builder.width, builder.height
+            ),
+        ));
+    }
+    if let Err(RegionSetError::DuplicateName(_)) = builder.regions.add(&name, rect) {
+        return Err(ParseError::new(
+            line_no,
+            name_tok.column,
+            format!(
+                "region '{name}' is already declared in template '{}'",
                 builder.name
             ),
         ));
@@ -1047,6 +1144,88 @@ mod tests {
     fn v1_1_file_without_resize_statements_stays_fixed_size() {
         let file = parse_ok("c", "adc 1.1\ntemplate t 2 x 2\nab\ncd\n");
         assert_eq!(file.collection.types[0].resize_rules, None);
+    }
+
+    /// AC1 (S-037): a v1.1 file with region statements parses them into the template's
+    /// region set — names unique, rects as declared, in any order among anchors.
+    #[test]
+    fn parses_region_statements() {
+        let text = "adc 1.1\ntemplate box 6 x 4\n+----+\n|    |\n|    |\n+----+\nanchor n at 3 0\nregion title at 1 1 w 4 h 1\nregion body at 1 2 w 4 h 1\n";
+        let file = parse_ok("c", text);
+        let box_ = &file.collection.types[0];
+        assert_eq!(box_.regions.len(), 2);
+        assert_eq!(
+            box_.regions.get("title"),
+            Some(crate::geometry::Region::new(1, 1, 4, 1))
+        );
+        assert_eq!(
+            box_.regions.get("body"),
+            Some(crate::geometry::Region::new(1, 2, 4, 1))
+        );
+        // Anchors and the grid parse alongside the regions.
+        assert_eq!(box_.anchor_set.get("n"), Some(CellPos::new(3, 0)));
+    }
+
+    /// A template without region statements has an empty region set in a v1.1 file.
+    #[test]
+    fn v1_1_file_without_region_statements_has_no_regions() {
+        let file = parse_ok("c", "adc 1.1\ntemplate t 2 x 2\nab\ncd\n");
+        assert!(file.collection.types[0].regions.is_empty());
+    }
+
+    /// AC1 (S-037): region statement errors — out-of-bounds rects, zero extents,
+    /// duplicate names, missing keywords, trailing junk, statements outside blocks,
+    /// and 1.0 files (the statement is unknown there).
+    #[test]
+    fn region_statement_errors_are_typed_and_located() {
+        // Out of bounds: the rect must fit inside the declared grid.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nregion r at 2 1 w 4 h 1\n",
+        );
+        assert!(err.message.contains("does not fit"), "{err}");
+
+        // Zero extents are rejected.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nregion r at 1 1 w 0 h 1\n",
+        );
+        assert!(err.message.contains("at least 1"), "{err}");
+
+        // Duplicate region names within one template.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nregion r at 1 1 w 2 h 1\nregion r at 1 2 w 2 h 1\n",
+        );
+        assert!(err.message.contains("already declared"), "{err}");
+
+        // Missing the 'at' keyword.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nregion r 1 1 w 2 h 1\n",
+        );
+        assert!(err.message.contains("expected 'at'"), "{err}");
+
+        // Trailing junk after the last number.
+        let err = assert_err(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nregion r at 1 1 w 2 h 1 extra\n",
+        );
+        assert!(err.message.contains("unexpected token"), "{err}");
+
+        // A region statement before any template block.
+        let err = assert_err(
+            "c",
+            "adc 1.1\nregion r at 1 1 w 2 h 1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\n",
+        );
+        assert!(err.message.contains("outside a template block"), "{err}");
+
+        // 1.0 files: the statement is unknown there (forward-compat rule).
+        let err = assert_err(
+            "c",
+            "adc 1.0\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nregion r at 1 1 w 2 h 1\n",
+        );
+        assert!(err.message.contains("'region'"), "{err}");
     }
 
     /// AC2 (S-024): resize statement errors — partial rule sets, duplicate base and

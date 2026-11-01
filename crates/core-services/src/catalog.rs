@@ -3,7 +3,7 @@
 //! (S-017) mutates the shared state that the renderer reads from the same handle.
 
 use shape_registry::{ShapeRegistry, ShapeType, min_size};
-use ui_api::{AnchorInfo, CatalogError, NewTemplate, ShapeCatalog, ShapeInfo};
+use ui_api::{AnchorInfo, CatalogError, NewTemplate, RegionInfo, ShapeCatalog, ShapeInfo};
 
 use crate::registry_state::SharedRegistry;
 
@@ -51,6 +51,23 @@ fn to_info(shape: &shape_registry::ShapeType, collection: Option<&str>) -> Shape
         // S-024: the editor needs the declared rules to restore them when editing
         // an existing rule-bearing template (saving must not drop them).
         resize_rules: shape.resize_rules.as_ref().map(rules_to_spec),
+        // FR19 (CR-016): declared text regions, sorted by name — the editor restores
+        // them on reopen and the canvas offers per-region content editing.
+        regions: shape
+            .regions
+            .iter()
+            .map(|(name, rect)| RegionInfo {
+                name: name.clone(),
+                pos: diagram_model::geometry::CellPos {
+                    x: rect.x,
+                    y: rect.y,
+                },
+                size: diagram_model::geometry::CellSize {
+                    width: rect.width,
+                    height: rect.height,
+                },
+            })
+            .collect(),
     }
 }
 
@@ -185,6 +202,7 @@ mod tests {
                 anchor_set: anchors,
                 geometry: shape_registry::GeometryKind::Pattern,
                 resize_rules: None,
+                regions: shape_registry::RegionSet::new(),
             }],
         });
 
@@ -214,6 +232,7 @@ mod tests {
                 anchor_set: AnchorSet::new(),
                 geometry: shape_registry::GeometryKind::Pattern,
                 resize_rules: None,
+                regions: shape_registry::RegionSet::new(),
             }],
         });
 

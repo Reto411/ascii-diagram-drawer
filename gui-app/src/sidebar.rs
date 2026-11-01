@@ -419,6 +419,7 @@ mod tests {
             resizable: true,
             min_size: CellSize::new(1, 1).expect("valid size"),
             resize_rules: None,
+            regions: Vec::new(),
         }
     }
 

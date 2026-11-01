@@ -458,7 +458,7 @@ mod tests {
     use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
     use diagram_model::geometry::{CellPos as MPos, CellSize as MSize};
     use diagram_model::objects::{ConnectorEnd, ConnectorStyle, ObjectId, ShapeInstance, TipStyle};
-    use shape_registry::{AnchorSet, Collection, GeometryKind, ShapeType, TemplateGrid};
+    use shape_registry::{AnchorSet, Collection, GeometryKind, RegionSet, ShapeType, TemplateGrid};
 
     fn box_at(id: u32, x: u32, y: u32, w: u32, h: u32) -> ShapeInstance {
         ShapeInstance::new(
@@ -637,6 +637,7 @@ mod tests {
                     a
                 },
                 resize_rules: None,
+                regions: RegionSet::new(),
             }],
         };
         let mut registry = ShapeRegistry::builtin();
@@ -678,6 +679,7 @@ mod tests {
                     a
                 },
                 resize_rules: None,
+                regions: RegionSet::new(),
             }],
         };
         let mut registry = ShapeRegistry::builtin();

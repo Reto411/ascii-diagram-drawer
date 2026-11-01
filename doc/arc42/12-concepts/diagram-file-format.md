@@ -38,7 +38,8 @@ statement    = scale-stmt / colors-stmt / shape-stmt / text-stmt / connect-stmt 
 scale-stmt   = "scale", int        ; at most once; must precede every object statement
 colors-stmt  = "colors", ( color-role, string )+ ; at most once; must precede every object statement (1.1, CR-009)
 color-role   = "background" / "fill" / "lines" ; each at most once per statement
-shape-stmt   = "shape", type-id, string, "as", id, "at", int, int, "w", int, "h", int
+shape-stmt   = "shape", type-id, string, "as", id, "at", int, int, "w", int, "h", int, region-clause*   ; region clauses: 1.1 (FR19)
+region-clause= "region", name, string
 text-stmt    = "text", "as", id, string, "at", int, int
 connect-stmt = "connect", "as", id, "from", endpoint, "to", endpoint, [ "dashed" ], [ "tip", tip-style, tip-style ], [ "via", via-cell ( "," via-cell )* ]
 endpoint     = anchor-ref / int, int ; attached '<id>.<anchor>' or free at a bare cell (1.1, CR-010)
@@ -54,7 +55,7 @@ int          = "0" / digit1to9, digit* ; canonical decimal — no leading zeros;
 
 ### Statement semantics
 
-- **`shape <type-id> "<label>" as <id> at <x> <y> w <width> <height>`** — a `ShapeInstance`. `type-id` is the only reference into the Shape Catalog context (built-in or `collection/name`). Label may be empty (`""`).
+- **`shape <type-id> "<label>" as <id> at <x> <y> w <width> <height> [region <name> "<content>"]*`** — a `ShapeInstance`. `type-id` is the only reference into the Shape Catalog context (built-in or `collection/name`). Label may be empty (`""`). Zero or more **region clauses** (1.1, FR19) carry per-region text content: names are single tokens, unique per statement (a duplicate is a parse error); content is a quoted string with the standard escapes and may be empty (an empty clause is still emitted — it pins "no content"). Region names are *not* validated against the catalog (same rule as `type-id`): unknown names round-trip but render nothing. Canonical serialization emits clauses sorted by region name; shapes without regions serialize exactly as before.
 - **`text`** — a `TextInstance`: `text as <id> "<content>" at <x> <y>`. Content must be non-empty (model invariant). No size: text occupies exactly the cells its (possibly multi-line) content needs.
 - **`connect as <id> from <endpoint> to <endpoint> [dashed] [tip <src> <tgt>] [via <x> <y>, …]`** — a `ConnectorInstance`. Style omitted = solid (the model default); `dashed` = dashed. `tip <src> <tgt>` sets the per-end tip styles (CR-008): omitted = legacy default (source none, target arrow). `via` is the ordered list of manual waypoints in model-space cells (CR-007). Each endpoint is either `<id>.<anchor>` (attached — must reference an existing *shape* object) or two bare integers `<x> <y>` (free at a model-space cell, CR-010); the token shape disambiguates (a dot ⇒ attached), and both-free endpoints may not share a cell.
 - **`scale <n>`** — whole-diagram scale (FR8), `n ≥ 1`; omitted means 1. The canonical serializer always emits it.

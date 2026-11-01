@@ -6,8 +6,10 @@
 //! The alphabet is svgbob's input set: printable ASCII U+0020–U+007E, where space is
 //! the empty cell (ADR 001). Anything else is rejected with an inline hint (AC1).
 
-use diagram_model::geometry::CellPos;
-use ui_api::{AnchorInfo, EdgeRuleSpec, NewTemplate, ParityCharsSpec, ResizeRuleSpec, ShapeInfo};
+use diagram_model::geometry::{CellPos, CellSize};
+use ui_api::{
+    AnchorInfo, EdgeRuleSpec, NewTemplate, ParityCharsSpec, RegionInfo, ResizeRuleSpec, ShapeInfo,
+};
 
 /// The svgbob alphabet: printable ASCII U+0020–U+007E (space = empty cell).
 #[must_use]
@@ -29,6 +31,8 @@ pub struct TemplateDraft {
     /// The resize toolset (S-024 AC6) — off by default; when on, saving requires a
     /// complete, valid rule set.
     pub resize: ResizeRulesDraft,
+    /// Declared text regions (FR19 / CR-016): named rects in template cells.
+    pub regions: Vec<RegionInfo>,
     /// Inline hint for the last rejected input (AC1) — cleared on the next edit.
     pub rejection: Option<String>,
 }
@@ -49,6 +53,7 @@ impl TemplateDraft {
             rows,
             anchors: Vec::new(),
             resize: ResizeRulesDraft::default(),
+            regions: Vec::new(),
             rejection: None,
         }
     }
@@ -81,6 +86,9 @@ impl TemplateDraft {
             rows,
             anchors,
             resize: ResizeRulesDraft::default(),
+            // FR19 (CR-016): restore declared regions so editing and saving a
+            // region-bearing template does not silently drop them (S-037 AC4).
+            regions: info.regions.clone(),
             rejection: None,
         }
     }
@@ -178,6 +186,93 @@ impl TemplateDraft {
         }
     }
 
+    /// FR19 (CR-016) — toggles a single-cell text region at `(x, y)`: clicking a cell
+    /// inside an existing region removes that region; otherwise a new 1×1 region is
+    /// added. Returns the new region's name when added, `None` when removed.
+    pub fn toggle_region(&mut self, x: u32, y: u32) -> Option<String> {
+        if let Some(idx) = self.regions.iter().position(|r| r.contains(x, y)) {
+            self.regions.remove(idx);
+            self.rejection = None;
+            return None;
+        }
+        if x >= self.width() || y >= self.height() {
+            return None;
+        }
+        let name = Self::next_region_name(&self.regions);
+        self.regions.push(RegionInfo {
+            name: name.clone(),
+            pos: CellPos::new(x, y),
+            size: CellSize::new(1, 1).expect("1×1 is a valid cell size"),
+        });
+        self.rejection = None;
+        Some(name)
+    }
+
+    /// FR19 (CR-016) — adds the region covering `start..=end` (drag selection,
+    /// normalized), replacing any overlapping regions. Returns the new region's name,
+    /// or an inline rejection when the rect is empty or out of bounds.
+    pub fn add_region_drag(&mut self, start: (u32, u32), end: (u32, u32)) -> Option<String> {
+        let x0 = start.0.min(end.0);
+        let y0 = start.1.min(end.1);
+        let x1 = start.0.max(end.0).saturating_add(1);
+        let y1 = start.1.max(end.1).saturating_add(1);
+        if x1 > self.width() || y1 > self.height() {
+            self.reject("the region must stay inside the grid");
+            return None;
+        }
+        // Overlapping regions are ambiguous to edit — replace any that intersect.
+        self.regions.retain(|r| !r.intersects(x0, y0, x1, y1));
+        let name = Self::next_region_name(&self.regions);
+        self.regions.push(RegionInfo {
+            name: name.clone(),
+            pos: CellPos::new(x0, y0),
+            size: CellSize::new(x1 - x0, y1 - y0).expect("drag rect has extents ≥ 1"),
+        });
+        self.rejection = None;
+        Some(name)
+    }
+
+    /// Removes the region covering `(x, y)` (AC4 — clicking an existing region removes it).
+    pub fn remove_region_at(&mut self, x: u32, y: u32) {
+        self.regions.retain(|r| !r.contains(x, y));
+    }
+
+    /// The next auto-name for a region: `r1`, `r2`, … (skipping in-use names).
+    fn next_region_name(regions: &[RegionInfo]) -> String {
+        let mut n = 1u32;
+        loop {
+            let name = format!("r{n}");
+            if !regions.iter().any(|r| r.name == name) {
+                return name;
+            }
+            n += 1;
+        }
+    }
+
+    /// FR19 (CR-016) — region validation: every rect must fit inside the grid with
+    /// extents ≥ 1 and carry a valid, unique name token.
+    pub fn region_validation_errors(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for r in &self.regions {
+            if !is_valid_name_token(&r.name) {
+                errors.push(format!("region name '{0}' is not a single token", r.name));
+            }
+            if !seen.insert(r.name.clone()) {
+                errors.push(format!("region name '{}' is used twice", r.name));
+            }
+            if r.size.width == 0 || r.size.height == 0 {
+                errors.push(format!("region '{}' has a zero extent", r.name));
+            }
+            if r.pos.x.saturating_add(r.size.width) > self.width()
+                || r.pos.y.saturating_add(r.size.height) > self.height()
+            {
+                errors.push(format!("region '{}' exceeds the grid", r.name));
+            }
+        }
+        errors
+    }
+
     /// AC6 — re-parses the art text box into the grid: printable ASCII only, at
     /// least one row, at least one non-space cell. On success the rows are replaced
     /// (ragged lines right-padded to a rectangle) and anchors that fall outside the
@@ -213,9 +308,14 @@ impl TemplateDraft {
                 s
             })
             .collect();
-        // The grid moved/shrank: anchors outside the new extent are dropped.
+        // The grid moved/shrank: anchors and regions outside the new extent are
+        // dropped (FR19 — a region must fit inside its template).
         self.anchors
             .retain(|a| a.position.x < width && a.position.y < lines.len() as u32);
+        self.regions.retain(|r| {
+            r.pos.x.saturating_add(r.size.width) <= width
+                && r.pos.y.saturating_add(r.size.height) <= lines.len() as u32
+        });
         self.rows = rows;
         self.rejection = None;
         true
@@ -294,6 +394,8 @@ impl TemplateDraft {
         }
         // AC6 — an enabled resize toolset must be complete and valid before saving.
         errors.extend(self.resize_validation_errors());
+        // FR19 (CR-016) — declared regions must be well-formed before saving.
+        errors.extend(self.region_validation_errors());
         errors
     }
 
@@ -317,6 +419,7 @@ impl TemplateDraft {
             rows: self.rows.clone(),
             anchors: self.anchors.clone(),
             resize_rules,
+            regions: self.regions.clone(),
         }
     }
 }
@@ -416,6 +519,12 @@ pub struct TemplateEditorSession {
     pub selected_cell: Option<(u32, u32)>,
     /// When true, clicking a cell toggles an anchor instead of selecting it.
     pub anchor_mode: bool,
+    /// FR19 (CR-016) — when true, clicking/dragging on the grid edits text regions
+    /// instead of selecting cells.
+    pub region_mode: bool,
+    /// The cell where a region drag started (set while the pointer is down in
+    /// [`region_mode`](Self::region_mode)); `None` when not dragging.
+    pub region_drag_start: Option<(u32, u32)>,
     /// The single-character input bound to the selected cell (committed on change).
     pub cell_input: String,
     /// The art text box's buffer — the primary art input (S-024 AC6). Re-parsed into
@@ -496,6 +605,8 @@ impl TemplateEditorSession {
             draft,
             selected_cell: None,
             anchor_mode: false,
+            region_mode: false,
+            region_drag_start: None,
             cell_input: String::new(),
         }
     }
@@ -520,6 +631,8 @@ impl TemplateEditorSession {
             draft,
             selected_cell: None,
             anchor_mode: false,
+            region_mode: false,
+            region_drag_start: None,
             cell_input: String::new(),
         }
     }
@@ -679,6 +792,7 @@ mod tests {
             resizable: true,
             min_size: CellSize::new(1, 1).expect("valid"),
             resize_rules: Some(spec.clone()),
+            regions: Vec::new(),
         };
         let session = TemplateEditorSession::from_existing(&info, Vec::new());
         assert!(session.draft.resize.enabled);
@@ -713,6 +827,7 @@ mod tests {
             resizable: false,
             min_size: CellSize::new(1, 1).expect("valid"),
             resize_rules: None,
+            regions: Vec::new(),
         };
         let anchors = vec![AnchorInfo {
             name: "n".to_owned(),
@@ -931,5 +1046,123 @@ mod tests {
             edge.remove = "+".to_owned();
         }
         assert!(s.resize_spec().is_some());
+    }
+
+    /// FR19 (CR-016, S-037 AC4) — clicking a cell adds a 1×1 region with the next
+    /// free auto-name; clicking inside an existing region removes it.
+    #[test]
+    fn toggle_region_adds_and_removes_with_auto_names() {
+        let mut d = draft();
+        assert_eq!(d.toggle_region(2, 1).as_deref(), Some("r1"));
+        assert_eq!(d.toggle_region(5, 3).as_deref(), Some("r2"));
+        // Clicking inside r1 removes it; the other region survives.
+        assert_eq!(d.toggle_region(2, 1), None);
+        assert_eq!(d.regions.len(), 1);
+        assert_eq!(d.regions[0].name, "r2");
+        // Out-of-bounds cells are ignored.
+        assert_eq!(d.toggle_region(99, 99), None);
+        // Auto-names skip in-use names: r2 is taken → next is r1 again? No — r1 is
+        // free now, so it is reused before r3.
+        assert_eq!(d.toggle_region(0, 0).as_deref(), Some("r1"));
+    }
+
+    /// FR19 (CR-016, S-037 AC4) — a drag adds the normalized rect; overlapping
+    /// regions are replaced; out-of-bounds drags are rejected inline.
+    #[test]
+    fn add_region_drag_normalizes_and_replaces_overlaps() {
+        let mut d = draft(); // 9×5
+        // Drag from (5,3) to (2,1) — normalized to x 2..=5, y 1..=3 → 4×3 at (2,1).
+        assert_eq!(d.add_region_drag((5, 3), (2, 1)).as_deref(), Some("r1"));
+        let r = &d.regions[0];
+        assert_eq!(
+            (r.pos.x, r.pos.y, r.size.width, r.size.height),
+            (2, 1, 4, 3)
+        );
+        // A second drag overlapping r1 replaces it.
+        assert_eq!(d.add_region_drag((3, 2), (4, 2)).as_deref(), Some("r1"));
+        assert_eq!(d.regions.len(), 1);
+        assert_eq!((d.regions[0].pos.x, d.regions[0].size.width), (3, 2));
+        // A drag that leaves the grid is rejected with an inline hint.
+        assert_eq!(d.add_region_drag((8, 0), (11, 4)), None);
+        assert!(d.rejection.as_deref().is_some_and(|m| m.contains("inside")));
+    }
+
+    /// FR19 (CR-016, S-037 AC4) — regions that no longer fit after an art change are
+    /// dropped; the rest survive.
+    #[test]
+    fn set_art_drops_regions_outside_the_new_extent() {
+        let mut d = draft(); // 9×5
+        d.add_region_drag((0, 0), (2, 1)); // r1: 3×2 at (0,0)
+        d.add_region_drag((6, 4), (8, 4)); // r2: 3×1 at (6,4)
+        // Shrink the grid to 5×3: r1 still fits, r2 does not.
+        assert!(d.set_art("# #\n###\n# #"));
+        assert_eq!(d.regions.len(), 1);
+        assert_eq!(d.regions[0].name, "r1");
+    }
+
+    /// FR19 (CR-016) — region validation catches out-of-grid rects and duplicate
+    /// names; the draft's save gate includes it. (The fixture has no anchors, so the
+    /// full `validation_errors` is non-empty anyway — assert on the region subset.)
+    #[test]
+    fn region_validation_blocks_saving() {
+        let mut d = draft();
+        d.toggle_region(2, 1);
+        assert!(d.region_validation_errors().is_empty());
+        // Force an out-of-grid rect (the GUI cannot create one; the model can).
+        d.regions[0].size.width = 99;
+        assert!(
+            d.region_validation_errors()
+                .iter()
+                .any(|e| e.contains("exceeds"))
+        );
+        // The save gate sees it too.
+        assert!(d.validation_errors().iter().any(|e| e.contains("exceeds")));
+        d.regions[0].size.width = 1;
+        // Duplicate names.
+        d.regions.push(ui_api::RegionInfo {
+            name: "r1".to_owned(),
+            pos: diagram_model::geometry::CellPos::new(4, 2),
+            size: CellSize::new(1, 1).expect("valid"),
+        });
+        assert!(
+            d.region_validation_errors()
+                .iter()
+                .any(|e| e.contains("twice"))
+        );
+    }
+
+    /// FR19 (CR-016) — the seam payload carries the declared regions unchanged.
+    #[test]
+    fn to_new_template_carries_regions() {
+        let mut d = draft();
+        d.add_region_drag((1, 1), (3, 2));
+        let nt = d.to_new_template();
+        assert_eq!(nt.regions.len(), 1);
+        assert_eq!(nt.regions[0].name, "r1");
+        assert_eq!((nt.regions[0].pos.x, nt.regions[0].size.width), (1, 3));
+    }
+
+    /// FR19 (CR-016, S-037 AC4) — editing an existing region-bearing template
+    /// restores its regions into the draft.
+    #[test]
+    fn from_existing_restores_declared_regions() {
+        let info = ShapeInfo {
+            type_id: "stars/star".to_owned(),
+            name: "star".to_owned(),
+            size: CellSize::new(3, 2).expect("valid"),
+            collection: Some("stars".to_owned()),
+            preview: vec!["#.#".to_owned()],
+            resizable: false,
+            min_size: CellSize::new(1, 1).expect("valid"),
+            resize_rules: None,
+            regions: vec![RegionInfo {
+                name: "body".to_owned(),
+                pos: diagram_model::geometry::CellPos::new(0, 0),
+                size: CellSize::new(3, 2).expect("valid"),
+            }],
+        };
+        let session = TemplateEditorSession::from_existing(&info, Vec::new());
+        assert_eq!(session.draft.regions.len(), 1);
+        assert_eq!(session.draft.regions[0].name, "body");
     }
 }

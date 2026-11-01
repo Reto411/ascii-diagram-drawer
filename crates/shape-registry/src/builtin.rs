@@ -7,7 +7,7 @@
 //! the midpoints of the four sides — `n`, `s`, `w`, `e` (center point for circles).
 
 use crate::geometry::CellPos;
-use crate::types::{AnchorSet, GeometryKind, ShapeType, TemplateGrid};
+use crate::types::{AnchorSet, GeometryKind, RegionSet, ShapeType, TemplateGrid};
 
 /// The built-in catalog: box and ellipse/circle, in deterministic order.
 pub const BUILTIN_NAMES: [&str; 2] = ["box", "ellipse"];
@@ -40,7 +40,8 @@ fn builtin(
         geometry,
         glyph_pattern,
         anchor_set,
-        resize_rules: None, // v1: no resize rules (S-005 AC4)
+        regions: RegionSet::new(), // built-ins are label-only (FR19 keeps the label)
+        resize_rules: None,        // v1: no resize rules (S-005 AC4)
     }
 }
 

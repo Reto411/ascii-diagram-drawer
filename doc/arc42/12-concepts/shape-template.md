@@ -3,7 +3,7 @@ title: shape-template
 description: a user-defined diagram object — named fixed-size grid of svgbob-alphabet characters with declared anchor cells; read before implementing template parsing or the template editor
 scope: format / domain model
 status: stable
-updated: 2026-10-29
+updated: 2026-11-01
 ---
 
 # Concept: Shape Template
@@ -26,9 +26,10 @@ FR3 (High): users define their own diagram objects entirely themselves, beyond t
 ### File syntax (v1, inside a `.adc` collection file)
 
 ```ebnf
-template-block = "template", name, width, "x", height, grid-row* , anchor-stmt* , resize-stmt*
+template-block = "template", name, width, "x", height, grid-row* , anchor-stmt* , region-stmt* , resize-stmt*
 grid-row       = line of ≤ width printable-ASCII chars ; right-padded with spaces to width on parse
 anchor-stmt    = "anchor", name, "at", int, int
+region-stmt    = "region", name, "at", int, int, "w", int, "h", int   ; v1.1 (FR19)
 resize-stmt    = "resize", edge, ["even" | "odd"], "insert", quoted-char, "remove", quoted-char   ; v1.1 (C10)
 edge           = "top" | "bottom" | "left" | "right"
 ```
@@ -37,7 +38,7 @@ edge           = "top" | "bottom" | "left" | "right"
 - **Anchor placement rules:** `0 ≤ x < width`, `0 ≤ y < height`; anchor names are single tokens, unique within the template; several anchors may share one cell. No other v1 constraint (e.g. "on the border" is a guideline for clean joins, not an invariant).
 - **No in-grid marker characters.** ADR 007's open "anchor marker character" point is settled by *coordinate-based* declarations: anchors never appear in the art itself, so there is nothing to collide with the svgbob alphabet or the double-quote escape. The graphical anchor mode (FR11) produces exactly this data — same underlying definition, file remains the source of truth.
 - **Resize rules (v1.1):** a template may declare **resize rules** — per-edge insert/remove characters + optional even/odd parity variants — making its instances resizable; the mechanism is normative in [resize-rules](resize-rules.md) (C10, ADR 007 v6). `resize` statements inside a template block carry them: one statement per (edge, parity), all four base pairs required to enable resizing (a partial set is a parse error); without rules a template stays fixed-size (ADR 007 point 4). Built-ins do not need rules: their resizability comes from the `geometry` kind (`Rect` derives borders at instance size, `Ellipse` re-rasterizes its outline at instance size — B-001).
-- **Text regions (FR19, CR-016 accepted 2026-10-31):** a template may declare one or more named **text regions** with a position and extent inside the shape; instances carry per-region content that moves/resizes with the shape. `region` statements join the template block (`.adc` 1.1, ADR 004 v4); definable textually and graphically in the template editor, mirroring anchors (FR11). The existing single shape label remains supported alongside regions. Exact syntax settles with S-037.
+- **Text regions (FR19, CR-016):** a template may declare one or more named **text regions** — `region <name> at <x> <y> w <width> <height>` — each a cell rect inside the grid (`0 ≤ x`, `0 ≤ y`, `x + width ≤ width`, `y + height ≤ height`, extents ≥ 1; violations are typed parse errors with line/column). Region names are single tokens, unique within the template. Regions join the anchor phase of the block: canonical order is anchors (by name), then regions (by name), then resize rules (by edge); a collection serializes at minor **1.1** iff any template carries regions or resize rules, and `region` in an `adc 1.0` file is a parse error (unknown statement there). Instances carry per-region content (`.ad` region clauses) that moves/resizes with the shape; the graphical region tool of the template editor produces exactly this data, mirroring anchors (FR11). The existing single shape label remains supported alongside regions.
 
 ### Identity and use
 

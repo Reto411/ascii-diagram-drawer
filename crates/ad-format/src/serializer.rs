@@ -156,6 +156,15 @@ fn push_shape(out: &mut String, shape: &ShapeInstance) {
     push_int(out, shape.size.width);
     out.push_str(" h ");
     push_int(out, shape.size.height);
+    // FR19 (CR-016): region clauses by name after the size; empty maps emit nothing,
+    // so region-free files stay byte-identical to the pre-CR-016 form.
+    for (name, content) in &shape.regions {
+        out.push_str(" region ");
+        out.push_str(name);
+        out.push_str(" \"");
+        out.push_str(&escape(content));
+        out.push('"');
+    }
     out.push('\n');
 }
 

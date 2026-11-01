@@ -63,6 +63,9 @@ pub enum EditOutcome {
     PlacedText { id: ObjectId },
     /// Inline editing of a text object started (double click — S-018 AC1).
     Editing { id: ObjectId },
+    /// A shape instance was double-clicked (FR19 / CR-016): the app opens its
+    /// region-content editor.
+    DoubleClickShape { id: ObjectId },
     /// An inline edit committed its content to the model (Enter/blur — S-018 AC1).
     Edited { id: ObjectId },
     /// A dragged shape crossed to a new cell and the model was updated live.
@@ -649,15 +652,20 @@ impl EditorState {
         let HitTarget::Body(id) = target else {
             return EditOutcome::Nothing;
         };
-        let Some(Object::Text(text)) = diagram.get(&id) else {
-            return EditOutcome::Nothing; // shapes are not inline-editable in v1
-        };
-        if self.editing.as_ref() != Some(&id) {
-            self.editing = Some(id.clone());
-            self.edit_draft = text.text.clone();
-            self.replace_selection(&id);
+        match diagram.get(&id) {
+            Some(Object::Text(text)) => {
+                if self.editing.as_ref() != Some(&id) {
+                    self.editing = Some(id.clone());
+                    self.edit_draft = text.text.clone();
+                    self.replace_selection(&id);
+                }
+                EditOutcome::Editing { id }
+            }
+            // FR19 (CR-016): double-clicking a shape opens its region-content editor
+            // (the app decides whether it has regions; empty ones get a hint).
+            Some(Object::Shape(_)) => EditOutcome::DoubleClickShape { id },
+            _ => EditOutcome::Nothing,
         }
-        EditOutcome::Editing { id }
     }
 
     fn place(&mut self, col: u32, row: u32, info: ShapeInfo, diagram: &mut Diagram) -> EditOutcome {
@@ -1064,6 +1072,7 @@ mod tests {
             resizable: true,
             min_size: CellSize::new(1, 1).expect("valid size"),
             resize_rules: None,
+            regions: Vec::new(),
         }
     }
 
@@ -2523,8 +2532,11 @@ mod tests {
         assert_eq!(text.text, "done");
     }
 
+    /// FR19 (CR-016) — a double click on a shape body reports `DoubleClickShape` so
+    /// the app layer can offer the region editor for region-bearing templates;
+    /// unlike text objects it never opens inline text editing.
     #[test]
-    fn double_click_on_a_shape_does_not_open_editing() {
+    fn double_click_on_a_shape_reports_the_body_not_inline_editing() {
         let mut editor = EditorState::default();
         let mut diagram = diagram_with_box(); // box at (0,0), 9×5
         assert_eq!(
@@ -2535,7 +2547,9 @@ mod tests {
                 },
                 &mut diagram,
             ),
-            EditOutcome::Nothing
+            EditOutcome::DoubleClickShape {
+                id: ObjectId::generated(1)
+            }
         );
         assert!(editor.editing.is_none());
     }

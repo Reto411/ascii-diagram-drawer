@@ -20,8 +20,8 @@ pub use error::{CatalogError, ExportError, StoreError};
 // the documented dependency edge (`gui-app` never links `render-pipeline` directly).
 pub use render_pipeline::{RenderError, ResolvedGrid};
 pub use types::{
-    AnchorInfo, EdgeRuleSpec, LoadedDocument, NewTemplate, ParityCharsSpec, ResizeRuleSpec,
-    ShapeInfo,
+    AnchorInfo, EdgeRuleSpec, LoadedDocument, NewTemplate, ParityCharsSpec, RegionInfo,
+    ResizeRuleSpec, ShapeInfo,
 };
 
 /// Loads and saves `.ad` documents (FR4). The native backend uses the filesystem;

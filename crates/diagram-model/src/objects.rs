@@ -6,6 +6,7 @@
 //! cross-object invariants on every mutation.
 
 use core::fmt;
+use std::collections::BTreeMap;
 
 use crate::anchors::{AnchorRef, ConnectorEndpoint};
 use crate::geometry::{CellPos, CellSize};
@@ -112,7 +113,9 @@ impl fmt::Display for ConnectorEnd {
 ///
 /// `type_id` is the *only* reference into the catalog (Customer/Supplier mapping): this crate
 /// never resolves it; rendering does, with the catalog in hand. `label` is the text drawn
-/// inside the shape (may be empty); all coordinates are cell units (FR7).
+/// inside the shape (may be empty); all coordinates are cell units (FR7). `regions` holds the
+/// per-region text content (CR-016 / ADR 004 v4): region *names* are not validated against the
+/// catalog here either — an unknown name simply renders nothing, mirroring `type_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShapeInstance {
     /// Stable identity of this instance.
@@ -125,6 +128,9 @@ pub struct ShapeInstance {
     pub size: CellSize,
     /// Reference to the shape type in the catalog (single token, unresolved here).
     pub type_id: String,
+    /// Per-region text content by region name (CR-016); empty for a shape without
+    /// region content. Names are single tokens; iteration order is sorted by name.
+    pub regions: BTreeMap<String, String>,
 }
 
 impl ShapeInstance {
@@ -146,7 +152,14 @@ impl ShapeInstance {
             pos,
             size,
             type_id: type_id.to_owned(),
+            regions: BTreeMap::new(),
         })
+    }
+
+    /// The content stored for one region, if any.
+    #[must_use]
+    pub fn region_content(&self, name: &str) -> Option<&str> {
+        self.regions.get(name).map(String::as_str)
     }
 }
 

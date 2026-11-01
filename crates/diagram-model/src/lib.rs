@@ -33,7 +33,7 @@ pub mod objects;
 use anchors::ConnectorEndpoint;
 pub use color::{ColorParseError, ColorRole, DiagramColors, Rgb};
 use geometry::{CellPos, CellSize};
-use invariants::ModelError;
+use invariants::{ModelError, TokenField, validate_single_token};
 use objects::{
     ConnectorEnd, ConnectorInstance, Object, ObjectId, ShapeInstance, TextInstance, TipStyle,
 };
@@ -312,6 +312,56 @@ impl Diagram {
         Ok(())
     }
 
+    /// Replaces the label of a shape instance (FR19 / CR-016 — the single implicit
+    /// label remains supported alongside per-region content). An empty `label`
+    /// clears it: an unlabeled shape renders nothing in the label slot.
+    ///
+    /// # Errors
+    /// [`ModelError::UnknownObject`] when the id does not exist, or
+    /// [`ModelError::NotAShape`] when it exists but is another object kind.
+    pub fn set_shape_label(&mut self, id: &ObjectId, label: &str) -> Result<(), ModelError> {
+        let object = self
+            .get_mut(id)
+            .ok_or_else(|| ModelError::UnknownObject(id.clone()))?;
+        match object {
+            Object::Shape(shape) => shape.label = label.to_owned(),
+            _ => return Err(ModelError::NotAShape(object.id().clone())),
+        }
+        Ok(())
+    }
+
+    /// Sets the text content of one region on a shape (CR-016 / ADR 004 v4). An empty
+    /// `content` clears that region's entry — an instance without content for a region
+    /// renders nothing there. The region name is not validated against the catalog, the
+    /// same rule as `type_id`: unknown names are kept in the model and simply render
+    /// nothing.
+    ///
+    /// # Errors
+    /// [`ModelError::UnknownObject`] when the id does not exist, [`ModelError::NotAShape`]
+    /// when it exists but is another object kind, or
+    /// [`ModelError::EmptyRegionName`]/[`ModelError::RegionNameContainsWhitespace`] for an
+    /// invalid region name.
+    pub fn set_shape_region(
+        &mut self,
+        id: &ObjectId,
+        region: &str,
+        content: &str,
+    ) -> Result<(), ModelError> {
+        validate_single_token(region, TokenField::RegionName)?;
+        let object = self
+            .get_mut(id)
+            .ok_or_else(|| ModelError::UnknownObject(id.clone()))?;
+        let Object::Shape(shape) = object else {
+            return Err(ModelError::NotAShape(object.id().clone()));
+        };
+        if content.is_empty() {
+            shape.regions.remove(region);
+        } else {
+            shape.regions.insert(region.to_owned(), content.to_owned());
+        }
+        Ok(())
+    }
+
     /// Places a free-text element; it is appended (top of z-order).
     ///
     /// # Errors
@@ -528,6 +578,60 @@ mod tests {
         assert_eq!(
             diagram.set_text(&oid("s1"), "x"),
             Err(ModelError::NotAText(oid("s1")))
+        );
+    }
+
+    /// `set_shape_region` stores, replaces and clears per-region content (CR-016) and
+    /// validates the name like every other single-token field.
+    #[test]
+    fn set_shape_region_stores_replaces_and_clears() {
+        let mut diagram = Diagram::new();
+        diagram.place_shape(shape("s1", "box")).expect("places");
+        diagram.place_text(text("t1")).expect("places");
+
+        let regions_of = |d: &Diagram| -> std::collections::BTreeMap<String, String> {
+            let Object::Shape(shape) = d.get(&oid("s1")).expect("present") else {
+                panic!("expected shape")
+            };
+            shape.regions.clone()
+        };
+
+        assert_eq!(diagram.set_shape_region(&oid("s1"), "r1", "hello"), Ok(()));
+        assert_eq!(diagram.set_shape_region(&oid("s1"), "r2", "world"), Ok(()));
+        let mut expected = std::collections::BTreeMap::new();
+        expected.insert("r1".to_owned(), "hello".to_owned());
+        expected.insert("r2".to_owned(), "world".to_owned());
+        assert_eq!(regions_of(&diagram), expected);
+
+        // Replace.
+        assert_eq!(diagram.set_shape_region(&oid("s1"), "r1", "bye"), Ok(()));
+        expected.insert("r1".to_owned(), "bye".to_owned());
+        assert_eq!(regions_of(&diagram), expected);
+
+        // Empty content clears the entry.
+        assert_eq!(diagram.set_shape_region(&oid("s1"), "r2", ""), Ok(()));
+        let Object::Shape(shape) = diagram.get(&oid("s1")).expect("present") else {
+            panic!("expected shape")
+        };
+        assert!(!shape.regions.contains_key("r2"));
+        assert_eq!(shape.region_content("r1"), Some("bye"));
+
+        // Unknown object / non-shape / invalid names.
+        assert_eq!(
+            diagram.set_shape_region(&oid("ghost"), "r1", "x"),
+            Err(ModelError::UnknownObject(oid("ghost")))
+        );
+        assert_eq!(
+            diagram.set_shape_region(&oid("t1"), "r1", "x"),
+            Err(ModelError::NotAShape(oid("t1")))
+        );
+        assert_eq!(
+            diagram.set_shape_region(&oid("s1"), "", "x"),
+            Err(ModelError::EmptyRegionName)
+        );
+        assert_eq!(
+            diagram.set_shape_region(&oid("s1"), "a b", "x"),
+            Err(ModelError::RegionNameContainsWhitespace("a b".to_owned()))
         );
     }
 

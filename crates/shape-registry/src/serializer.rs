@@ -14,8 +14,8 @@ use crate::types::ShapeType;
 
 /// The major format version this writer emits.
 const MAJOR: u32 = 1;
-/// The minor version needed by `resize` statements (C10); collections without rules
-/// serialize at the lower 1.0 baseline.
+/// The minor version needed by `resize` (C10) and `region` (FR19) statements;
+/// collections without either serialize at the lower 1.0 baseline.
 const MINOR_WITH_RESIZE: u32 = 1;
 
 /// Serializes `collection` to canonical `.adc` text (trailing newline included).
@@ -31,7 +31,13 @@ const MINOR_WITH_RESIZE: u32 = 1;
 /// character per edge (the file syntax declares one character serving as both insert
 /// and remove); parity overrides are emitted as `even`/`odd` suffixes.
 pub fn serialize_collection(collection: &Collection) -> String {
-    let minor = if collection.types.iter().any(|t| t.resize_rules.is_some()) {
+    // A collection with any resize rules or text regions serializes at 1.1 — the
+    // reader of 1.0 files would reject either statement as unknown.
+    let minor = if collection
+        .types
+        .iter()
+        .any(|t| t.resize_rules.is_some() || !t.regions.is_empty())
+    {
         MINOR_WITH_RESIZE
     } else {
         0
@@ -56,6 +62,13 @@ pub fn serialize_collection(collection: &Collection) -> String {
         }
         for (name, pos) in template.anchor_set.iter() {
             out.push_str(&format!("anchor {name} at {} {}\n", pos.x, pos.y));
+        }
+        // FR19: regions by name between anchors and resize rules.
+        for (name, rect) in template.regions.iter() {
+            out.push_str(&format!(
+                "region {name} at {} {} w {} h {}\n",
+                rect.x, rect.y, rect.width, rect.height
+            ));
         }
         if let Some(rules) = &template.resize_rules {
             // Canonical order (C10): edges top, bottom, left, right; per edge the base
@@ -132,6 +145,7 @@ mod tests {
             name: name.to_owned(),
             glyph_pattern: TemplateGrid::from_rows(rows).expect("valid rows"),
             anchor_set,
+            regions: crate::types::RegionSet::new(),
             geometry: GeometryKind::Pattern,
             resize_rules: None,
         }
@@ -244,6 +258,7 @@ mod tests {
             name: "box".to_owned(),
             glyph_pattern: TemplateGrid::from_rows(&["+--+", "|  |", "+--+"]).expect("valid"),
             anchor_set: AnchorSet::new(),
+            regions: crate::types::RegionSet::new(),
             geometry: GeometryKind::Pattern,
             resize_rules: Some(rules),
         };
@@ -279,6 +294,31 @@ mod tests {
         // A rule-free collection keeps the 1.0 baseline header.
         let plain = parse_collection("c", "adc 1.0\ntemplate t 2 x 2\nab\ncd\n").expect("parses");
         assert!(serialize_collection(&plain.collection).starts_with("adc 1.0\n"));
+    }
+
+    /// AC1 (S-037): regions serialize between anchors and resize rules, in name order,
+    /// bump the header to 1.1, and round-trip unchanged.
+    #[test]
+    fn region_round_trip_is_stable() {
+        let text = "adc 1.1\ntemplate box 6 x 4\n+----+\n|    |\n|    |\n+----+\nanchor n at 3 0\nregion body at 1 2 w 4 h 1\nregion title at 1 1 w 4 h 1\nresize top insert \"-\" remove \"-\"\nresize bottom insert \"-\" remove \"-\"\nresize left insert \"|\" remove \"|\"\nresize right insert \"|\" remove \"|\"\n";
+        let parsed = parse_collection("c", text).expect("parses");
+        // Canonical re-save: regions by name (body before title), after anchors,
+        // before resize rules; header at 1.1.
+        let reser = serialize_collection(&parsed.collection);
+        assert_eq!(
+            reser,
+            "adc 1.1\ntemplate box 6 x 4\n+----+\n|    |\n|    |\n+----+\nanchor n at 3 0\nregion body at 1 2 w 4 h 1\nregion title at 1 1 w 4 h 1\nresize top insert \"-\" remove \"-\"\nresize bottom insert \"-\" remove \"-\"\nresize left insert \"|\" remove \"|\"\nresize right insert \"|\" remove \"|\"\n"
+        );
+        let reparsed = parse_collection("c", &reser).expect("re-parses");
+        assert_eq!(serialize_collection(&reparsed.collection), reser);
+
+        // Regions alone (no resize rules) still bump the header to 1.1.
+        let regions_only = parse_collection(
+            "c",
+            "adc 1.1\ntemplate t 4 x 3\n+--+\n|  |\n+--+\nregion r at 1 1 w 2 h 1\n",
+        )
+        .expect("parses");
+        assert!(serialize_collection(&regions_only.collection).starts_with("adc 1.1\n"));
     }
 
     /// Grid construction rejects the same things the parser does — the serializer

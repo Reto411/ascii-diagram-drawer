@@ -33,6 +33,10 @@ pub struct ShapeInfo {
     /// restores them when opening an existing rule-bearing template for editing,
     /// so saving does not silently drop them.
     pub resize_rules: Option<ResizeRuleSpec>,
+    /// The template's declared text regions (FR19 / CR-016), sorted by name — the
+    /// editor restores them when reopening a region-bearing template, and double-
+    /// clicking an instance of it offers one field per region (S-037 AC5).
+    pub regions: Vec<RegionInfo>,
 }
 
 impl ShapeInfo {
@@ -48,6 +52,7 @@ impl ShapeInfo {
             resizable: true,
             min_size: CellSize::new(1, 1).expect("1×1 is a valid cell size"),
             resize_rules: None,
+            regions: Vec::new(),
         }
     }
 }
@@ -98,6 +103,40 @@ pub struct AnchorInfo {
     pub position: CellPos,
 }
 
+/// A text region (text box) declared by a template (FR19 / CR-016): a named rect in
+/// template cells; instances carry per-region content that renders inside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegionInfo {
+    /// The region's name as declared in the template — a single token, unique per
+    /// template.
+    pub name: String,
+    /// Top-left corner relative to the shape's top-left corner.
+    pub pos: CellPos,
+    /// Extent in cells (width/height ≥ 1).
+    pub size: CellSize,
+}
+
+impl RegionInfo {
+    /// Whether the cell `(x, y)` falls inside this region.
+    #[must_use]
+    pub fn contains(&self, x: u32, y: u32) -> bool {
+        x >= self.pos.x
+            && y >= self.pos.y
+            && x < self.pos.x.saturating_add(self.size.width)
+            && y < self.pos.y.saturating_add(self.size.height)
+    }
+
+    /// Whether this region intersects the half-open rect `x0..x1 × y0..y1` (template
+    /// cells).
+    #[must_use]
+    pub fn intersects(&self, x0: u32, y0: u32, x1: u32, y1: u32) -> bool {
+        self.pos.x < x1
+            && self.pos.y < y1
+            && x0 < self.pos.x.saturating_add(self.size.width)
+            && y0 < self.pos.y.saturating_add(self.size.height)
+    }
+}
+
 /// A new or edited user-defined template, as the GUI submits it (S-017, FR3/FR11).
 ///
 /// Plain seam-safe data — the backend validates it into a registry `ShapeType`
@@ -116,6 +155,10 @@ pub struct NewTemplate {
     /// is enabled. The backend validates completeness (all four edges' base rules)
     /// and character constraints, then persists them as `.adc` `resize` statements.
     pub resize_rules: Option<ResizeRuleSpec>,
+    /// Declared text regions (FR19 / CR-016) — each rect must fit inside the glyph
+    /// grid; names are single tokens, unique per template. Persisted as `.adc`
+    /// `region` statements.
+    pub regions: Vec<RegionInfo>,
 }
 
 /// A loaded `.ad` document plus forward-compat metadata (ADR 009 v4, RS2):
@@ -158,6 +201,7 @@ mod tests {
             resizable: true,
             min_size: CellSize::new(1, 1).expect("valid size"),
             resize_rules: None,
+            regions: Vec::new(),
         };
         assert_eq!(info.size.width, 9);
         assert_eq!(info.size.height, 5);

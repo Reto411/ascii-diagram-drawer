@@ -8,7 +8,8 @@ use diagram_model::{
 };
 use render_pipeline::{RenderError, ResolvedGrid};
 use shape_registry::{
-    AnchorSet, Collection, GeometryKind, ShapeRegistry, ShapeType, TemplateGrid, min_size,
+    AnchorSet, Collection, GeometryKind, RegionSet, ShapeRegistry, ShapeType, TemplateGrid,
+    min_size,
 };
 use ui_api::{Renderer, ResizeRuleSpec};
 
@@ -89,6 +90,7 @@ impl Renderer for PipelineRenderer {
                 anchor_set: AnchorSet::new(),
                 geometry: GeometryKind::Pattern,
                 resize_rules: rules.map(rules_from_spec),
+                regions: RegionSet::new(),
             }],
         });
 
@@ -176,6 +178,7 @@ mod tests {
                 anchor_set: anchors,
                 geometry: shape_registry::GeometryKind::Pattern,
                 resize_rules: None,
+                regions: RegionSet::new(),
             }],
         });
 
@@ -236,6 +239,7 @@ mod tests {
                 anchor_set: anchors,
                 geometry: shape_registry::GeometryKind::Pattern,
                 resize_rules: None,
+                regions: RegionSet::new(),
             }],
         });
         let mut diagram = Diagram::new();

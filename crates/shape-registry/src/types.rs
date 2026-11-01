@@ -1,11 +1,11 @@
-//! Core catalog value types (ADR 007): [`TemplateGrid`], [`AnchorSet`], [`ShapeType`],
-//! [`Collection`] — and [`ResizeRules`], the per-edge insert/remove declarations that
-//! make a template's instances resizable (C10, ADR 007 v6).
+//! Core catalog value types (ADR 007): [`TemplateGrid`], [`AnchorSet`], [`RegionSet`],
+//! [`ShapeType`], [`Collection`] — and [`ResizeRules`], the per-edge insert/remove
+//! declarations that make a template's instances resizable (C10, ADR 007 v6).
 
 use std::collections::BTreeMap;
 
-use crate::error::{AnchorSetError, GridError};
-use crate::geometry::{CellPos, CellSize};
+use crate::error::{AnchorSetError, GridError, RegionSetError};
+use crate::geometry::{CellPos, CellSize, Region};
 
 /// A fixed-size rectangular grid of glyph characters for a shape template
 /// ([shape-template](../../../doc/arc42/12-concepts/shape-template.md)).
@@ -157,6 +157,60 @@ impl AnchorSet {
     }
 }
 
+/// Named text regions of a shape type (FR19 / CR-016) — rectangles inside the template
+/// grid where per-instance content is stamped at render time.
+///
+/// Region names are unique within the set; iteration is deterministic (alphabetical).
+/// A region belongs to the *template*: instances store content per region name and the
+/// rect itself never varies between instances of the same type.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RegionSet {
+    regions: BTreeMap<String, Region>,
+}
+
+impl RegionSet {
+    /// An empty region set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Declares a region at `rect`.
+    ///
+    /// # Errors
+    /// [`RegionSetError::DuplicateName`] when the name is already declared in this set.
+    pub fn add(&mut self, name: &str, rect: Region) -> Result<(), RegionSetError> {
+        if self.regions.contains_key(name) {
+            return Err(RegionSetError::DuplicateName(name.to_owned()));
+        }
+        self.regions.insert(name.to_owned(), rect);
+        Ok(())
+    }
+
+    /// The rect of `name`, or `None` when not declared.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<Region> {
+        self.regions.get(name).copied()
+    }
+
+    /// The number of declared regions.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.regions.len()
+    }
+
+    /// Whether no regions are declared.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.regions.is_empty()
+    }
+
+    /// Iterates `(name, rect)` pairs in deterministic (alphabetical) order.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Region)> {
+        self.regions.iter()
+    }
+}
+
 /// One edge of a resize rule set (C10): which character is inserted per step of
 /// growth and removed per step of shrink, plus optional even/odd parity overrides.
 ///
@@ -239,7 +293,8 @@ pub enum GeometryKind {
     Pattern,
 }
 
-/// A shape type: a glyph pattern plus its named anchors and optional resize rules.
+/// A shape type: a glyph pattern plus its named anchors, text regions and optional
+/// resize rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShapeType {
     /// The catalog key: bare name for built-ins, `collection/name` for custom shapes.
@@ -250,6 +305,9 @@ pub struct ShapeType {
     pub glyph_pattern: TemplateGrid,
     /// Named anchor points where connectors may bind (C7).
     pub anchor_set: AnchorSet,
+    /// Named text regions where per-instance content is stamped (FR19, CR-016);
+    /// empty for label-only shapes — the single implicit label stays supported.
+    pub regions: RegionSet,
     /// How the render pipeline draws this type's geometry (S-006).
     pub geometry: GeometryKind,
     /// Resize rules; `None` keeps the template fixed-size (ADR 007 point 4),
@@ -285,8 +343,10 @@ impl Collection {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnchorSet, Collection, GeometryKind, ShapeType, TemplateGrid};
+    use super::{AnchorSet, Collection, GeometryKind, RegionSet, ShapeType, TemplateGrid};
+    use crate::error::RegionSetError;
     use crate::error::{AnchorSetError, GridError};
+    use crate::geometry::Region;
     use crate::geometry::{CellPos, CellSize};
 
     fn grid() -> TemplateGrid {
@@ -374,6 +434,32 @@ mod tests {
         assert_eq!(set.get("n"), Some(CellPos::new(4, 0)));
     }
 
+    /// Regions are unique per name and iterate in deterministic order.
+    #[test]
+    fn region_set_is_unique_and_ordered() {
+        let mut set = RegionSet::new();
+        assert!(set.is_empty());
+        set.add("r2", Region::new(1, 0, 4, 1)).expect("fresh name");
+        set.add("r1", Region::new(1, 2, 4, 1)).expect("fresh name");
+        assert_eq!(set.len(), 2);
+        assert_eq!(set.get("r1"), Some(Region::new(1, 2, 4, 1)));
+        assert_eq!(set.get("nope"), None);
+        let names: Vec<&String> = set.iter().map(|(name, _)| name).collect();
+        assert_eq!(names, vec!["r1", "r2"]);
+    }
+
+    /// Re-adding a declared region name is a typed error and does not move the rect.
+    #[test]
+    fn region_set_rejects_duplicate_names() {
+        let mut set = RegionSet::new();
+        set.add("r1", Region::new(0, 0, 2, 1)).expect("fresh name");
+        assert_eq!(
+            set.add("r1", Region::new(1, 1, 3, 2)),
+            Err(RegionSetError::DuplicateName("r1".to_owned()))
+        );
+        assert_eq!(set.get("r1"), Some(Region::new(0, 0, 2, 1)));
+    }
+
     /// A shape's size is exactly its glyph grid's dimensions.
     #[test]
     fn shape_type_size_comes_from_the_grid() {
@@ -382,6 +468,7 @@ mod tests {
             name: "box".to_owned(),
             glyph_pattern: grid(),
             anchor_set: AnchorSet::new(),
+            regions: RegionSet::new(),
             geometry: GeometryKind::Rect,
             resize_rules: None,
         };
@@ -398,6 +485,7 @@ mod tests {
                 name: "gear".to_owned(),
                 glyph_pattern: grid(),
                 anchor_set: AnchorSet::new(),
+                regions: RegionSet::new(),
                 geometry: GeometryKind::Pattern,
                 resize_rules: None,
             }],
