@@ -2,9 +2,9 @@
 title: CR-013 - prerendered-shape-previews
 description: shape selection shows a pre-rendered visual preview of each shape (same bytes as stamped on the canvas) instead of name + tiny text snippet — WYSIWYG picking
 scope: gui
-status: accepted
+status: implemented
 priority: medium
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # CR-013: Pre-rendered shape previews in the template sidebar
@@ -66,4 +66,4 @@ On acceptance, one commit:
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-034** (commit `0e5e610`; board log 2026-11-01): GUI-side pre-rendered previews in `gui-app/src/sidebar.rs` — each shape row draws its `ShapeInfo.preview` rows via the same per-row `painter.text(LEFT_TOP)` monospace path the canvas uses, at the shared canvas font size (`crate::app::FONT_SIZE`, now `pub(crate)`) when the natural width fits the available sidebar width, uniformly scaled down otherwise (pure `sidebar::preview_font_size`). Seam unchanged (ADR 009 stays v8 — no rasterized data crosses it). 5 new tests (3 pure + 2 tier-0b); Material goldens regenerated (diff confined to the sidebar band). CR → implemented.
