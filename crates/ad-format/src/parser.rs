@@ -14,7 +14,7 @@ use diagram_model::color::{ColorRole, Rgb};
 use diagram_model::geometry::{CellPos, CellSize};
 use diagram_model::invariants::ModelError;
 use diagram_model::objects::{
-    ConnectorInstance, ConnectorStyle, ObjectId, ShapeInstance, TextInstance, TipStyle,
+    ConnectorInstance, ConnectorStyle, Object, ObjectId, ShapeInstance, TextInstance, TipStyle,
 };
 
 use crate::error::ParseError;
@@ -48,6 +48,16 @@ pub(crate) enum Slot {
     Unknown(String),
 }
 
+/// A known object statement parsed but not yet applied to the model (two-phase parse, S-043):
+/// application is deferred until every statement is read, so a connector's endpoint may
+/// reference a shape declared later in the file (forward reference — legal per the format).
+#[derive(Debug, Clone)]
+enum PendingObject {
+    Shape(ShapeInstance),
+    Text(TextInstance),
+    Connect(ConnectorInstance),
+}
+
 impl Document {
     /// Number of preserved unknown statements.
     #[must_use]
@@ -75,7 +85,8 @@ pub fn parse(input: &str) -> Result<Diagram, ParseError> {
 /// [`ParseError`] with line/column on any malformed input; an unsupported major version
 /// rejects the whole file.
 pub fn parse_document(input: &str) -> Result<Document, ParseError> {
-    let mut diagram = Diagram::new();
+    let mut diagram = Diagram::new(); // receives scale/colors while streaming
+    let mut pending: Vec<(usize, usize, PendingObject)> = Vec::new(); // (line, column, statement)
     let mut slots: Vec<Slot> = Vec::new();
     let mut header_seen = false;
     let mut version = (MAJOR, MINOR);
@@ -97,34 +108,40 @@ pub fn parse_document(input: &str) -> Result<Document, ParseError> {
             continue;
         }
         match first.as_str() {
-            "scale" => parse_scale(&tokens, line_no, &mut scale_seen, &mut diagram)?,
-            "colors" => parse_colors(&tokens, line_no, &mut colors_seen, &mut diagram)?,
+            "scale" => parse_scale(
+                &tokens,
+                line_no,
+                &mut scale_seen,
+                !pending.is_empty(),
+                &mut diagram,
+            )?,
+            "colors" => parse_colors(
+                &tokens,
+                line_no,
+                &mut colors_seen,
+                !pending.is_empty(),
+                &mut diagram,
+            )?,
             "shape" => {
                 let mut cursor = Cursor::new(&tokens);
                 cursor.next(); // consume the matched "shape" keyword
                 let shape = parse_shape(&mut cursor, line_no)?;
-                slots.push(Slot::Object(diagram.len()));
-                diagram
-                    .place_shape(shape)
-                    .map_err(|e| model_error(e, line_no, first.column))?;
+                slots.push(Slot::Object(pending.len()));
+                pending.push((line_no, first.column, PendingObject::Shape(shape)));
             }
             "text" => {
                 let mut cursor = Cursor::new(&tokens);
                 cursor.next(); // consume the matched "text" keyword
                 let text = parse_text(&mut cursor, line_no)?;
-                slots.push(Slot::Object(diagram.len()));
-                diagram
-                    .place_text(text)
-                    .map_err(|e| model_error(e, line_no, first.column))?;
+                slots.push(Slot::Object(pending.len()));
+                pending.push((line_no, first.column, PendingObject::Text(text)));
             }
             "connect" => {
                 let mut cursor = Cursor::new(&tokens);
                 cursor.next(); // consume the matched "connect" keyword
                 let connector = parse_connect(&mut cursor, line_no)?;
-                slots.push(Slot::Object(diagram.len()));
-                diagram
-                    .connect(connector)
-                    .map_err(|e| model_error(e, line_no, first.column))?;
+                slots.push(Slot::Object(pending.len()));
+                pending.push((line_no, first.column, PendingObject::Connect(connector)));
             }
             other => {
                 if version.1 > MINOR {
@@ -149,11 +166,83 @@ pub fn parse_document(input: &str) -> Result<Document, ParseError> {
             "missing header — the first statement must be 'ad <major>.<minor>'",
         ));
     }
+
+    // Two-phase application (S-043 / ADR 018): install every object at once so a connector's
+    // endpoint may reference a shape declared later in the file (forward reference). File
+    // order (= z-order) is preserved; all aggregate invariants are checked against the full
+    // list by the model.
+    let objects: Vec<Object> = pending
+        .iter()
+        .map(|(_, _, statement)| match statement {
+            PendingObject::Shape(shape) => Object::Shape(shape.clone()),
+            PendingObject::Text(text) => Object::Text(text.clone()),
+            PendingObject::Connect(connector) => Object::Connector(connector.clone()),
+        })
+        .collect();
+    let diagram = Diagram::from_parts(objects, diagram.scale(), diagram.colors()).map_err(|e| {
+        let (line_no, column) = error_position(&e, &pending);
+        model_error(e, line_no, column)
+    })?;
     Ok(Document {
         diagram,
         slots,
         version,
     })
+}
+
+/// Maps a deferred model-invariant error back to the statement that caused it (S-043):
+/// id-carrying errors point at the declaring statement; reference errors at the connector
+/// that made the reference.
+fn error_position(error: &ModelError, pending: &[(usize, usize, PendingObject)]) -> (usize, usize) {
+    let declared = |id: &ObjectId| {
+        pending.iter().find_map(|(line, col, statement)| {
+            (pending_id(statement) == id).then_some((*line, *col))
+        })
+    };
+    let referencing = |id: &ObjectId| {
+        pending
+            .iter()
+            .find_map(|(line, col, statement)| match statement {
+                PendingObject::Connect(connector)
+                    if connector.from.object() == Some(id) || connector.to.object() == Some(id) =>
+                {
+                    Some((*line, *col))
+                }
+                _ => None,
+            })
+    };
+    match error {
+        ModelError::DuplicateId(id) => {
+            // Point at the *second* declaration — the statement that failed.
+            let mut seen_once = false;
+            pending
+                .iter()
+                .find_map(|(line, col, statement)| {
+                    if pending_id(statement) == id {
+                        if seen_once {
+                            return Some((*line, *col));
+                        }
+                        seen_once = true;
+                    }
+                    None
+                })
+                .unwrap_or((1, 1))
+        }
+        ModelError::ZeroLengthConnector(id) => declared(id).unwrap_or((1, 1)),
+        ModelError::UnknownObject(id) | ModelError::NotAShape(id) => {
+            referencing(id).or_else(|| declared(id)).unwrap_or((1, 1))
+        }
+        _ => (1, 1), // e.g. ScaleTooSmall — already validated while streaming
+    }
+}
+
+/// The id of a pending object statement.
+fn pending_id(statement: &PendingObject) -> &ObjectId {
+    match statement {
+        PendingObject::Shape(shape) => &shape.id,
+        PendingObject::Text(text) => &text.id,
+        PendingObject::Connect(connector) => &connector.id,
+    }
 }
 
 /// Splits one physical line into tokens; a `#` outside quotes starts a comment to end of line.
@@ -365,6 +454,7 @@ fn parse_scale(
     tokens: &[Token],
     line_no: usize,
     scale_seen: &mut bool,
+    objects_seen: bool,
     diagram: &mut Diagram,
 ) -> Result<(), ParseError> {
     if *scale_seen {
@@ -375,7 +465,7 @@ fn parse_scale(
             "duplicate 'scale' statement — at most one per file",
         ));
     }
-    if !diagram.is_empty() {
+    if objects_seen {
         let col = tokens.first().map_or(1, |t| t.column);
         return Err(ParseError::new(
             line_no,
@@ -401,6 +491,7 @@ fn parse_colors(
     tokens: &[Token],
     line_no: usize,
     colors_seen: &mut bool,
+    objects_seen: bool,
     diagram: &mut Diagram,
 ) -> Result<(), ParseError> {
     let col = |tokens: &[Token]| tokens.first().map_or(1, |t| t.column);
@@ -411,7 +502,7 @@ fn parse_colors(
             "duplicate 'colors' statement — at most one per file",
         ));
     }
-    if !diagram.is_empty() {
+    if objects_seen {
         return Err(ParseError::new(
             line_no,
             col(tokens),
@@ -1316,6 +1407,33 @@ mod tests {
         let err = assert_error(input, 3, 1);
         assert!(
             err.message.contains("unknown object id: ghost"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    /// S-043 — forward references are legal: a connector may reference a shape declared
+    /// *later* in the file (file order = z-order; the model allows this state via CR-010's
+    /// standalone endpoints). The parsed diagram preserves file order.
+    #[test]
+    fn connector_may_reference_a_shape_declared_later() {
+        let input = "ad 1.1\nscale 2\nconnect as c1 from s2.n to 1 1\ntext as t1 \"x\" at 0 0\nshape box \"\" as s2 at 5 5 w 2 h 2\n";
+        let diagram = parse(input).expect("forward reference is legal");
+        let objects = diagram.objects();
+        assert_eq!(objects.len(), 3);
+        // File order (= z-order) is preserved: connector first, then text, then shape.
+        assert!(matches!(&objects[0], Object::Connector(c) if c.id.as_str() == "c1"));
+        assert!(matches!(&objects[2], Object::Shape(s) if s.id.as_str() == "s2"));
+    }
+
+    /// S-043 — a forward reference to non-shape (text) is rejected at the *referencing*
+    /// connector statement, not at the referenced object.
+    #[test]
+    fn forward_reference_to_text_is_rejected_at_the_connector() {
+        let input = "ad 1.0\nconnect as c1 from t1.e to 1 1\ntext as t1 \"x\" at 0 0\n";
+        let err = assert_error(input, 2, 1);
+        assert!(
+            err.message.contains("expected a shape"),
             "message: {}",
             err.message
         );

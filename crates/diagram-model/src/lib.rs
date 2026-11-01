@@ -493,6 +493,59 @@ impl Diagram {
         diagram.set_scale(scale)?;
         Ok(diagram)
     }
+
+    /// One-shot construction from parts (the `.ad` parser path, S-043 / ADR 018): objects keep
+    /// their given file order (= z-order), which may place a connector **before** the shape it
+    /// references (forward reference — legal in the format). All aggregate invariants are
+    /// validated once against the full object list. This is the only construction path that
+    /// tolerates forward references; per-operation insertion validates eagerly and cannot
+    /// express them.
+    ///
+    /// Instance-level validity (positive sizes, non-empty text, token ids) is guaranteed by
+    /// the instance constructors, so this checks diagram-level invariants only: unique ids,
+    /// endpoint referential integrity (attached ends must name a shape present *anywhere* in
+    /// the list), the zero-length rule, and scale ≥ 1.
+    ///
+    /// # Errors
+    /// [`ModelError`] on any invariant violation.
+    pub fn from_parts(
+        objects: Vec<Object>,
+        scale: u32,
+        colors: DiagramColors,
+    ) -> Result<Self, ModelError> {
+        if scale < 1 {
+            return Err(ModelError::ScaleTooSmall { scale });
+        }
+        // Unique ids.
+        for (i, object) in objects.iter().enumerate() {
+            if objects[..i].iter().any(|other| other.id() == object.id()) {
+                return Err(ModelError::DuplicateId(object.id().clone()));
+            }
+        }
+        // Endpoint referential integrity against the *full* list (forward references allowed)
+        // + the zero-length rule.
+        for object in &objects {
+            let Object::Connector(connector) = object else {
+                continue;
+            };
+            for end in [&connector.from, &connector.to] {
+                let ConnectorEndpoint::Attached(reference) = end else {
+                    continue; // free ends are plain coordinates — nothing to validate
+                };
+                match objects.iter().find(|o| o.id() == reference.object()) {
+                    Some(&Object::Shape(_)) => {}
+                    Some(_) => return Err(ModelError::NotAShape(reference.object().clone())),
+                    None => return Err(ModelError::UnknownObject(reference.object().clone())),
+                }
+            }
+            Self::reject_zero_length(&connector.id, &connector.from, &connector.to)?;
+        }
+        Ok(Self {
+            objects,
+            scale,
+            colors,
+        })
+    }
 }
 
 impl Default for Diagram {
