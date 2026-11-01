@@ -15,7 +15,6 @@ updated: 2026-11-01
 | S-019 | web/wasm milestone — bundle build + core tests on wasm32 (QS4) | High | S-012…S-018, S-011 | 5 | [S-019](S-019-wasm-web-milestone.md) |
 | S-020 | performance benchmarks + determinism invariants (QS1/QS12) | Low | S-008, S-011 | 4 | [S-020](S-020-performance-benchmarks.md) |
 | S-021 | documentation completion (§4/§7/§10/§11/§13/§15/§16 + tracker) | Medium | S-019, S-020 | 4 | [S-021](S-021-docs-completion.md) |
-| S-036 | shape-registry — core UML shape set in the built-in catalog (FR18) | High | none beyond done stories; compartment text via S-037 | — | [S-036](S-036-uml-shape-set.md) |
 | S-038 | gui-app — dedicated resize symbol on the resize handle (FR21) | Low | none beyond done stories | — | [S-038](S-038-resize-handle-symbol.md) |
 | S-039 | gui-app — system file dialogs for open/save/export + Save As .txt (FR2/FR4/FR5) | Medium | S-025 (preferred) | — | [S-039](S-039-native-file-dialogs.md) |
 
@@ -23,6 +22,7 @@ updated: 2026-11-01
 
 | ID | Title | Started | Notes |
 |----|-------|---------|-------|
+| S-036 | shape-registry — core UML shape set in the built-in catalog (FR18, CR-015) | 2026-11-01 | all 5 ACs verified: eleven core UML built-ins (lollipop, actor, activation bar, component, port, deployment node, artifact, state, decision diamond, initial/final nodes) as no-rule `Pattern` shapes with pinned svgbob art, exactly the four standard anchors each (deliberate space-cell exceptions pinned: decision.n/s, actor.s), and a single interior `name` region on the four compartmented shapes; exact-grid pipeline test + seam metadata test + tier-0b double-click test; material goldens regenerated. CR-015 → implemented |
 
 ## Blocked
 

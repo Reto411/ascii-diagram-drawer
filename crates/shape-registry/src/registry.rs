@@ -195,6 +195,23 @@ mod tests {
         let col_names: Vec<&str> = reg.collections().map(|c| c.name.as_str()).collect();
         assert_eq!(col_names, vec!["alpha", "zeta"]);
         let builtin_names: Vec<&str> = reg.builtins().map(|s| s.name.as_str()).collect();
-        assert_eq!(builtin_names, vec!["box", "ellipse"]);
+        assert_eq!(
+            builtin_names,
+            vec![
+                "activation",
+                "actor",
+                "artifact",
+                "box",
+                "component",
+                "decision",
+                "deployment",
+                "ellipse",
+                "final",
+                "initial",
+                "lollipop",
+                "port",
+                "state",
+            ]
+        );
     }
 }

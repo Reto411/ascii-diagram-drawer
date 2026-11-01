@@ -1,18 +1,59 @@
-//! The predefined shape catalog (FR11): every built-in shape is plain data — a glyph
-//! pattern plus its standard default anchors, exactly as user-defined shapes from
-//! `.adc` collections. Built-ins are named by bare type-id; custom shapes use
-//! `collection/name`.
-//!
-//! Standard default anchors ([shape-template](../../../doc/arc42/12-concepts/shape-template.md)):
-//! the midpoints of the four sides — `n`, `s`, `w`, `e` (center point for circles).
+//! The predefined shape catalog (FR11/FR18): every built-in shape is plain data — a
+//! geometry kind, anchor set, and optional glyph art — so the registry, the pipeline,
+//! and the GUI all consume one source of truth.
 
-use crate::geometry::CellPos;
+use crate::geometry::{CellPos, Region};
 use crate::types::{AnchorSet, GeometryKind, RegionSet, ShapeType, TemplateGrid};
 
-/// The built-in catalog: box and ellipse/circle, in deterministic order.
-pub const BUILTIN_NAMES: [&str; 2] = ["box", "ellipse"];
+/// The built-in catalog in deterministic order: box and ellipse (S-005) first, then the
+/// core UML set (FR18 / CR-015) in §14's list order.
+pub const BUILTIN_NAMES: [&str; 13] = [
+    "box",
+    "ellipse",
+    "lollipop",
+    "actor",
+    "activation",
+    "component",
+    "port",
+    "deployment",
+    "artifact",
+    "state",
+    "decision",
+    "initial",
+    "final",
+];
 
-/// Builds a built-in shape type from its glyph rows and standard default anchors.
+/// The built-in catalog in deterministic order.
+#[must_use]
+pub fn builtin_catalog() -> Vec<ShapeType> {
+    vec![
+        box_shape(),
+        ellipse_shape(),
+        lollipop_shape(),
+        actor_shape(),
+        activation_shape(),
+        component_shape(),
+        port_shape(),
+        deployment_shape(),
+        artifact_shape(),
+        state_shape(),
+        decision_shape(),
+        initial_shape(),
+        final_shape(),
+    ]
+}
+
+/// The four standard edge-midpoint anchors (FR11) every built-in declares.
+fn standard_anchors(n: (u32, u32), s: (u32, u32), w: (u32, u32), e: (u32, u32)) -> AnchorSet {
+    let mut anchors = AnchorSet::new();
+    for (name, pos) in [("n", n), ("s", s), ("w", w), ("e", e)] {
+        anchors
+            .add(name, CellPos::new(pos.0, pos.1))
+            .expect("built-in anchor is valid");
+    }
+    anchors
+}
+
 fn builtin(
     name: &str,
     geometry: GeometryKind,
@@ -22,34 +63,49 @@ fn builtin(
     w: (u32, u32),
     e: (u32, u32),
 ) -> ShapeType {
-    let glyph_pattern = TemplateGrid::from_rows(rows).expect("built-in glyphs are valid");
-    let mut anchor_set = AnchorSet::new();
-    for (anchor_name, pos) in [
-        ("n", CellPos::new(n.0, n.1)),
-        ("s", CellPos::new(s.0, s.1)),
-        ("w", CellPos::new(w.0, w.1)),
-        ("e", CellPos::new(e.0, e.1)),
-    ] {
-        anchor_set
-            .add(anchor_name, pos)
-            .expect("standard anchors are distinct");
-    }
+    let anchors = standard_anchors(n, s, w, e);
     ShapeType {
-        type_id: name.to_owned(),
-        name: name.to_owned(),
+        type_id: name.into(),
+        name: name.to_string(),
+        glyph_pattern: TemplateGrid::from_rows(rows).expect("built-in art is valid"),
+        anchor_set: anchors,
         geometry,
-        glyph_pattern,
-        anchor_set,
-        regions: RegionSet::new(), // built-ins are label-only (FR19 keeps the label)
-        resize_rules: None,        // v1: no resize rules (S-005 AC4)
+        resize_rules: None,
+        regions: RegionSet::new(),
     }
 }
 
-/// The built-in box: a rectangle with mid-side anchors.
-///
-/// `Rect` geometry: borders are resolved from the instance's own pos/size (any
-/// size), so instances of different sizes join cleanly. The 9×5 art below
-/// documents the natural appearance; it is not stamped for Rect shapes.
+/// A Pattern-geometry UML built-in (FR18) with the standard `n`/`s`/`w`/`e` anchors and,
+/// for compartmented shapes, a single `name` region covering the interior so its UML
+/// semantics are written through S-037's shape-owned text boxes.
+fn uml_shape(
+    name: &str,
+    rows: &[&str],
+    n: (u32, u32),
+    s: (u32, u32),
+    w: (u32, u32),
+    e: (u32, u32),
+    name_region: Option<Region>,
+) -> ShapeType {
+    let anchors = standard_anchors(n, s, w, e);
+    let mut regions = RegionSet::new();
+    if let Some(region) = name_region {
+        regions
+            .add("name", region)
+            .expect("built-in region is valid");
+    }
+    ShapeType {
+        type_id: name.into(),
+        name: name.to_string(),
+        glyph_pattern: TemplateGrid::from_rows(rows).expect("built-in art is valid"),
+        anchor_set: anchors,
+        geometry: GeometryKind::Pattern,
+        resize_rules: None,
+        regions,
+    }
+}
+
+/// A rectangle with edge-midpoint anchors.
 fn box_shape() -> ShapeType {
     builtin(
         "box",
@@ -61,18 +117,14 @@ fn box_shape() -> ShapeType {
             "|       |",
             "+-------+",
         ],
-        (4, 0), // n: top edge midpoint
-        (4, 4), // s: bottom edge midpoint
-        (0, 2), // w: left edge midpoint
-        (8, 2), // e: right edge midpoint
+        (4, 0),
+        (4, 4),
+        (0, 2),
+        (8, 2),
     )
 }
 
-/// The built-in ellipse/circle: a 9×5 svgbob-style oval with mid-side anchors.
-///
-/// `Ellipse` geometry: the outline is re-rasterized deterministically at the
-/// instance's own pos/size (the art below documents the natural appearance), so
-/// the shape is resizable like `box` (FR1, S-013 AC1; B-001, ADR 013 v3).
+/// An ellipse with edge-midpoint anchors.
 fn ellipse_shape() -> ShapeType {
     builtin(
         "ellipse",
@@ -84,124 +136,429 @@ fn ellipse_shape() -> ShapeType {
             " `.   .' ",
             "   `-'   ",
         ],
-        (4, 0), // n: top center
-        (4, 4), // s: bottom center
-        (0, 2), // w: leftmost cell of the middle row
-        (8, 2), // e: rightmost cell of the middle row
+        (4, 0),
+        (4, 4),
+        (0, 2),
+        (8, 2),
     )
 }
 
-/// The full built-in catalog as data.
-#[must_use]
-pub fn builtin_catalog() -> Vec<ShapeType> {
-    vec![box_shape(), ellipse_shape()]
+/// UML interface lollipop: a small hollow circle on a stick.
+fn lollipop_shape() -> ShapeType {
+    uml_shape(
+        "lollipop",
+        &[" _ ", "( )", "`-'", " | ", " | ", " | ", " | "],
+        (1, 0),
+        (1, 6),
+        (0, 1),
+        (2, 1),
+        None,
+    )
+}
+
+/// UML actor: the stick figure.
+fn actor_shape() -> ShapeType {
+    uml_shape(
+        "actor",
+        &["   o   ", "  /|\\  ", "  / \\  ", "  / \\  "],
+        (3, 0),
+        (3, 3),
+        (2, 1),
+        (4, 1),
+        None,
+    )
+}
+
+/// UML activation bar: the thin rectangle on a lifeline.
+fn activation_shape() -> ShapeType {
+    uml_shape(
+        "activation",
+        &[
+            "+---+", "|   |", "|   |", "|   |", "|   |", "|   |", "+---+",
+        ],
+        (2, 0),
+        (2, 6),
+        (0, 3),
+        (4, 3),
+        None,
+    )
+}
+
+/// UML component: the rectangle with a small attached tab; its body is the `name` region.
+fn component_shape() -> ShapeType {
+    uml_shape(
+        "component",
+        &[
+            "+--+--------+",
+            "|  |        |",
+            "+--+        |",
+            "   |        |",
+            "   +--------+",
+        ],
+        (7, 0),
+        (7, 4),
+        (0, 1),
+        (12, 2),
+        Some(Region::new(4, 1, 8, 3)),
+    )
+}
+
+/// UML port: the small filled square.
+fn port_shape() -> ShapeType {
+    uml_shape(
+        "port",
+        &["*****", "*****", "*****"],
+        (2, 0),
+        (2, 2),
+        (0, 1),
+        (4, 1),
+        None,
+    )
+}
+
+/// UML deployment node: the 3-D box; its front face is the `name` region.
+fn deployment_shape() -> ShapeType {
+    uml_shape(
+        "deployment",
+        &[
+            "  _________",
+            " /       / ",
+            "+-------+  ",
+            "|       |  ",
+            "+-------+  ",
+        ],
+        (6, 0),
+        (4, 4),
+        (0, 3),
+        (8, 3),
+        Some(Region::new(1, 3, 7, 1)),
+    )
+}
+
+/// UML artifact: the document with a folded corner; its body is the `name` region.
+fn artifact_shape() -> ShapeType {
+    uml_shape(
+        "artifact",
+        &[
+            "+-----   ",
+            "|     /  ",
+            "|       +",
+            "|       |",
+            "|       |",
+            "+-------+",
+        ],
+        (3, 0),
+        (4, 5),
+        (0, 3),
+        (8, 3),
+        Some(Region::new(1, 1, 7, 4)),
+    )
+}
+
+/// UML state: the rounded rectangle; its interior is the `name` region.
+fn state_shape() -> ShapeType {
+    uml_shape(
+        "state",
+        &[
+            " .-------. ",
+            " |       | ",
+            " |       | ",
+            " |       | ",
+            " `-------' ",
+        ],
+        (5, 0),
+        (5, 4),
+        (1, 2),
+        (9, 2),
+        Some(Region::new(2, 1, 7, 3)),
+    )
+}
+
+/// UML decision diamond: its top/bottom points are implied by the art, so `n`/`s` sit on
+/// space cells and bind live once a connector attaches.
+fn decision_shape() -> ShapeType {
+    uml_shape(
+        "decision",
+        &[
+            "   / \\   ",
+            "  /   \\  ",
+            " /     \\ ",
+            "/       \\",
+            "\\       /",
+            " \\     / ",
+            "  \\   /  ",
+            "   \\ /   ",
+        ],
+        (4, 0),
+        (4, 7),
+        (0, 3),
+        (8, 3),
+        None,
+    )
+}
+
+/// UML initial state node: the single filled dot.
+fn initial_shape() -> ShapeType {
+    uml_shape("initial", &["*"], (0, 0), (0, 0), (0, 0), (0, 0), None)
+}
+
+/// UML final state node: the circle with a filled center.
+fn final_shape() -> ShapeType {
+    uml_shape(
+        "final",
+        &[" _ ", "(*)", "`-'"],
+        (1, 0),
+        (1, 2),
+        (0, 1),
+        (2, 1),
+        None,
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::builtin_catalog;
-    use crate::geometry::CellPos;
-    use crate::types::GeometryKind;
+    use super::*;
 
-    /// AC1: the catalog contains at least box and circle/ellipse, defined as data.
+    /// The catalog is exactly the built-in set in deterministic order: box and ellipse
+    /// first, then the FR18 core UML list.
     #[test]
-    fn catalog_contains_box_and_ellipse() {
+    fn catalog_is_deterministic_and_contains_the_core_uml_set() {
         let catalog = builtin_catalog();
-        let names: Vec<&str> = catalog.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"box"));
-        assert!(names.contains(&"ellipse"));
+        assert_eq!(catalog.len(), 13);
+        let names: Vec<&str> = catalog.iter().map(|s| s.type_id.as_str()).collect();
+        assert_eq!(names, BUILTIN_NAMES);
+        // FR18's minimum list, verbatim.
+        for required in [
+            "lollipop",
+            "actor",
+            "activation",
+            "component",
+            "port",
+            "deployment",
+            "artifact",
+            "state",
+            "decision",
+            "initial",
+            "final",
+        ] {
+            assert!(
+                catalog.iter().any(|s| s.type_id == required),
+                "{required} present"
+            );
+        }
     }
 
-    /// S-006: geometry kinds — box is Rect (borders from instance pos/size),
-    /// ellipse is Ellipse (re-rasterized at the instance extent, B-001).
-    #[test]
-    fn builtins_carry_their_geometry_kind() {
-        let catalog = builtin_catalog();
-        let box_shape = catalog
-            .iter()
-            .find(|s| s.name == "box")
-            .expect("box is built in");
-        assert_eq!(box_shape.geometry, GeometryKind::Rect);
-        let ellipse = catalog
-            .iter()
-            .find(|s| s.name == "ellipse")
-            .expect("ellipse is built in");
-        assert_eq!(ellipse.geometry, GeometryKind::Ellipse);
-    }
-
-    /// AC1/AC4: every built-in carries exactly the four standard default anchors and no resize rules.
+    /// Every built-in declares exactly the four standard anchors (FR11) and no resize
+    /// rules: built-ins stamp at their natural size.
     #[test]
     fn every_builtin_has_standard_anchors_and_no_resize_rules() {
         for shape in builtin_catalog() {
-            assert_eq!(
-                shape.resize_rules, None,
-                "{:?} must have no resize rules in v1",
-                shape.name
-            );
-            let names: Vec<&String> = shape.anchor_set.iter().map(|(name, _)| name).collect();
-            // Alphabetical (deterministic) iteration order of the anchor set.
-            assert_eq!(
-                names,
-                vec!["e", "n", "s", "w"],
-                "{} has the four standard anchors",
-                shape.name
-            );
-        }
-    }
-
-    /// AC1: the box's exact anchor set — midpoints of its 9×5 sides.
-    #[test]
-    fn box_anchor_set_is_the_mid_side_points() {
-        let rect = builtin_catalog()
-            .into_iter()
-            .find(|s| s.name == "box")
-            .expect("box is built in");
-        assert_eq!(rect.size().width, 9);
-        assert_eq!(rect.size().height, 5);
-        assert_eq!(rect.anchor_set.get("n"), Some(CellPos::new(4, 0)));
-        assert_eq!(rect.anchor_set.get("s"), Some(CellPos::new(4, 4)));
-        assert_eq!(rect.anchor_set.get("w"), Some(CellPos::new(0, 2)));
-        assert_eq!(rect.anchor_set.get("e"), Some(CellPos::new(8, 2)));
-        // Anchor cells sit on the border and are never empty.
-        for (name, pos) in [
-            ("n", CellPos::new(4, 0)),
-            ("s", CellPos::new(4, 4)),
-            ("w", CellPos::new(0, 2)),
-            ("e", CellPos::new(8, 2)),
-        ] {
-            let cell = rect.glyph_pattern.get(pos).expect("anchor in bounds");
-            assert_ne!(cell, ' ', "anchor '{name}' sits on a drawn cell");
-        }
-    }
-
-    /// AC1: the ellipse's exact anchor set — mid-side points of its 9×5 oval.
-    #[test]
-    fn ellipse_anchor_set_is_the_mid_side_points() {
-        let catalog = builtin_catalog();
-        let ellipse = catalog
-            .into_iter()
-            .find(|s| s.name == "ellipse")
-            .expect("ellipse is built in");
-        assert_eq!(ellipse.size().width, 9);
-        assert_eq!(ellipse.size().height, 5);
-        assert_eq!(ellipse.anchor_set.get("n"), Some(CellPos::new(4, 0)));
-        assert_eq!(ellipse.anchor_set.get("s"), Some(CellPos::new(4, 4)));
-        assert_eq!(ellipse.anchor_set.get("w"), Some(CellPos::new(0, 2)));
-        assert_eq!(ellipse.anchor_set.get("e"), Some(CellPos::new(8, 2)));
-        // The middle row is the widest part of the oval; both side anchors sit on it.
-        assert_eq!(ellipse.glyph_pattern.row(2), Some("(       )".to_owned()));
-    }
-
-    /// Built-in glyphs use only printable ASCII (the svgbob-alphabet subset, ADR 001/005).
-    #[test]
-    fn built_in_glyphs_are_printable_ascii() {
-        for shape in builtin_catalog() {
-            let rows: Vec<String> = (0..shape.glyph_pattern.height())
-                .map(|y| shape.glyph_pattern.row(y).expect("row in bounds"))
+            let names: Vec<&str> = shape
+                .anchor_set
+                .iter()
+                .map(|(name, _)| name.as_str())
                 .collect();
-            for row in &rows {
-                assert!(row.chars().all(|c| matches!(c as u32, 0x20..=0x7e)));
+            assert_eq!(names, vec!["e", "n", "s", "w"], "{} anchors", shape.type_id);
+            assert!(
+                shape.resize_rules.is_none(),
+                "{} has no resize rules",
+                shape.type_id
+            );
+        }
+    }
+
+    /// FR18 — the UML shapes are verbatim glyph patterns, not procedural geometry.
+    #[test]
+    fn uml_shapes_are_verbatim_patterns() {
+        let catalog = builtin_catalog();
+        for name in &BUILTIN_NAMES[2..] {
+            let shape = catalog
+                .iter()
+                .find(|s| s.type_id == *name)
+                .expect("in catalog");
+            assert_eq!(shape.geometry, GeometryKind::Pattern, "{name} is a pattern");
+        }
+    }
+
+    /// The exact glyph art of every UML shape (the WYSIWYG contract — CR-015 finalized
+    /// the art in this story).
+    #[test]
+    fn uml_shapes_carry_their_exact_glyph_art() {
+        let catalog = builtin_catalog();
+        let art: &[(&str, &[&str])] = &[
+            (
+                "lollipop",
+                &[" _ ", "( )", "`-'", " | ", " | ", " | ", " | "],
+            ),
+            ("actor", &["   o   ", "  /|\\  ", "  / \\  ", "  / \\  "]),
+            (
+                "activation",
+                &[
+                    "+---+", "|   |", "|   |", "|   |", "|   |", "|   |", "+---+",
+                ],
+            ),
+            (
+                "component",
+                &[
+                    "+--+--------+",
+                    "|  |        |",
+                    "+--+        |",
+                    "   |        |",
+                    "   +--------+",
+                ],
+            ),
+            ("port", &["*****", "*****", "*****"]),
+            (
+                "deployment",
+                &[
+                    "  _________",
+                    " /       / ",
+                    "+-------+  ",
+                    "|       |  ",
+                    "+-------+  ",
+                ],
+            ),
+            (
+                "artifact",
+                &[
+                    "+-----   ",
+                    "|     /  ",
+                    "|       +",
+                    "|       |",
+                    "|       |",
+                    "+-------+",
+                ],
+            ),
+            (
+                "state",
+                &[
+                    " .-------. ",
+                    " |       | ",
+                    " |       | ",
+                    " |       | ",
+                    " `-------' ",
+                ],
+            ),
+            (
+                "decision",
+                &[
+                    "   / \\   ",
+                    "  /   \\  ",
+                    " /     \\ ",
+                    "/       \\",
+                    "\\       /",
+                    " \\     / ",
+                    "  \\   /  ",
+                    "   \\ /   ",
+                ],
+            ),
+            ("initial", &["*"]),
+            ("final", &[" _ ", "(*)", "`-'"]),
+        ];
+        for (name, rows) in art {
+            let shape = catalog
+                .iter()
+                .find(|s| s.type_id == *name)
+                .expect("in catalog");
+            assert_eq!(
+                shape.glyph_pattern.width() as usize,
+                rows[0].len(),
+                "{name} width"
+            );
+            assert_eq!(
+                shape.glyph_pattern.height() as usize,
+                rows.len(),
+                "{name} height"
+            );
+            for (y, row) in rows.iter().enumerate() {
+                for (x, expected) in row.chars().enumerate() {
+                    let actual = shape.glyph_pattern.get(CellPos::new(x as u32, y as u32));
+                    assert_eq!(actual, Some(expected), "{name} ({x},{y})");
+                }
             }
+        }
+    }
+
+    /// FR11 — the per-shape anchor positions are pinned; where a midpoint falls on drawn
+    /// art the cell is drawn. The deliberate exceptions (decision's implied top/bottom
+    /// points, actor's between-feet point) sit on space cells and bind live.
+    #[test]
+    fn uml_anchor_positions_are_pinned() {
+        let catalog = builtin_catalog();
+        // name -> (n, s, w, e)
+        let anchors: &[(&str, [(u32, u32); 4])] = &[
+            ("lollipop", [(1, 0), (1, 6), (0, 1), (2, 1)]),
+            ("actor", [(3, 0), (3, 3), (2, 1), (4, 1)]),
+            ("activation", [(2, 0), (2, 6), (0, 3), (4, 3)]),
+            ("component", [(7, 0), (7, 4), (0, 1), (12, 2)]),
+            ("port", [(2, 0), (2, 2), (0, 1), (4, 1)]),
+            ("deployment", [(6, 0), (4, 4), (0, 3), (8, 3)]),
+            ("artifact", [(3, 0), (4, 5), (0, 3), (8, 3)]),
+            ("state", [(5, 0), (5, 4), (1, 2), (9, 2)]),
+            ("decision", [(4, 0), (4, 7), (0, 3), (8, 3)]),
+            ("initial", [(0, 0); 4]),
+            ("final", [(1, 0), (1, 2), (0, 1), (2, 1)]),
+        ];
+        // Deliberate exceptions: anchors on space cells that bind live once a connector
+        // attaches (decision's implied top/bottom points, actor's between-feet point).
+        let gaps: &[(&str, &str)] = &[("decision", "n"), ("decision", "s"), ("actor", "s")];
+        for (name, positions) in anchors {
+            let shape = catalog
+                .iter()
+                .find(|s| s.type_id == *name)
+                .expect("in catalog");
+            for ((x, y), anchor_name) in positions.iter().zip(["n", "s", "w", "e"]) {
+                let pos = shape.anchor_set.get(anchor_name).expect("anchor exists");
+                assert_eq!((pos.x, pos.y), (*x, *y), "{name}.{anchor_name} position");
+                let cell = shape.glyph_pattern.get(CellPos::new(*x, *y));
+                if gaps.contains(&(*name, anchor_name)) {
+                    assert_eq!(cell, Some(' '), "{name}.{anchor_name} is a declared gap");
+                } else {
+                    assert!(
+                        !matches!(cell, None | Some(' ')),
+                        "{name}.{anchor_name} sits on drawn art"
+                    );
+                }
+            }
+        }
+    }
+
+    /// FR19 — the compartmented UML shapes (component, deployment node, artifact, state)
+    /// declare exactly one `name` region covering their interior; every other built-in
+    /// stays label-only.
+    #[test]
+    fn compartmented_builtins_declare_exactly_one_name_region() {
+        let catalog = builtin_catalog();
+        // name -> exact region rect (x, y, width, height)
+        type Rect = (u32, u32, u32, u32);
+        let expected: &[(&str, Rect)] = &[
+            ("component", (4, 1, 8, 3)),
+            ("deployment", (1, 3, 7, 1)),
+            ("artifact", (1, 1, 7, 4)),
+            ("state", (2, 1, 7, 3)),
+        ];
+        for (name, (x, y, w, h)) in expected {
+            let shape = catalog
+                .iter()
+                .find(|s| s.type_id == *name)
+                .expect("in catalog");
+            assert_eq!(shape.regions.len(), 1, "{name} has one region");
+            let region = shape.regions.get("name").expect("`name` region");
+            assert_eq!(
+                (region.x, region.y, region.width, region.height),
+                (*x, *y, *w, *h),
+                "{name} region rect"
+            );
+        }
+        for name in &BUILTIN_NAMES {
+            if expected.iter().any(|(n, _)| n == name) {
+                continue;
+            }
+            let shape = catalog
+                .iter()
+                .find(|s| s.type_id == *name)
+                .expect("in catalog");
+            assert!(shape.regions.is_empty(), "{name} is label-only");
         }
     }
 }

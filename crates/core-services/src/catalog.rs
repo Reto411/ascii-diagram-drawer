@@ -248,6 +248,87 @@ mod tests {
         );
     }
 
+    /// AC5 (S-036, CR-015) — every built-in of the UML set crosses the seam with
+    /// correct metadata: natural size, verbatim preview, declared anchors, and the
+    /// S-024 resizability rule (Rect/Ellipse geometry resizable to 1×1; no-rule
+    /// Pattern shapes fixed at their natural size).
+    #[test]
+    fn uml_set_crosses_the_seam_with_correct_metadata() {
+        use diagram_model::geometry::CellSize;
+
+        let registry = ShapeRegistry::builtin();
+        let catalog = RegistryCatalog::new(registry.clone());
+        let ids: Vec<&str> = registry.builtins().map(|s| s.type_id.as_str()).collect();
+        assert_eq!(ids.len(), 13);
+
+        // Deterministic order across the seam: exactly the built-ins, in catalog order.
+        let listed: Vec<String> = catalog.list().iter().map(|s| s.type_id.clone()).collect();
+        assert_eq!(
+            listed,
+            ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>()
+        );
+
+        for id in &ids {
+            let source = registry.lookup(id).expect("built-in");
+            let info = catalog.get(id).expect("listed through the seam");
+            assert_eq!(info.collection, None, "{id} is a built-in");
+            assert_eq!(
+                info.size,
+                CellSize::new(source.glyph_pattern.width(), source.glyph_pattern.height())
+                    .expect("non-zero"),
+                "{id} size"
+            );
+            let rows: Vec<String> = (0..source.glyph_pattern.height())
+                .filter_map(|y| source.glyph_pattern.row(y))
+                .collect();
+            assert_eq!(info.preview, rows, "{id} preview verbatim");
+
+            let anchors = catalog.anchors(id).expect("anchor read model");
+            let expected: Vec<(&str, (u32, u32))> = source
+                .anchor_set
+                .iter()
+                .map(|(n, p)| (n.as_str(), (p.x, p.y)))
+                .collect();
+            let got: Vec<(&str, (u32, u32))> = anchors
+                .iter()
+                .map(|a| (a.name.as_str(), (a.position.x, a.position.y)))
+                .collect();
+            assert_eq!(got, expected, "{id} anchors");
+
+            // Declared regions cross the seam as RegionInfo (FR19 read model).
+            let expected_regions: Vec<&str> = source
+                .regions
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect();
+            assert_eq!(
+                info.regions
+                    .iter()
+                    .map(|r| r.name.as_str())
+                    .collect::<Vec<_>>(),
+                expected_regions,
+                "{id} regions"
+            );
+
+            match source.geometry {
+                shape_registry::GeometryKind::Pattern => {
+                    // No-rule Pattern built-in: stamped at natural size, not resizable.
+                    assert!(!info.resizable, "{id}");
+                    assert_eq!(info.min_size, info.size, "{id} min = natural");
+                }
+                _ => {
+                    // Rect/Ellipse built-ins (box, ellipse): resizable down to 1×1.
+                    assert!(info.resizable, "{id}");
+                    assert_eq!(
+                        info.min_size,
+                        CellSize::new(1, 1).expect("non-zero"),
+                        "{id} min 1x1"
+                    );
+                }
+            }
+        }
+    }
+
     /// Unknown ids are `None`, not panics — the GUI filters on this.
     #[test]
     fn unknown_ids_are_none() {

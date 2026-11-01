@@ -1854,8 +1854,9 @@ fn template_editor_save_registers_a_placeable_template() {
     );
 
     // And it now shows up in the sidebar's template list: the collection group
-    // header plus the template's own name.
-    let out = gui.frame();
+    // header plus the template's own name. The group is below the fold with the
+    // full built-in catalog, so scroll to it first (egui culls off-clip labels).
+    let out = scroll_sidebar_until(&mut gui, "new");
     assert!(
         find_text(&out, "myshapes").is_some(),
         "sidebar has the collection group"
@@ -2018,7 +2019,9 @@ fn template_editor_art_box_and_resize_rules_save_a_resizable_template() {
 
     // AC6 end: the saved template is immediately placeable from the sidebar, and a
     // placed instance resizes by re-rasterization (AC5) — not a fixed-size stamp.
-    let out = gui.frame();
+    // The group is below the fold with the full built-in catalog: scroll to it
+    // first (egui culls off-clip labels).
+    let out = scroll_sidebar_until(&mut gui, "new");
     let label = find_text_exact(&out, "new").expect("sidebar lists the new template");
     let _ = gui.click_at(label.center());
     let min = gui.canvas_min();
@@ -2450,6 +2453,27 @@ fn scroll_at(pos: Pos2, delta: Vec2) -> Vec<Event> {
             modifiers: Modifiers::default(),
         },
     ]
+}
+
+/// Scrolls the template sidebar down until `label` is laid out *fully above the
+/// bottom status bar*, returning that frame. egui culls layout widgets outside
+/// the sidebar's clip rect, and with the full built-in catalog (CR-015) collection
+/// groups sit below the 768 px fold — a real user reaches them by scrolling, and so
+/// do these tests. A label merely peeking above the status bar is not clickable
+/// (the panel owns that strip), so the row must clear it with margin. Point-unit
+/// deltas below 8 px apply in full on their own frame (no smoothing tail), so the
+/// scroll is deterministic and leaves no pending wheel to re-pan the canvas later.
+fn scroll_sidebar_until(gui: &mut Gui, label: &str) -> egui::FullOutput {
+    let over_sidebar = Pos2::new(SIDEBAR / 2.0, 400.0);
+    let safe_bottom = WIN_H - 60.0;
+    let mut out = gui.frame();
+    for _ in 0..600 {
+        if find_text_exact(&out, label).is_some_and(|r| r.max.y <= safe_bottom) {
+            return out;
+        }
+        out = gui.pump(scroll_at(over_sidebar, Vec2::new(0.0, -4.0)));
+    }
+    panic!("sidebar never scrolled [{label}] into view within 600 wheel frames")
 }
 
 #[test]
@@ -3701,9 +3725,11 @@ fn double_click_shape_opens_region_editor_and_apply_writes_model() {
     let msg = gui.app.save_template().expect("tag saves with its region");
     assert!(msg.contains("tag"));
 
-    // Place it from the sidebar, then double-click its top-left cell.
+    // Place it from the sidebar, then double-click its top-left cell. The group is
+    // below the fold with the full built-in catalog: scroll to it first (egui
+    // culls off-clip labels).
     let min = gui.canvas_min();
-    let out = gui.frame();
+    let out = scroll_sidebar_until(&mut gui, "tag");
     let label = find_text_exact(&out, "tag").expect("sidebar lists the custom tag template");
     let _ = gui.click_at(label.center());
     let center = gui.cell_center(min, 3, 3);
@@ -3763,4 +3789,49 @@ fn double_click_shape_opens_region_editor_and_apply_writes_model() {
     );
     assert_eq!(shape.region_content("r1"), Some("hello"));
     assert!(gui.app.status.contains("Updated text regions"));
+}
+
+/// AC4 (S-036, CR-015) — a placed *built-in* compartmented shape opens S-037's
+/// region-content window with its `name` field on double-click (the S-037 test
+/// covers the custom-template path; this pins the built-in one).
+#[test]
+fn double_click_builtin_component_opens_name_region_editor() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+
+    // Place the built-in component from the sidebar (below the fold in the full
+    // catalog — scroll to it first, egui culls off-clip labels).
+    let out = scroll_sidebar_until(&mut gui, "component");
+    let label = find_text_exact(&out, "component").expect("sidebar lists the component template");
+    let _ = gui.click_at(label.center());
+    let center = gui.cell_center(min, 8, 3);
+    let _ = gui.click_at(center);
+    assert_eq!(
+        gui.object_count(),
+        1,
+        "clicking the canvas placed one component"
+    );
+
+    // egui chains clicks closer than 0.3 s into multi-clicks: settle past that window
+    // so the following pair reads as a fresh double-click (not a triple).
+    for _ in 0..25 {
+        gui.frame();
+    }
+
+    let _ = gui.double_click_at(center);
+    assert!(
+        gui.app.shape_text_edit.is_some(),
+        "double-click opened the region editor"
+    );
+    // The window block runs before the canvas in `show`, so it appears one frame
+    // after the double-click that opened it.
+    let out = gui.frame();
+    assert!(
+        find_text(&out, "Text regions").is_some(),
+        "the window title is drawn"
+    );
+    assert!(
+        find_text_exact(&out, "name:").is_some(),
+        "the built-in's `name` region field is present"
+    );
 }
