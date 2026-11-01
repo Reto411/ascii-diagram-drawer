@@ -16,7 +16,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 |----|-------|----------|--------|------|
 | CR-001 | Native file dialogs for Open, Save and Export | medium | accepted | [CR-001-native-file-dialogs.md](CR-001-native-file-dialogs.md) |
 | CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | high | implemented | [CR-015-uml-shape-set.md](CR-015-uml-shape-set.md) |
-| CR-018 | Resize symbol on the shape's resize hook | low | accepted | [CR-018-resize-handle-symbol.md](CR-018-resize-handle-symbol.md) |
+| CR-018 | Resize symbol on the shape's resize hook | low | implemented | [CR-018-resize-handle-symbol.md](CR-018-resize-handle-symbol.md) |
 
 ## Closed
 
