@@ -2,7 +2,7 @@
 title: CR-011 - collapsible groupings with subcategories
 description: UI groupings (menu bar dropdowns, template sidebar) become collapsible and support subcategory nesting — tidier selection as the number of actions and shape types grows
 scope: gui (menu / sidebar structure)
-status: accepted
+status: implemented
 priority: low
 updated: 2026-10-31
 ---
@@ -60,4 +60,4 @@ Note: CR-002 (pending) proposes its own FR6 rewording (menu bar); if both are ac
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+- **S-032** (commit `eff03c1`): sidebar groups render as `egui::CollapsingHeader`s (expanded by default on first use, toggle reported to the app) with subcategory nesting from the pure view model `sidebar::group_templates` — built-ins: box/ellipse → “Basic”, any other built-in → “Other”; collection templates → “Other”; a group with ≥ 2 subcategories renders each as a nested collapsing header, exactly one renders flat (no redundant level). Per-group/subcategory open-closed state persists in the CR-005 config store (`AppConfig.sidebar_expanded: BTreeMap<String, bool>`; missing key = expanded, so pre-feature files load fully expanded) — written on every toggle, seeded at startup. File ▾ nests `Output ▸` (Copy, Text .txt) and `Export ▸` (Export SVG…, Export PNG…) via in-menu `menu_button`s (egui renders those as hover-opened submenus with their own arrow glyph); Open/Save/Save As… stay top-level, item order within each group unchanged, every item reachable and functional (S-014/S-015 tier-0b flows now drive the submenus through the new `Gui::click_submenu_item` harness helper). 9 new sidebar tests + rewritten S-025 grouped-actions test; Material goldens regenerated (diff confined to the sidebar band). No model/format/pipeline/seam change (conflict check held).
