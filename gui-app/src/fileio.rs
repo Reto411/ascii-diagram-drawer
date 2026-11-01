@@ -194,12 +194,6 @@ pub fn text_output(services: &Services, diagram: &Diagram) -> Result<String, Str
     Ok(services.exporter.to_text(&grid))
 }
 
-/// The `.txt` sink path for a document file (AC3): same stem, `.txt` extension.
-#[must_use]
-pub fn text_output_path(document: &Path) -> PathBuf {
-    document.with_extension("txt")
-}
-
 /// Writes an auxiliary text output to `path` (the AC3 file sink). This is the single
 /// sanctioned direct-file-access helper in gui-app — `.ad` documents still go through
 /// the store seam exclusively (ADR 009 v4 notes). Native only: on web targets the
@@ -479,6 +473,8 @@ mod tests {
     }
 
     /// AC3 — saving `.txt` writes exactly the output bytes next to the document.
+    /// S-039 / CR-001 — the text output now flows through the `SaveAsText` prompt
+    /// (the dialog-less fallback twin of the Save As dialog's `.txt` option).
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn save_text_writes_the_exact_bytes_to_disk() {
@@ -489,25 +485,18 @@ mod tests {
         let mut app = app_with(document.to_str().expect("utf8"), one_box(), 0);
         let _ = app.open(&document);
 
-        let outcome = app.save_text();
-        assert!(outcome.is_ok(), "{outcome:?}");
+        app.begin_path_prompt(crate::app::PathPrompt::SaveAsText);
         let txt_path = dir.path().join("diagram.txt");
+        assert_eq!(
+            app.path_prompt_value().as_deref(),
+            Some(txt_path.to_str().expect("utf8")),
+            "prefilled with the sibling .txt"
+        );
+        app.submit_path_prompt(txt_path.to_str().expect("utf8"));
+
         assert_eq!(
             std::fs::read_to_string(&txt_path).expect("txt written"),
             app.text_output().expect("text")
-        );
-    }
-
-    /// AC3 — the `.txt` sink path derives from the document path.
-    #[test]
-    fn text_output_path_derives_the_txt_sibling() {
-        assert_eq!(
-            text_output_path(Path::new("dir/diagram.ad")),
-            PathBuf::from("dir/diagram.txt")
-        );
-        assert_eq!(
-            text_output_path(Path::new("diagram")),
-            PathBuf::from("diagram.txt")
         );
     }
 

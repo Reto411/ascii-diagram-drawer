@@ -232,11 +232,6 @@ impl TemplateDraft {
         Some(name)
     }
 
-    /// Removes the region covering `(x, y)` (AC4 — clicking an existing region removes it).
-    pub fn remove_region_at(&mut self, x: u32, y: u32) {
-        self.regions.retain(|r| !r.contains(x, y));
-    }
-
     /// The next auto-name for a region: `r1`, `r2`, … (skipping in-use names).
     fn next_region_name(regions: &[RegionInfo]) -> String {
         let mut n = 1u32;

@@ -2,9 +2,9 @@
 title: CR-001 - native file dialogs for open, save and export
 description: Open/Save/Save As use a system file dialog (Save As can write the .ad document or the rendered .txt); Export becomes one system dialog with SVG/PNG format choice
 scope: gui (file I/O + export UX)
-status: accepted
+status: implemented
 priority: medium
-updated: 2026-10-31
+updated: 2026-11-01
 ---
 
 # CR-001: Native file dialogs for Open, Save and Export
@@ -57,6 +57,6 @@ User feedback while using the GUI: the inline path prompt (typed file path + OK)
 
 ## Implementation
 
-> Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
+- **S-039** — <commit> (rfd 0.17 + xdg-portal behind the new `FileDialogBackend` seam in `gui-app dialogs.rs`; flat File menu; in-app format-choice fallback; Save As `.txt` via `write_text_to`).
 
 -

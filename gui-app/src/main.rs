@@ -14,6 +14,7 @@ mod app;
 mod appbar;
 mod canvas;
 mod config;
+mod dialogs;
 mod editor;
 mod exportio;
 mod fileio;

@@ -20,6 +20,7 @@ use ui_api::ShapeInfo;
 
 use crate::canvas::{HitTarget, Viewport, hit_target};
 use crate::config::{AppConfig, Theme};
+use crate::dialogs::{self, DialogKind, DialogResult, ExportFormat, FileDialogBackend, SaveAsKind};
 use crate::editor::{EditOutcome, EditorState, Placing, PointerEvent};
 use crate::exportio::{self, PngExport};
 use crate::template_editor::TemplateEditorSession;
@@ -121,18 +122,33 @@ impl Default for PreviewPane {
 
 /// The eframe app state. Everything user-visible is derived from `diagram` (the model)
 /// plus transient view state in `editor` — ADR 009.
-/// An inline path prompt (v1 has no native file dialog — works identically on
-/// native and wasm; a future story may swap in `rfd` for native targets).
+/// An inline path prompt — the fallback for every file action where no system
+/// dialog is available (wasm target, or a native host without a D-Bus session —
+/// S-039 / CR-001 AC5; on desktops the system dialog does this job instead).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PathPrompt {
     /// Collecting a path to open.
     Open,
     /// Collecting a path to save the current document as (sets the current file).
     SaveAs,
+    /// Collecting a path for the rendered text output (S-039 / CR-001 AC3 — the
+    /// fallback twin of the Save As dialog's `.txt` filter).
+    SaveAsText,
     /// Collecting a path for the SVG export (S-015 FR5).
     ExportSvg,
     /// Collecting a path for the PNG export (S-015 FR5/RS4).
     ExportPng,
+}
+
+/// AC5 (S-039 / CR-001) — the in-app format choice shown where no system dialog is
+/// available: what to save (Save As) or which export format (Export). Picking an
+/// option opens the matching inline path prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FormatChoice {
+    /// Save As… without a dialog: choose `.ad` document vs `.txt` text output.
+    SaveAs,
+    /// Export… without a dialog: choose SVG vs PNG.
+    Export,
 }
 
 /// The inline path prompt's state (v1: no native file dialog).
@@ -219,6 +235,13 @@ pub struct DrawingApp {
     /// The template sidebar's shape filter query (CR-012): transient by design —
     /// deliberately *not* part of the persisted options; a restart starts empty.
     filter_query: String,
+    /// S-039 / CR-001 — the system-file-dialog backend. Native default = rfd on the
+    /// XDG document portal (ADR 018); `None` on wasm, where no dialog exists and
+    /// every file action uses the inline prompt flow.
+    dialog_backend: Option<Box<dyn FileDialogBackend>>,
+    /// AC5 (S-039) — the in-app format choice is showing (`Save As…` / `Export…`
+    /// on a host without system dialogs); `None` when closed.
+    format_choice: Option<FormatChoice>,
 }
 
 /// Builds the app from services, the loaded user options (FR13 / CR-005), an
@@ -293,7 +316,22 @@ impl DrawingApp {
             preview: PreviewPane::default(),
             color_dialog: None,
             filter_query: String::new(),
+            dialog_backend: default_dialog_backend(),
+            format_choice: None,
         }
+    }
+}
+
+/// The platform's default dialog backend (S-039 / ADR 018): rfd on the XDG document
+/// portal for native targets; none on wasm, where file actions use the inline prompt.
+fn default_dialog_backend() -> Option<Box<dyn FileDialogBackend>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Some(Box::new(dialogs::RfdBackend))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        None
     }
 }
 
@@ -500,31 +538,14 @@ impl DrawingApp {
         crate::fileio::text_output(&self.services, &self.diagram)
     }
 
-    /// AC3 — write the text output next to the document (`<name>.txt`).
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn save_text(&mut self) -> Result<PathBuf, String> {
-        let Some(path) = self.current_file.clone() else {
-            return Err("no document open — nothing to export".to_owned());
-        };
-        let text = self.text_output()?;
-        let txt_path = crate::fileio::text_output_path(&path);
-        crate::fileio::write_text_file(&txt_path, &text)?;
-        self.status = format!("Text output saved: {}", txt_path.display());
-        Ok(txt_path)
-    }
-
-    /// AC3 — web target: no filesystem; the browser download lands in S-019.
-    #[cfg(target_arch = "wasm32")]
-    pub fn save_text(&mut self) -> Result<PathBuf, String> {
-        Err("text download arrives with the wasm milestone (S-019)".to_owned())
-    }
-
     /// Starts an inline Open/Save-As path prompt (v1: no native file dialog).
     pub fn begin_path_prompt(&mut self, kind: PathPrompt) {
         let path = match kind {
             // Exports default to the document's sibling path (S-015); open/save start empty.
             PathPrompt::ExportSvg => self.default_export_path("svg"),
             PathPrompt::ExportPng => self.default_export_path("png"),
+            // S-039 / CR-001 AC3 — the text-output twin of the Save As dialog's `.txt`.
+            PathPrompt::SaveAsText => self.default_export_path("txt"),
             PathPrompt::Open | PathPrompt::SaveAs => String::new(),
         };
         self.path_prompt = Some(PathPromptState { kind, path });
@@ -552,6 +573,21 @@ impl DrawingApp {
         self.template_editor.as_ref().map(|s| s.draft.name.clone())
     }
 
+    /// Test seam (S-039 AC1–AC4): swap the dialog backend for a fake so GUI tests
+    /// can drive full dialog flows headlessly.
+    #[cfg(test)]
+    pub fn with_dialog_backend(mut self, backend: Box<dyn FileDialogBackend>) -> Self {
+        self.dialog_backend = Some(backend);
+        self
+    }
+
+    /// The in-app format choice currently showing (S-039 AC5; test support).
+    #[cfg(test)]
+    #[must_use]
+    pub fn format_choice(&self) -> Option<FormatChoice> {
+        self.format_choice
+    }
+
     /// True while a text object is being edited inline (S-018; test support).
     #[cfg(test)]
     pub fn is_editing(&self) -> bool {
@@ -563,6 +599,112 @@ impl DrawingApp {
     #[must_use]
     pub fn selection(&self) -> &std::collections::BTreeSet<diagram_model::objects::ObjectId> {
         &self.editor.selection
+    }
+
+    // ── System file dialogs (S-039 / CR-001) — backend seam in [`crate::dialogs`] ──
+
+    /// Asks the dialog backend for a path; a missing backend (wasm) is `Unavailable`.
+    fn ask_dialog(&self, kind: DialogKind, default_file: Option<&Path>) -> DialogResult {
+        match &self.dialog_backend {
+            Some(backend) => backend.show(kind, default_file),
+            None => DialogResult::Unavailable("web target — no system dialogs".to_owned()),
+        }
+    }
+
+    /// AC1 — File ▾ `Open…`: system dialog → the existing open flow (success replaces
+    /// the model and remembers the file; parse/IO errors keep it — S-014 RS2/RS5);
+    /// no dialog available → the inline prompt.
+    pub fn begin_open(&mut self) {
+        match self.ask_dialog(DialogKind::Open, None) {
+            DialogResult::Chosen(path) => {
+                let _ = self.open(&path);
+            }
+            DialogResult::Cancelled => self.status = "Open cancelled".to_owned(),
+            DialogResult::Unavailable(_) => self.begin_path_prompt(PathPrompt::Open),
+        }
+    }
+
+    /// AC2 — File ▾ `Save` / Ctrl+S: system save dialog prefilled with the current file
+    /// → the existing save flow (a lossy load still confirms first); no dialog
+    /// available → today's direct write.
+    pub fn begin_save(&mut self) {
+        let default = self.current_file.clone();
+        match self.ask_dialog(DialogKind::Save, default.as_deref()) {
+            DialogResult::Chosen(path) => {
+                let _ = self.save_as(&path);
+            }
+            DialogResult::Cancelled => {
+                self.status = "Save cancelled — document unchanged".to_owned()
+            }
+            DialogResult::Unavailable(_) => {
+                let _ = self.save_requested();
+            }
+        }
+    }
+
+    /// AC3 — File ▾ `Save As…`: one dialog whose file-type filter selects the diagram
+    /// document (`.ad`) or the rendered text output (`.txt`); no dialog available →
+    /// the in-app format choice followed by the inline prompt.
+    pub fn begin_save_as(&mut self) {
+        match self.ask_dialog(DialogKind::SaveAs, None) {
+            DialogResult::Chosen(path) => {
+                let (kind, path) = dialogs::save_as_kind_for(&path);
+                match kind {
+                    SaveAsKind::Document => {
+                        let _ = self.save_as(&path);
+                    }
+                    SaveAsKind::Text => {
+                        if let Err(e) = self.write_text_to(&path) {
+                            self.status = e;
+                        }
+                    }
+                }
+            }
+            DialogResult::Cancelled => self.status = "Save As cancelled".to_owned(),
+            DialogResult::Unavailable(_) => self.format_choice = Some(FormatChoice::SaveAs),
+        }
+    }
+
+    /// AC4 — File ▾ `Export…`: one dialog whose file-type filter selects SVG or PNG;
+    /// no dialog available → the in-app format choice followed by the inline prompt.
+    pub fn begin_export(&mut self) {
+        match self.ask_dialog(DialogKind::Export, None) {
+            DialogResult::Chosen(path) => {
+                let (format, path) = dialogs::export_format_for(&path);
+                match format {
+                    ExportFormat::Svg => {
+                        if let Err(e) = self.export_svg_to(&path) {
+                            self.status = format!("SVG export failed: {e}");
+                        }
+                    }
+                    ExportFormat::Png => {
+                        if let Err(e) = self.begin_png_export(&path) {
+                            self.status = format!("PNG export failed: {e}");
+                        }
+                    }
+                }
+            }
+            DialogResult::Cancelled => self.status = "Export cancelled".to_owned(),
+            DialogResult::Unavailable(_) => self.format_choice = Some(FormatChoice::Export),
+        }
+    }
+
+    /// AC3 (S-039) — writes the exact canvas bytes (WYSIWYG, S-014 RS5) to `path` as a
+    /// `.txt` file without touching the current document. Native only: on wasm there
+    /// is no filesystem until the download path lands with S-019.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn write_text_to(&mut self, path: &Path) -> Result<(), String> {
+        let text = self.text_output()?;
+        crate::fileio::write_text_file(path, &text)?;
+        self.status = format!("Text output saved: {}", path.display());
+        Ok(())
+    }
+
+    /// AC3 (S-039) — web target: no filesystem yet (S-019).
+    #[cfg(target_arch = "wasm32")]
+    pub fn write_text_to(&mut self, path: &Path) -> Result<(), String> {
+        let _ = path;
+        Err("text download arrives with the wasm milestone (S-019)".to_owned())
     }
 
     /// Submits the inline path prompt: opens or saves-as depending on its kind.
@@ -588,6 +730,12 @@ impl DrawingApp {
             PathPrompt::ExportPng => {
                 if let Err(e) = self.begin_png_export(path) {
                     self.status = format!("PNG export failed: {e}");
+                }
+            }
+            // S-039 / CR-001 AC3 — fallback twin of the Save As dialog's `.txt`.
+            PathPrompt::SaveAsText => {
+                if let Err(e) = self.write_text_to(path) {
+                    self.status = e;
                 }
             }
         }
@@ -2031,66 +2179,53 @@ impl DrawingApp {
             && self.editor.editing.is_none();
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.horizontal(|ui| {
-                // FR6 (CR-002) — the flat button row is now a menu bar: every
-                // one-shot file action lives inside File ▾, grouped with separators
-                // (file ops | clipboard/output | export). The structure is
-                // extensible — a new feature area is one more menu_button call.
-                // Ctrl+S stays global: the menu closure only runs while the menu
-                // is open, so the shortcut must fire outside it.
+                // FR6 (CR-002) — the flat button row is a menu bar: every one-shot
+                // file action lives inside File ▾, grouped with separators (file ops |
+                // clipboard | export). S-039 / CR-001 — Open/Save/Save As/Export ask
+                // the system dialog first and fall back to the inline prompt where no
+                // dialog exists (wasm, headless native); the format choice (.ad/.txt,
+                // SVG/PNG) is part of the Save As / Export dialogs themselves.
+                // Ctrl+S stays global: the menu closure only runs while the menu is
+                // open, so the shortcut must fire outside it.
                 if ctrl_s {
-                    let _ = self.save_requested();
+                    self.begin_save();
                 }
                 ui.menu_button(RichText::new("File ▾"), |ui| {
+                    // AC1 (S-039) — system dialog; inline prompt where unavailable.
                     if ui.button("Open…").clicked() {
-                        self.begin_path_prompt(PathPrompt::Open);
+                        self.begin_open();
                     }
+                    // AC2 (S-039) — system save dialog prefilled with the current file.
                     if ui.button("Save").clicked() {
-                        let _ = self.save_requested();
+                        self.begin_save();
                     }
+                    // AC3 (S-039) — one dialog; the `.ad`/`.txt` choice is a filter.
                     if ui.button("Save As…").clicked() {
-                        self.begin_path_prompt(PathPrompt::SaveAs);
+                        self.begin_save_as();
                     }
                     ui.separator();
-                    // CR-011 AC4 — output actions nest one level down. Inside a
-                    // menu, `menu_button` renders as a hover-opened submenu with its
-                    // own arrow glyph, so the labels stay plain.
-                    ui.menu_button("Output", |ui| {
-                        // AC3 (S-014) — copy the exact canvas bytes to the clipboard.
-                        if ui.button("Copy").clicked() {
-                            match self.text_output() {
-                                Ok(text) => {
-                                    let chars = text.chars().count();
-                                    ui.ctx().copy_text(text);
-                                    self.status =
-                                        format!("Copied {chars} character(s) to clipboard");
-                                }
-                                Err(e) => self.status = e,
+                    // AC3 (S-014) — copy the exact canvas bytes to the clipboard.
+                    if ui.button("Copy").clicked() {
+                        match self.text_output() {
+                            Ok(text) => {
+                                let chars = text.chars().count();
+                                ui.ctx().copy_text(text);
+                                self.status = format!("Copied {chars} character(s) to clipboard");
                             }
+                            Err(e) => self.status = e,
                         }
-                        if ui.button("Text .txt").clicked() {
-                            match self.save_text() {
-                                Ok(_) => {}
-                                Err(e) => self.status = e,
-                            }
-                        }
-                    });
+                    }
                     ui.separator();
-                    // CR-011 AC4 — export actions nest one level down.
-                    ui.menu_button("Export", |ui| {
-                        // AC1 (S-015) — SVG export: the exact exporter bytes to file.
-                        if ui.button("Export SVG…").clicked() {
-                            self.begin_path_prompt(PathPrompt::ExportSvg);
-                        }
-                        // AC2/RS4 (S-015) — PNG export starts non-blocking (ADR 012);
-                        // the status bar shows "exporting" until the job completes.
-                        let exporting = self.png_export.is_some();
-                        if ui
-                            .add_enabled(!exporting, egui::Button::new("Export PNG…"))
-                            .clicked()
-                        {
-                            self.begin_path_prompt(PathPrompt::ExportPng);
-                        }
-                    });
+                    // AC4 (S-039) — one export action; the SVG/PNG choice is a filter.
+                    // The PNG path stays non-blocking (ADR 012); while a job runs the
+                    // item is disabled, as before.
+                    let exporting = self.png_export.is_some();
+                    if ui
+                        .add_enabled(!exporting, egui::Button::new("Export…"))
+                        .clicked()
+                    {
+                        self.begin_export();
+                    }
                 });
                 // FR15 (CR-009) AC5 — View menu: canvas/diagram presentation; its
                 // first item opens the color dialog. A new feature area is one more
@@ -2140,6 +2275,7 @@ impl DrawingApp {
                         let label = match prompt.kind {
                             PathPrompt::Open => "Open file:",
                             PathPrompt::SaveAs => "Save as:",
+                            PathPrompt::SaveAsText => "Save text output as:",
                             PathPrompt::ExportSvg => "Export SVG as:",
                             PathPrompt::ExportPng => "Export PNG as:",
                         };
@@ -2208,6 +2344,86 @@ impl DrawingApp {
                         }
                     });
                 });
+        }
+
+        // AC5 (S-039 / CR-001) — the in-app format choice, shown where no system
+        // dialog is available (wasm target or a native host without a D-Bus session):
+        // Save As… picks `.ad` vs `.txt`, Export… picks SVG vs PNG; either way the
+        // matching inline path prompt follows. Clicks are collected locally and run
+        // after `show` (immediate mode: no borrow may cross it).
+        if self.format_choice.is_some() {
+            let choice = self.format_choice.expect("checked above");
+            let mut save_as_doc = false;
+            let mut save_as_text = false;
+            let mut export_svg = false;
+            let mut export_png = false;
+            let mut cancelled = false;
+            egui::Window::new(if choice == FormatChoice::SaveAs {
+                "Save as"
+            } else {
+                "Export"
+            })
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                ui.label(if choice == FormatChoice::SaveAs {
+                    RichText::new("What do you want to save?").strong()
+                } else {
+                    RichText::new("Which format?").strong()
+                });
+                if choice == FormatChoice::SaveAs {
+                    if ui.button("Diagram document (.ad)").clicked() {
+                        save_as_doc = true;
+                    }
+                    if ui.button("Text output (.txt)").clicked() {
+                        save_as_text = true;
+                    }
+                } else {
+                    if ui.button("SVG image (.svg)").clicked() {
+                        export_svg = true;
+                    }
+                    let exporting = self.png_export.is_some();
+                    if ui
+                        .add_enabled(!exporting, egui::Button::new("PNG image (.png)"))
+                        .clicked()
+                    {
+                        export_png = true;
+                    }
+                }
+                if ui.button("Cancel").clicked() {
+                    cancelled = true;
+                }
+            });
+            match (save_as_doc, save_as_text, export_svg, export_png, cancelled) {
+                (true, ..) => {
+                    self.format_choice = None;
+                    self.begin_path_prompt(PathPrompt::SaveAs);
+                }
+                (false, true, ..) => {
+                    self.format_choice = None;
+                    self.begin_path_prompt(PathPrompt::SaveAsText);
+                }
+                (false, false, true, ..) => {
+                    self.format_choice = None;
+                    self.begin_path_prompt(PathPrompt::ExportSvg);
+                }
+                (false, false, false, true, ..) => {
+                    self.format_choice = None;
+                    self.begin_path_prompt(PathPrompt::ExportPng);
+                }
+                (false, false, false, false, true) => {
+                    self.format_choice = None;
+                    self.status = format!(
+                        "{} cancelled",
+                        if choice == FormatChoice::SaveAs {
+                            "Save As"
+                        } else {
+                            "Export"
+                        }
+                    );
+                }
+                _ => {}
+            }
         }
 
         // FR15 (CR-009) AC5/AC6 — the “Diagram colors” dialog: one row per role with

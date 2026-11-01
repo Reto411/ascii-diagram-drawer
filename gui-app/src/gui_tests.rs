@@ -17,6 +17,7 @@
 
 use crate::app::{DrawingApp, PathPrompt};
 use crate::config::Theme;
+use crate::dialogs::{DialogKind, DialogResult, FileDialogBackend};
 use crate::template_editor::TemplateEditorSession;
 use core_services::Services;
 use diagram_model::objects::{ConnectorInstance, Object, TipStyle};
@@ -42,15 +43,56 @@ const RESIZE: Color32 = Color32::from_rgb(76, 175, 80);
 
 // ─────────────────────────── test harness ───────────────────────────
 
+/// S-039 — fake dialog backend for the tier-0b tests: every `show` returns the
+/// next queued result (default `Unavailable` = today's headless behavior, so all
+/// pre-S-039 tests keep their inline-prompt flows) and records the request, so
+/// tests can assert which kind was asked for and with which prefilled file.
+#[derive(Debug, Default)]
+struct FakeDialogs {
+    /// Results returned by successive `show` calls; once empty it stays Unavailable.
+    results: std::sync::Mutex<std::collections::VecDeque<DialogResult>>,
+    /// Every request that arrived: `(kind, prefilled file)` in call order.
+    calls: std::sync::Mutex<Vec<(DialogKind, Option<PathBuf>)>>,
+}
+
+impl FileDialogBackend for FakeDialogs {
+    fn show(&self, kind: DialogKind, default_file: Option<&std::path::Path>) -> DialogResult {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((kind, default_file.map(PathBuf::from)));
+        self.results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(DialogResult::Unavailable("fake backend".to_owned()))
+    }
+}
+
+/// Shares a [`FakeDialogs`] with the app under test.
+struct SharedFake(std::sync::Arc<FakeDialogs>);
+
+impl FileDialogBackend for SharedFake {
+    fn show(&self, kind: DialogKind, default_file: Option<&std::path::Path>) -> DialogResult {
+        self.0.show(kind, default_file)
+    }
+}
+
 /// One headless egui context driving a [`DrawingApp`], frame by frame.
 struct Gui {
     ctx: egui::Context,
     app: DrawingApp,
     ts: f64,
+    /// S-039 — the fake dialog backend installed on `app` (deterministic dialogs).
+    dialogs: std::sync::Arc<FakeDialogs>,
 }
 
 impl Gui {
     fn new(app: DrawingApp) -> Self {
+        // Install the fake dialog backend: tier-0b must never open a real system
+        // dialog (it would block on a desktop and is meaningless headless).
+        let dialogs = std::sync::Arc::new(FakeDialogs::default());
+        let app = app.with_dialog_backend(Box::new(SharedFake(std::sync::Arc::clone(&dialogs))));
         let ctx = egui::Context::default();
         // Keep the built-in fonts: eframe (without `system_fonts`) lays out with exactly
         // these defaults — Hack monospace + Ubuntu proportional — so every metric the
@@ -63,7 +105,22 @@ impl Gui {
         // over the next two frames; every geometry probe in this harness assumes the
         // layout is stable from frame one.
         crate::theme::install(&ctx, app.config().theme);
-        Self { ctx, app, ts: 1.0 }
+        Self {
+            ctx,
+            app,
+            ts: 1.0,
+            dialogs,
+        }
+    }
+
+    /// S-039 — queue the result the next dialog request will return.
+    fn queue_dialog(&self, result: DialogResult) {
+        self.dialogs.results.lock().unwrap().push_back(result);
+    }
+
+    /// S-039 — every dialog request so far: `(kind, prefilled file)` in call order.
+    fn dialog_calls(&self) -> Vec<(DialogKind, Option<PathBuf>)> {
+        self.dialogs.calls.lock().unwrap().clone()
     }
 
     /// Pump one frame with the given events and return what was drawn.
@@ -371,13 +428,30 @@ impl Gui {
         self.click_at(rect.center())
     }
 
-    /// Open a path prompt (Save As / Open / Export …) via the File menu and return
-    /// its kind after it appears. CR-011 AC4 moved the export actions one level
-    /// down, so they are reached through the Export submenu.
+    /// Open a path prompt via the File menu and return its kind after it appears.
+    /// S-039 / CR-001 — with no dialog available (the fake's default), `Save As…`
+    /// and `Export…` open the in-app format choice first; this helper clicks the
+    /// matching option so callers keep their old one-call flow. Logical names:
+    /// `Open…`, `Save As…`, `Export SVG…`, `Export PNG…`.
     fn open_prompt(&mut self, item: &str) -> PathPrompt {
-        let _ = match item {
-            "Export SVG…" | "Export PNG…" => self.click_submenu_item("File ▾", "Export", item),
-            _ => self.click_menu_item("File ▾", item),
+        match item {
+            "Open…" => {
+                let _ = self.click_menu_item("File ▾", "Open…");
+            }
+            "Save As…" => {
+                let _ = self.click_menu_item("File ▾", "Save As…");
+                self.click_window_button("Diagram document (.ad)");
+            }
+            "Export SVG…" | "Export PNG…" => {
+                let label = if item == "Export SVG…" {
+                    "SVG image (.svg)"
+                } else {
+                    "PNG image (.png)"
+                };
+                let _ = self.click_menu_item("File ▾", "Export…");
+                self.click_window_button(label);
+            }
+            other => panic!("open_prompt: unknown item {other:?}"),
         };
         let prompt = self.app.path_prompt();
         assert!(
@@ -385,6 +459,14 @@ impl Gui {
             "clicking File ▾ → {item:?} opens a path prompt"
         );
         prompt.expect("checked above")
+    }
+
+    /// Click a button in a top-level dialog window (e.g. the S-039 format choice).
+    fn click_window_button(&mut self, label: &str) -> egui::FullOutput {
+        let out = self.frame();
+        let rect = find_text_exact(&out, label)
+            .unwrap_or_else(|| panic!("window does not show {label:?}; texts: {:?}", texts(&out)));
+        self.click_at(rect.center())
     }
 
     /// Click the OK button of the currently open path prompt.
@@ -1711,18 +1793,14 @@ fn copy_button_puts_the_exact_canvas_bytes_on_the_clipboard() {
 
     // The CopyText command is drained into the *release* frame's FullOutput (egui
     // takes it out of the context at end of pass), so capture that frame directly
-    // instead of going through `click_at`'s settle frame. Copy lives in the File ▾
-    // → Output submenu (S-025, CR-011 AC4): open the menu, hover Output, then
+    // instead of going through `click_at`'s settle frame. Copy is a top-level File ▾
+    // item (S-039 flattened the one-item Output submenu): open the menu, then
     // press/release on the item.
     let out = gui.frame();
     let file = find_text_exact(&out, "File ▾").expect("top bar has File ▾");
     let _ = gui.click_at(file.center());
     let out = gui.frame();
-    let output_rect =
-        find_text_exact(&out, "Output").expect("the File menu shows the Output submenu");
-    let _ = gui.pump(vec![Event::PointerMoved(output_rect.center())]);
-    let out = gui.frame();
-    let rect = find_text_exact(&out, "Copy").expect("the Output submenu shows Copy");
+    let rect = find_text_exact(&out, "Copy").expect("the File menu shows Copy");
     let _ = gui.pump(Gui::press_at(rect.center()));
     let out = gui.pump(Gui::release_at(rect.center()));
     let copied = out.platform_output.commands.iter().find_map(|c| match c {
@@ -2669,14 +2747,7 @@ fn toolbar_is_a_menu_bar_without_flat_action_buttons() {
         );
     }
     // The one-shot actions live inside the dropdowns, not on the bar itself.
-    for label in [
-        "Open…",
-        "Save As…",
-        "Copy",
-        "Text .txt",
-        "Export SVG…",
-        "Export PNG…",
-    ] {
+    for label in ["Open…", "Save As…", "Copy", "Export…"] {
         assert!(
             find_text_exact(&out, label).is_none(),
             "{label:?} is a menu item, not a flat button"
@@ -2684,74 +2755,53 @@ fn toolbar_is_a_menu_bar_without_flat_action_buttons() {
     }
 }
 
-/// AC1/AC3 + CR-011 AC4 — opening File ▾ lists the file actions top-level in
-/// group order, with Output and Export nested one level down; hovering a submenu
-/// label reveals its items in their original order, and the moved items are no
-/// longer top-level.
+/// AC1/AC3 (S-039 / CR-001) — opening File ▾ lists the file actions top-level in
+/// group order: file ops | clipboard | one Export… entry. The old Output and
+/// Export submenus are gone (their only surviving members were flattened), and
+/// `Text .txt` no longer exists as an item (its function is inside Save As…).
 #[test]
-fn file_menu_lists_the_grouped_actions_with_submenus() {
+fn file_menu_lists_the_grouped_actions_flat() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let _ = gui.click_topbar_button("File ▾");
     let out = gui.frame();
 
-    // Top level: file ops, then the two submenu entries — nothing else.
+    // Top level: file ops, clipboard, export — in group order.
     let mut last_y = f32::MIN;
-    for label in ["Open…", "Save", "Save As…", "Output", "Export"] {
+    for label in ["Open…", "Save", "Save As…", "Copy", "Export…"] {
         let rect = find_text_exact(&out, label)
             .unwrap_or_else(|| panic!("the File menu shows {label:?}; texts: {:?}", texts(&out)));
         assert!(rect.min.y >= last_y, "{label:?} keeps group order");
         last_y = rect.min.y;
     }
-    for label in ["Copy", "Text .txt", "Export SVG…", "Export PNG…"] {
+    // The submenu entries and the removed/absorbed items are gone.
+    for label in [
+        "Output",
+        "Export",
+        "Text .txt",
+        "Export SVG…",
+        "Export PNG…",
+    ] {
         assert!(
             find_text_exact(&out, label).is_none(),
-            "{label:?} moved into a submenu and is no longer top-level"
+            "{label:?} is no longer a File menu entry"
         );
-    }
-
-    // Hovering Output reveals its items in the original order.
-    let output_rect = find_text_exact(&out, "Output").expect("the File menu shows Output");
-    let _ = gui.pump(vec![Event::PointerMoved(output_rect.center())]);
-    let out = gui.frame();
-    last_y = f32::MIN;
-    for label in ["Copy", "Text .txt"] {
-        let rect = find_text_exact(&out, label).unwrap_or_else(|| {
-            panic!(
-                "the Output submenu shows {label:?}; texts: {:?}",
-                texts(&out)
-            )
-        });
-        assert!(rect.min.y >= last_y, "{label:?} keeps group order");
-        last_y = rect.min.y;
-    }
-
-    // Hovering Export (Output closes) reveals both export items in order.
-    let file_menu_out = gui.frame();
-    let export_rect =
-        find_text_exact(&file_menu_out, "Export").expect("the File menu still shows Export");
-    let _ = gui.pump(vec![Event::PointerMoved(export_rect.center())]);
-    let out = gui.frame();
-    last_y = f32::MIN;
-    for label in ["Export SVG…", "Export PNG…"] {
-        let rect = find_text_exact(&out, label).unwrap_or_else(|| {
-            panic!(
-                "the Export submenu shows {label:?}; texts: {:?}",
-                texts(&out)
-            )
-        });
-        assert!(rect.min.y >= last_y, "{label:?} keeps group order");
-        last_y = rect.min.y;
     }
 }
 
 /// AC2/AC3 — selecting a File item performs the action and closes the menu.
+/// S-039 / CR-001 AC5 — with no dialog available, `Save As…` opens the in-app
+/// format choice; picking the document option then opens the save-as prompt.
 #[test]
 fn file_menu_item_performs_and_closes_the_menu() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let out = gui.click_menu_item("File ▾", "Save As…");
+    // No system dialog in the test harness → the format choice window is open.
+    assert!(find_text_exact(&out, "What do you want to save?").is_some());
+    assert_eq!(gui.app.path_prompt(), None);
+    let out = gui.click_window_button("Diagram document (.ad)");
     assert_eq!(gui.app.path_prompt(), Some(PathPrompt::SaveAs));
     // The menu closed: its items are gone from the frame (the prompt is open instead).
-    for label in ["Open…", "Copy", "Export PNG…"] {
+    for label in ["Open…", "Copy", "Export…"] {
         assert!(find_text_exact(&out, label).is_none(), "{label:?} is gone");
     }
 }
@@ -2772,7 +2822,7 @@ fn escape_closes_the_file_menu_without_performing() {
     assert!(find_text_exact(&out, "Open…").is_none(), "the menu closed");
 }
 
-/// AC2 — while a PNG export is in flight, the Export PNG… item is disabled
+/// AC2 — while a PNG export is in flight, the Export… item is disabled
 /// (clicking it does nothing); once the job completes the item is offered again.
 /// The in-flight state is driven deterministically through the S-015 test seam:
 /// a held reply channel keeps the job Pending until the test releases it.
@@ -2789,15 +2839,11 @@ fn export_png_item_is_disabled_while_an_export_runs() {
         tmp.path().join("held.png"),
     );
 
-    // The File menu's Export submenu lists Export PNG…, but clicking it does
-    // nothing (disabled).
+    // S-039 — the single Export… item is listed but disabled while a job runs:
+    // clicking it does nothing.
     let _ = gui.click_topbar_button("File ▾");
     let out = gui.frame();
-    let export_rect =
-        find_text_exact(&out, "Export").expect("the File menu shows the Export submenu");
-    let _ = gui.pump(vec![Event::PointerMoved(export_rect.center())]);
-    let out = gui.frame();
-    let item = find_text_exact(&out, "Export PNG…").expect("the item is listed");
+    let item = find_text_exact(&out, "Export…").expect("the Export… item is listed");
     let _ = gui.click_at(item.center());
     assert!(
         gui.app.path_prompt().is_none(),
@@ -2821,6 +2867,263 @@ fn export_png_item_is_disabled_while_an_export_runs() {
         "the exporting state is cleared"
     );
     assert_eq!(gui.open_prompt("Export PNG…"), PathPrompt::ExportPng);
+}
+
+// ─────────────── system file dialogs (S-039 / CR-001) ───────────────
+
+/// AC1 — Open… with a dialog: the chosen path goes through the existing open flow.
+#[test]
+fn open_dialog_chosen_path_replaces_the_model() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/one-box.ad");
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 1, 1);
+    gui.queue_dialog(DialogResult::Chosen(fixture.clone()));
+
+    let _ = gui.click_menu_item("File ▾", "Open…");
+
+    assert_eq!(
+        gui.object_count(),
+        1,
+        "the fixture's box replaced the model"
+    );
+    assert_eq!(gui.app.current_file().unwrap(), fixture.as_path());
+    assert_eq!(gui.dialog_calls(), vec![(DialogKind::Open, None)]);
+}
+
+/// AC1 — Open… cancelled: nothing changes and no fallback prompt appears.
+#[test]
+fn open_dialog_cancelled_changes_nothing() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 1, 1);
+    gui.queue_dialog(DialogResult::Cancelled);
+
+    let _ = gui.click_menu_item("File ▾", "Open…");
+
+    assert_eq!(gui.object_count(), 1, "the model is unchanged");
+    assert!(gui.app.current_file().is_none());
+    assert!(
+        gui.app.path_prompt().is_none(),
+        "no fallback prompt on cancel"
+    );
+}
+
+/// AC2 — Save with a dialog: prefilled with the current file; the chosen path is
+/// written through the existing save flow.
+#[test]
+fn save_dialog_is_prefilled_and_writes_the_chosen_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ad_path = tmp.path().join("pic.ad");
+    std::fs::write(&ad_path, "ad 1.0\nshape box \"A\" as s1 at 1 1 w 9 h 5\n").unwrap();
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.app.open(&ad_path);
+    let new_path = tmp.path().join("pic-renamed.ad");
+    gui.queue_dialog(DialogResult::Chosen(new_path.clone()));
+
+    let out = gui.click_menu_item("File ▾", "Save");
+
+    assert!(new_path.exists(), "the chosen path was written");
+    assert_eq!(gui.app.current_file().unwrap(), &new_path);
+    // The dialog was prefilled with the current file (name + directory).
+    assert_eq!(gui.dialog_calls(), vec![(DialogKind::Save, Some(ad_path))]);
+    assert_status(&out, "Saved");
+}
+
+/// AC2 — Save cancelled: the document is untouched.
+#[test]
+fn save_dialog_cancelled_keeps_the_document() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ad_path = tmp.path().join("pic.ad");
+    std::fs::write(&ad_path, "ad 1.0\nshape box \"A\" as s1 at 1 1 w 9 h 5\n").unwrap();
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.app.open(&ad_path);
+    gui.queue_dialog(DialogResult::Cancelled);
+
+    let out = gui.click_menu_item("File ▾", "Save");
+
+    assert_eq!(
+        gui.app.current_file().unwrap(),
+        &ad_path,
+        "still the old file"
+    );
+    assert_status(&out, "Save cancelled");
+}
+
+/// AC3 — Save As… with a dialog: a `.txt` choice writes exactly the canvas bytes
+/// and does not touch the current document.
+#[test]
+fn save_as_dialog_txt_writes_text_output_without_touching_the_document() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ad_path = tmp.path().join("pic.ad");
+    std::fs::write(&ad_path, "ad 1.0\nshape box \"A\" as s1 at 1 1 w 9 h 5\n").unwrap();
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.app.open(&ad_path);
+    let expected = gui.app.canvas_frame().expect("canvas renders").0;
+    let txt_path = tmp.path().join("out.txt");
+    gui.queue_dialog(DialogResult::Chosen(txt_path.clone()));
+
+    let out = gui.click_menu_item("File ▾", "Save As…");
+
+    assert_eq!(
+        std::fs::read_to_string(&txt_path).unwrap_or_else(|e| panic!("no txt: {e}")),
+        expected,
+        "the .txt holds exactly the canvas bytes"
+    );
+    assert_eq!(
+        gui.app.current_file().unwrap(),
+        &ad_path,
+        "the document is untouched"
+    );
+    assert_status(&out, "Text output saved");
+}
+
+/// AC3 — Save As… with a dialog: a `.ad` choice runs the save-as flow (new current file).
+#[test]
+fn save_as_dialog_ad_runs_the_save_as_flow() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ad_path = tmp.path().join("pic.ad");
+    std::fs::write(&ad_path, "ad 1.0\nshape box \"A\" as s1 at 1 1 w 9 h 5\n").unwrap();
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.app.open(&ad_path);
+    let new_path = tmp.path().join("copy.ad");
+    gui.queue_dialog(DialogResult::Chosen(new_path.clone()));
+
+    let out = gui.click_menu_item("File ▾", "Save As…");
+
+    assert!(
+        new_path.exists(),
+        "the document was saved to the chosen path"
+    );
+    assert_eq!(
+        gui.app.current_file().unwrap(),
+        &new_path,
+        "the current file moved"
+    );
+    assert_status(&out, "Saved");
+}
+
+/// AC4 — Export… with a dialog: the `.svg` choice writes the exporter bytes.
+#[test]
+fn export_dialog_svg_writes_the_exporter_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ad_path = tmp.path().join("pic.ad");
+    std::fs::write(&ad_path, "ad 1.0\nshape box \"A\" as s1 at 1 1 w 9 h 5\n").unwrap();
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.app.open(&ad_path);
+    let svg_path = tmp.path().join("out.svg");
+    gui.queue_dialog(DialogResult::Chosen(svg_path.clone()));
+
+    let out = gui.click_menu_item("File ▾", "Export…");
+
+    let svg = std::fs::read_to_string(&svg_path).unwrap_or_else(|e| panic!("no svg: {e}"));
+    assert!(svg.starts_with("<svg"), "valid SVG output");
+    assert_status(&out, "SVG saved");
+}
+
+/// AC4 — Export… with a dialog: the `.png` choice starts the non-blocking worker.
+#[test]
+fn export_dialog_png_runs_the_non_blocking_worker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ad_path = tmp.path().join("pic.ad");
+    std::fs::write(&ad_path, "ad 1.0\nshape box \"A\" as s1 at 1 1 w 9 h 5\n").unwrap();
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.app.open(&ad_path);
+    let png_path = tmp.path().join("out.png");
+    gui.queue_dialog(DialogResult::Chosen(png_path.clone()));
+
+    let _ = gui.click_menu_item("File ▾", "Export…");
+    assert!(gui.app.png_export_inflight(), "the PNG job is in flight");
+
+    // Pump until the worker completes (same loop as the S-015 test).
+    for _ in 0..600 {
+        if !gui.app.png_export_inflight() {
+            break;
+        }
+        let _ = gui.frame();
+    }
+    let bytes = std::fs::read(&png_path).unwrap_or_else(|e| panic!("no png: {e}"));
+    assert_eq!(&bytes[0..4], &[0x89, b'P', b'N', b'G'], "PNG magic bytes");
+}
+
+/// AC5 — fallback (no dialog): Save As… offers both options; the `.txt` choice
+/// opens the prefilled text-output prompt and OK writes exactly the canvas bytes.
+#[test]
+fn fallback_save_as_offers_both_options_and_txt_writes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ad_path = tmp.path().join("pic.ad");
+    std::fs::write(&ad_path, "ad 1.0\nshape box \"A\" as s1 at 1 1 w 9 h 5\n").unwrap();
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.app.open(&ad_path);
+    let expected = gui.app.canvas_frame().expect("canvas renders").0;
+
+    // No queued result → the fake reports Unavailable → the format choice shows.
+    let out = gui.click_menu_item("File ▾", "Save As…");
+    assert!(find_text_exact(&out, "Diagram document (.ad)").is_some());
+    assert!(find_text_exact(&out, "Text output (.txt)").is_some());
+
+    let _ = gui.click_window_button("Text output (.txt)");
+    assert_eq!(gui.app.path_prompt(), Some(PathPrompt::SaveAsText));
+    // Prefilled with the sibling .txt of the current file.
+    assert_eq!(
+        gui.app.path_prompt_value().as_deref(),
+        Some(tmp.path().join("pic.txt").to_str().unwrap()),
+        "the text prompt is prefilled next to the document"
+    );
+    let out = gui.click_ok();
+
+    let txt_path = tmp.path().join("pic.txt");
+    assert_eq!(
+        std::fs::read_to_string(&txt_path).unwrap_or_else(|e| panic!("no txt: {e}")),
+        expected,
+        "the .txt holds exactly the canvas bytes"
+    );
+    assert_status(&out, "Text output saved");
+}
+
+/// AC5 — fallback (no dialog): Export… offers both formats; each choice opens its
+/// prompt with the sibling prefill.
+#[test]
+fn fallback_export_offers_both_formats_with_prefill() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ad_path = tmp.path().join("pic.ad");
+    std::fs::write(&ad_path, "ad 1.0\nshape box \"A\" as s1 at 1 1 w 9 h 5\n").unwrap();
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let _ = gui.app.open(&ad_path);
+
+    let out = gui.click_menu_item("File ▾", "Export…");
+    assert!(find_text_exact(&out, "SVG image (.svg)").is_some());
+    assert!(find_text_exact(&out, "PNG image (.png)").is_some());
+
+    let _ = gui.click_window_button("SVG image (.svg)");
+    assert_eq!(gui.app.path_prompt(), Some(PathPrompt::ExportSvg));
+    assert_eq!(
+        gui.app.path_prompt_value().as_deref(),
+        Some(tmp.path().join("pic.svg").to_str().unwrap()),
+        "the svg prompt is prefilled next to the document"
+    );
+    let _ = gui.key(Key::Escape);
+
+    // Second round: PNG.
+    let out = gui.click_menu_item("File ▾", "Export…");
+    let _ = gui.click_window_button("PNG image (.png)");
+    assert_eq!(gui.app.path_prompt(), Some(PathPrompt::ExportPng));
+    assert_eq!(
+        gui.app.path_prompt_value().as_deref(),
+        Some(tmp.path().join("pic.png").to_str().unwrap()),
+        "the png prompt is prefilled next to the document"
+    );
+    let _ = gui.key(Key::Escape);
+    assert!(gui.app.path_prompt().is_none());
+    let _ = out;
 }
 
 // ─────────────── options menu + theme persistence (FR13 / CR-005, S-023) ───────────────
