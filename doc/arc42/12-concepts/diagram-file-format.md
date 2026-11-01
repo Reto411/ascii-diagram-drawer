@@ -73,7 +73,7 @@ The writer is deterministic; "canonical form" means:
 
 ### Parsing rules (lenient in, strict out)
 
-- Whitespace between tokens: any run of spaces/tabs; leading indentation and trailing whitespace on statement lines are stripped.
+- Whitespace between tokens: any run of spaces/tabs; leading indentation and trailing whitespace on statement lines are stripped (tokenization leniency for *known* statements — for `unknown-stmt` the verbatim-preservation rule in [Versioning](#versioning--unknown-field-tolerance) takes precedence: they are re-emitted exactly as read, whitespace included).
 - A line whose first token is **not** a known keyword (`scale`/`shape`/`text`/`connect`) is an `unknown-stmt` — see versioning below.
 - A line whose first token **is** a known keyword but fails to parse is a hard error in every version (corruption, not forward-compatibility).
 - Header version tokenization: the canonical header is `ad <major>.<minor>`; whitespace around the dot (`ad 1 . 0`) is accepted as input leniency — the serializer never emits it.

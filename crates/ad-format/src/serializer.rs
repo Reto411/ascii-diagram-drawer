@@ -46,7 +46,10 @@ pub fn serialize_document(document: &Document) -> String {
                 push_object(&mut out, object);
             }
             Slot::Unknown(raw_line) => {
-                out.push_str(raw_line.trim());
+                // Verbatim re-emission (format contract: "re-emitted byte-for-byte") —
+                // no trimming, or parse(serialize(d)) would not be lossless for unknown
+                // statements carrying leading/trailing whitespace (B-007).
+                out.push_str(raw_line);
                 out.push('\n');
             }
         }
@@ -466,6 +469,17 @@ mod tests {
             "ad 1.3\nscale 1\ntext as t1 \"x\" at 0 0\nfoo one\ntext as t2 \"y\" at 1 1\n"
         );
         // And the re-saved file parses back to the same document (QS7 across minor upgrades).
+        assert_eq!(parse_document(&out).expect("re-saves losslessly"), doc);
+    }
+
+    #[test]
+    fn unknown_statements_re_emit_verbatim_including_whitespace() {
+        // B-007: an unknown statement carrying leading/trailing whitespace must
+        // round-trip byte-for-byte — trimming on save broke parse(serialize(d)) == d.
+        let input = "ad 1.3\n  foo one \nbar\ttwo\n";
+        let doc = parse_document(input).expect("valid");
+        let out = serialize_document(&doc);
+        assert_eq!(out, "ad 1.3\nscale 1\n  foo one \nbar\ttwo\n");
         assert_eq!(parse_document(&out).expect("re-saves losslessly"), doc);
     }
 
