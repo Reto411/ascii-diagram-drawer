@@ -4,7 +4,7 @@ description: Run the self-reliant build loop for ascii-diagram-drawer — break 
 metadata:
   scope: whole repository
   status: stable
-  updated: 2026-10-27
+  updated: 2026-11-01
 ---
 
 # Story Implementation Agent
@@ -69,7 +69,7 @@ Context budget: read only the story file + the arc42 chapters / ADRs / concepts 
 
    Run `fmt`/`clippy`/`test` incrementally while implementing; run the full set (incl. tarpaulin, the slow gate) once at verification.
    If a gate cannot run in this environment (missing tool, no display, …), the story is **not done**: leave it *In progress* with the reason on the board. If a gate fails on code this story did not touch: diagnose — a one-line fix from an earlier story may be included (note it in the commit body); anything larger → leave the story *In progress* with the blocker logged, and do not start further stories while the workspace is red. If the story legitimately moves the coverage floor (new scaffold or wasm-only code), record old → new baseline in Verification + progress log.
-6. **Verify every AC**: run its check, record evidence in the story's Verification section (test names / command + result). All ✅ required — except an AC that genuinely needs a human with a display. GUI smokes run headless per the **gui-testing skill** (`.agents/skills/gui-testing/SKILL.md`, helper `scripts/smoke.sh`): tier 0 headless unit tests of the interaction logic first, then under `xvfb-run` — launch-alive → golden-screenshot diff → perceptual check; any tier that answers the AC counts as machine-verified. Only checks that fail all tiers stay human: close them as ⚠️ *deferred to human* with a concrete checklist written into Verification. Every ⚠️ must be flagged in the progress log. An agent never marks a visual AC ✅ without having seen it (tier ≥ 2 evidence).
+6. **Verify every AC**: run its check, record evidence in the story's Verification section (test names / command + result). All ✅ required — except an AC that genuinely needs a human with a display. GUI smokes run headless per the **gui-testing skill** (`.agents/skills/gui-testing/SKILL.md`, helper `scripts/smoke.sh`): tier 0 headless unit tests of the interaction logic first, then under `xvfb-run` — launch-alive → golden-screenshot diff → perceptual check; any tier that answers the AC counts as machine-verified. **Feature bar (mandatory):** every story that changes user-facing behavior also ships at least one UI-driven diagram decomposition test — `ui_decomposition_*` in the tier-0b harness, building a representative diagram purely through real UI gestures (sidebar row click → canvas placement, anchor→anchor connect drags, text entry) and asserting model state + rendered content; without it the story is not done (gui-testing skill, "feature bar"; §6.3 T8). Only checks that fail all tiers stay human: close them as ⚠️ *deferred to human* with a concrete checklist written into Verification. Every ⚠️ must be flagged in the progress log. An agent never marks a visual AC ✅ without having seen it (tier ≥ 2 evidence).
 7. **Review cycle — fresh eyes, from disk.** Re-read from disk (not from memory): the story file, the full `git diff` of what will be committed, and `BOARD.md`. Fix anything that fails, then re-run the affected gates:
    - **Scope:** the diff does only what the story's scope says — no drive-by refactors, no unrelated files.
    - **AC integrity:** the acceptance criteria still read as written at breakdown (ground rule 5); any changed AC is flagged in Verification + progress log.

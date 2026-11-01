@@ -1,10 +1,10 @@
 ---
 name: gui-testing
-description: How to test the eframe GUI headlessly in the isolated devcontainer — tier 0 headless unit tests for interaction logic, tier 0b full-app egui frame pumping (no window), then visual tiers via the software screenshot rasterizer (golden PNGs without a GPU; xvfb capture is unavailable in this image — no EGL), plus evidence rules for story Verification sections. Use when verifying any GUI story AC (S-012…S-019), running a GUI smoke or screenshot, generating/diffing goldens, or deciding whether a visual check is machine-verifiable.
+description: How to test the eframe GUI headlessly in the isolated devcontainer — tier 0 headless unit tests for interaction logic, tier 0b full-app egui frame pumping (no window), then visual tiers via the software screenshot rasterizer (golden PNGs without a GPU; xvfb capture is unavailable in this image — no EGL), plus the mandatory feature bar (every feature story ships a UI-driven diagram decomposition test — the representative diagram drawn purely through the real UI) and evidence rules for story Verification sections. Use when verifying any GUI story AC (S-012…S-019), running a GUI smoke or screenshot, generating/diffing goldens, or deciding whether a visual check is machine-verifiable.
 metadata:
   scope: gui-app + devcontainer GUI tooling (software rasterizer; xvfb path disabled — no EGL)
   status: stable
-  updated: 2026-10-30
+  updated: 2026-11-01
 ---
 
 # GUI Testing
@@ -48,6 +48,22 @@ Harness rules learned the hard way (do not re-derive):
 
 Use tier 0b when an AC is about *what the GUI does with real egui input* (a button works, a prompt survives frames, an overlay lands on the right cell) — cheaper and more precise than screenshots, and it runs in any environment (no xvfb, no X11 libs).
 
+## The feature bar — UI-driven diagram decomposition (mandatory)
+
+> **Raised 2026-11-01 (user decision):** whenever a feature is tested, the agent draws the decomposition of the diagram *using the user interface* — so it is ensured the feature is actually usable. API-level or model-level tests alone do not prove usability; a feature only counts as done once it has been demonstrated end-to-end through the real UI.
+
+**Rule:** every story whose acceptance criteria change user-facing behavior ships **at least one test that builds a representative diagram purely by operating the UI** — the target diagram decomposed into its constituent operations:
+
+1. click the template row in the sidebar (real widget, real hit area),
+2. click the canvas to place each shape of the decomposition,
+3. drag from anchor to anchor for every connector,
+4. enter all text through the inline editor / region window,
+5. assert the final **model state** and the **rendered canvas content** (galleys/lines, or a tier-2 dump).
+
+The test lives in the tier-0b harness (`gui_tests.rs`) — the cheapest tier that exercises the *real* `DrawingApp` through real egui frames; reuse the existing gesture helpers (sidebar clicks, canvas placement, connect drags) rather than re-deriving them. Name it `ui_decomposition_<feature>` so the bar is greppable per story. The decomposition must be representative of real usage — several shapes, connectors and text, not a single isolated object.
+
+**Scope:** mandatory for every GUI/feature story (anything that changes what a user can do in the app). Pure core/format stories ship no UI decomposition — but when such a feature changes what appears on the canvas, the next feature story's decomposition must include it. **Evidence:** the story's Verification section cites the decomposition test by name; a ✅ on any usability-flavored AC ("the user can …") requires that the decomposition exercised it.
+
 ### Tier 1 — launch-alive (does it start and stay up?)
 
 > **Unavailable in this image** — wgpu cannot create a surface (no libEGL; apt egress blocked). `smoke.sh launch` exits with `Wgpu(CreateSurfaceError …)`; treat that as an environment limitation, not an app regression. The tier-0b harness is the substitute: pumping many real egui frames through the real `DrawingApp` without panicking *is* the "stays up" proof (the whole suite does this on every run).
@@ -87,6 +103,7 @@ Only when tiers 0–2 **genuinely cannot answer the AC**. Requirements:
 |---|---|
 | Model state after a user action (move/resize/connect/delete) | 0 |
 | GUI behavior through real egui input (buttons, prompts, inline editor, overlays) | 0b |
+| Feature usable end-to-end — decomposition drawn purely through the UI | 0b (`ui_decomposition_*` — mandatory feature bar, see above) |
 | App starts, stays up, no panic on open | 0b (frame pumping; tier 1 unavailable in this image) |
 | "Looks like before" — visual regression of a known screen | 2 (software rasterizer dump vs golden) |
 | Semantic visual property (legibility, correct position in pixels) | 2 + pixel scans / ASCII view (vision model = tier 3, see below) |
