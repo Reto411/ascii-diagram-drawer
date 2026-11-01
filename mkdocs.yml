@@ -51,6 +51,7 @@ nav:
       - "015 Apache-2.0 project license": adr/015-apache-2-0-license.md
       - "016 PNG rasterizer (resvg)": adr/016-png-rasterizer.md
       - "017 Material Design GUI + custom title bar": adr/017-material-design-title-bar.md
+      - "018 Test quality layers (property-based, mutation, fuzz)": adr/018-test-quality-tooling.md
   - Templates:
       - Concept template: templates/concept.md
       - ADR template: templates/adr.md
