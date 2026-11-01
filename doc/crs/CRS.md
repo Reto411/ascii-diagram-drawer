@@ -27,7 +27,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
-| CR-009 | Diagram colors (background/shape fill/line & text) via color picker, svgbob Settings | 2026-11-01 | implemented — S-030, commit `TBD` (FR15; .ad v1.1, ADR 009 v8) |
+| CR-009 | Diagram colors (background/shape fill/line & text) via color picker, svgbob Settings | 2026-11-01 | implemented — S-030, commit `0541141` (FR15; .ad v1.1, ADR 009 v8) |
 | CR-010 | Standalone arrows with attachable/detachable ends | 2026-10-31 | implemented — S-031, commit `d9ad17c` (FR9, ADR 013 v6) |
 | CR-008 | Selectable arrow tips on both ends + arrow-shaped anchor markers | 2026-10-31 | implemented — S-029, commit `adb1a3f` (FR9, ADR 013 v5) |
 | CR-007 | User-modifiable arrow shapes (manual bends) | 2026-10-31 | implemented — S-028, commit `7010cc1` (FR9, ADR 013 v4) |
