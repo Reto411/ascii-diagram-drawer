@@ -3,8 +3,8 @@ title: 017 - material-design-title-bar
 description: the GUI is styled according to Material Design; native windows use a custom Material app bar (minimize/fullscreen/close) instead of the OS window border, with the canvas kept monospace for WYSIWYG
 scope: gui
 status: accepted
-updated: 2026-10-31
-version: 1
+updated: 2026-11-01
+version: 2
 ---
 
 # ADR 017: Material Design GUI with custom title bar
@@ -23,7 +23,7 @@ Constraints in play:
 ## Decision
 
 1. **Material Design as a theme layer.** A dedicated module in `gui-app` builds the egui `Style`/`Visuals` from Material's design tokens: color system (primary/surface/on-surface roles for light and dark), Roboto-family typography where the platform font allows (falling back to the default UI font otherwise — the canvas keeps its monospace font regardless), 4dp-based spacing, and elevation expressed as egui shadows/rounding on surfaces (cards, menus, dialogs). The theme layer sits above the existing light/dark/native theme selection (FR13): "native" maps to Material's system-aware light/dark, so no third visual mode is introduced.
-2. **Custom title bar on native targets.** The window runs undecorated; a top app-bar surface drawn by the app carries the diagram title and the window controls (minimize, fullscreen toggle, close), wired through eframe/winit window commands. On the wasm target the app bar still renders (title + no-op or hidden window controls) so the layout is identical across targets (NFR1).
+2. **Custom title bar on native targets.** The window runs undecorated; a top app-bar surface drawn by the app carries the diagram title and the window controls — minimize, fullscreen toggle, close — laid out left-to-right in that order (close at the top-right corner, per KDE/Windows convention; CR-019), wired through eframe/winit window commands. On the wasm target the app bar still renders (title + no-op or hidden window controls) so the layout is identical across targets (NFR1).
 3. **Canvas untouched.** The editor canvas keeps its monospace rendering and graph-paper chrome; Material styling applies to chrome only (app bar, menu bar, sidebars, status bar, dialogs, preview pane).
 
 ## Alternatives considered
@@ -44,3 +44,4 @@ Constraints in play:
 
 - **v1 (2026-10-31):** initial decision — accepted with CR-006; status `proposed` until S-027 implements it.
 - **Accepted 2026-10-31:** implemented by S-027 (`theme.rs` + `appbar.rs`, undecorated native window, one-`StartDrag`-per-gesture fix, edge resize grips). Decision unchanged — no version bump.
+- **v2 (2026-11-01):** CR-019 accepted — the visual *order* of the app-bar controls is now part of the decision: minimize, fullscreen, close left-to-right, so close sits at the top-right corner. FR14 updated to match; S-040 implements it.

@@ -2,7 +2,7 @@
 title: CR-019 - close-button-at-top-right
 description: the window close button sits at the left end of the app-bar control group; it shall be the rightmost control (top-right corner), per KDE/Windows convention
 scope: gui
-status: proposed
+status: accepted
 priority: low
 updated: 2026-11-01
 ---
@@ -42,9 +42,9 @@ User feedback (2026-11-01): "It is unusual to have it [the close button] at the 
 
 > Human decision only — the agent never fills this without explicit approval ("Accept CR-NNN as written?").
 
-- **Status:** proposed
-- **Date:** 
-- **Reason / notes:** 
+- **Status:** accepted
+- **Date:** 2026-11-01
+- **Reason / notes:** blanket acceptance by the user — "Fix all bugs, implement all change requests and do extensive regression testing including End to end tests" (2026-11-01). Applied: §14 FR14 updated, ADR 017 → v2, skeleton story S-040 on the board.
 
 ## Implementation
 

@@ -12,6 +12,7 @@ updated: 2026-11-01
 
 | ID | Title | Priority | Dependencies | Acceptance criteria | Story file |
 |----|-------|----------|--------------|---------------------|------------|
+| S-040 | gui-app — window close button at the top right of the app bar (FR14, CR-019) | Low | S-027 (done) | TBD | [S-040](S-040-window-close-button-top-right.md) |
 | S-019 | web/wasm milestone — bundle build + core tests on wasm32 (QS4) | High | S-012…S-018, S-011 | 5 | [S-019](S-019-wasm-web-milestone.md) |
 | S-020 | performance benchmarks + determinism invariants (QS1/QS12) | Low | S-008, S-011 | 4 | [S-020](S-020-performance-benchmarks.md) |
 | S-021 | documentation completion (§4/§7/§10/§11/§13/§15/§16 + tracker) | Medium | S-019, S-020 | 4 | [S-021](S-021-docs-completion.md) |
