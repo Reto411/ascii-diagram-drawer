@@ -11,6 +11,7 @@ for f in doc/bugs/B-*.md; do
   num=$(basename "$f")
   num=${num#B-}
   num=${num%.md}
+  num=${num%%-*}   # drop the slug: B-004-window-edge-resize-not-working → 004
   num=$(printf '%s' "$num" | sed 's/^0*//')
   [ -n "$num" ] || num=0
   if [ "$num" -gt "$n" ]; then n=$num; fi
