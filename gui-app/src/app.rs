@@ -1532,23 +1532,24 @@ fn draw_overlays(
         }
     }
 
-    // Arrow tool drag (CR-010): line from the press cell to the cursor. When the
-    // source end attached, its anchor glyph is already drawn by `overlays()` (all
-    // anchors are exposed); a free source gets a plain dot at the press cell.
-    if let (Some((from_cell, attached)), Some(cursor)) = (app.editor.arrow_drag_source(), cursor)
-        && !attached
-    {
+    // Arrow tool drag (CR-010): line from the press cell to the cursor — same
+    // feedback as the S-013 connect drag. When the source end attached, its anchor
+    // glyph is already drawn by `overlays()` (all anchors are exposed); a free
+    // source gets a plain dot at the press cell.
+    if let (Some((from_cell, attached)), Some(cursor)) = (app.editor.arrow_drag_source(), cursor) {
         painter.line_segment(
             [center_of(from_cell.x, from_cell.y), off(cursor)],
             egui::epaint::Stroke::new(1.5, CONNECT_LINE_COLOR),
         );
-        painter.text(
-            center_of(from_cell.x, from_cell.y),
-            Align2::CENTER_CENTER,
-            "·",
-            FontId::new((vp.cell_h * 0.85).max(9.0), FontFamily::Monospace),
-            ANCHOR_COLOR,
-        );
+        if !attached {
+            painter.text(
+                center_of(from_cell.x, from_cell.y),
+                Align2::CENTER_CENTER,
+                "·",
+                FontId::new((vp.cell_h * 0.85).max(9.0), FontFamily::Monospace),
+                ANCHOR_COLOR,
+            );
+        }
     }
 }
 

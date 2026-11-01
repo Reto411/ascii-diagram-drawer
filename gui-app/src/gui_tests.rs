@@ -1247,6 +1247,39 @@ fn arrow_tool_draws_a_standalone_arrow_via_the_sidebar() {
 }
 
 #[test]
+fn arrow_drag_line_runs_from_the_attached_source_to_the_cursor() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 2, 1);
+
+    // Arm the arrow tool from the sidebar.
+    let out = gui.frame();
+    let label = find_text_exact(&out, "↘  Arrow").expect("sidebar lists the arrow tool");
+    let _ = gui.click_at(label.center());
+
+    // Press exactly on the box's east anchor and hold past the shape: the drag
+    // line must run from the anchor to the cursor (same feedback as S-013).
+    let (x, y, w, h) = gui.first_box();
+    let e_anchor = gui.cell_center(min, x + w - 1, y + h / 2); // east anchor cell
+    let cursor = gui.cell_center(min, x + w + 4, y);
+    let out = gui.press_and_hold_to(e_anchor, cursor);
+
+    assert!(
+        line_points(&out).into_iter().any(|(a, b)| {
+            (close(a.x, e_anchor.x, 2.0)
+                && close(a.y, e_anchor.y, 2.0)
+                && close(b.x, cursor.x, 1.5)
+                && close(b.y, cursor.y, 1.5))
+                || (close(b.x, e_anchor.x, 2.0)
+                    && close(b.y, e_anchor.y, 2.0)
+                    && close(a.x, cursor.x, 1.5)
+                    && close(a.y, cursor.y, 1.5))
+        }),
+        "arrow drag line runs from the attached source anchor to the cursor"
+    );
+}
+
+#[test]
 fn delete_key_removes_the_selected_object() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let min = gui.canvas_min();
