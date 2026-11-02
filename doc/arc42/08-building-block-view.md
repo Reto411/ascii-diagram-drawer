@@ -197,7 +197,7 @@ ascii-diagram-drawer/
 - **Exporters** (`text`, `svg`, `png` sub-modules) present the one grid in three media:
   - *Text*: dump the resolved grid as UTF-8 with LF — the grid **is** the output.
   - *SVG*: pass the resolved grid **unchanged** to `svgbob::to_svg` — no adapter layer ([ADR 005](../adr/005-use-svgbob-as-vector-renderer.md)); fixed attribute set, no timestamps → byte-identical re-export (QS1/QS2).
-  - *PNG*: rasterize the produced SVG. **Rasterizer TBD** — must work on native *and* wasm32 (risk R3; v1 may degrade to SVG-only if needed).
+  - *PNG*: rasterize the produced SVG with **resvg 0.49** (usvg + tiny-skia software backend) — pure Rust, works on native *and* wasm32 ([ADR 016](../adr/016-png-rasterizer.md), S-009); the rasterizer is an optional backend feature and degrades to `Unsupported` when absent (ADR 009).
 
 ### 8.4.4 Persistence context — `ad-format`
 

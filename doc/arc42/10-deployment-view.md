@@ -27,24 +27,38 @@ Bundle size: measured 13,137,832 B uncompressed/unoptimized at S-019 — see ris
 
 > *Client/server boundaries, APIs called, external services (fonts, CDNs).*
 
-```
-[placeholder]
-```
+**None at runtime.** The application is fully offline on both targets:
+
+| Aspect | Native | Web |
+|--------|--------|-----|
+| Server / API calls | none | none — the bundle is self-contained static files; no XHR/fetch beyond loading its own wasm module |
+| External services (CDN, fonts) | none | none — no webfonts or CDN links in `gui-app/index.html`; eframe uses its bundled font stack + the system monospace family for the canvas |
+| Network use at all | build time only (crates.io) | build time only (crates.io + binaryen download when `wasm-opt` is enabled) |
+
+Consequences: no telemetry, no update checks, no network failure modes; the security surface is local files only ([§11](11-cross-cutting-concerns.md)).
 
 ## 10.3 Deployment Model
 
 > *Build pipeline: build → test → package → publish. CI tooling.*
 
-- [TBD]
+- **Isolated build environment:** the podman devcontainer (`.devcontainer/`) mounts only this repo at `/workspace` — builds/tests never depend on host state. All quality gates run inside it.
+- **Gates per change** (the de-facto pipeline): `cargo fmt --check` → `cargo clippy --all-targets` (`clippy::all` deny) → `cargo test --workspace` (714+ tests) → `cargo tarpaulin --engine Llvm --workspace` (≥ 80%) → wasm gates (`cargo check -p gui-app --target wasm32-unknown-unknown`; core suite on `wasm32-wasip1` under Node WASI via `scripts/wasm-core-tests.mjs`) → `mkdocs build --strict`. Benchmarks: `cargo bench -p render-pipeline` / `-p exporters` (criterion, native-only).
+- **Packaging:** native = `cargo build --release -p gui-app` → single binary; web = `cd gui-app && trunk build --release` → static files in `gui-app/dist/` (index.html + JS glue + wasm), deployable to any static host over http(s) — not `file://` (wasm fetch + ES-module CORS).
+- **Publishing:** not automated yet — releases are git tags plus the two artifacts above; no CI runner is configured in-repo (the devcontainer + gates are the reproducible environment).
 
 ## 10.4 Operation & Maintenance
 
 > *Monitoring, logging, updates, backups (as applicable).*
 
-- [TBD]
+- **No service to operate:** both targets run entirely on the user's machine/browser — nothing to monitor, no logs server-side, no telemetry.
+- **User data:** documents are plain-text `.ad`/`.adc` files on disk (native) or in an in-memory store with browser-download (web); options are a small JSON file in the platform config dir (native) / `localStorage` (web). Backups = ordinary file/VCS backups; nothing tool-specific.
+- **Updates:** replace the binary / redeploy the static bundle. No auto-update mechanism in v1. Corrupt or missing options files fall back to defaults at load (never fatal).
 
 ## 10.5 Release Strategy
 
 > *Versioning scheme, release cadence, deprecation policy.*
 
-- [TBD]
+- **Application version:** Cargo workspace version `0.1.0` (pre-1.0). From 1.0 onward: SemVer; breaking changes to the *application* bump major.
+- **File formats are versioned independently** of the application: `.ad` diagrams carry a header version (currently **1.1**) and `.adc` collections likewise; minor-version extensions must stay backward-readable, pinned by parser tests (e.g. 1.0 files remain parseable after the 1.1 extensions). A format bump is an API decision recorded as an ADR version change ([ADR 004](../adr/004-diagram-file-format.md), [ADR 007](../adr/007-user-defined-diagram-objects.md)).
+- **Cadence:** story-driven — releases cut when the board's v1 scope is done; no fixed calendar cadence pre-1.0.
+- **Deprecation:** none before 1.0; after, format features are deprecated for at least one minor version with a parser warning before removal.

@@ -52,7 +52,11 @@ The target is a diagramming tool **similar to Visio**, but built on an **open so
 
 > *Hard limits that shape the design: tech stack, target platforms, performance budgets, licensing, offline requirements.* See [§5](05-constraints.md) for details.
 
-- [TBD]
+- **Language/stack:** Rust workspace; GUI = egui/eframe (ADR 008); text primary, SVG via svgbob (ADR 005), PNG via resvg (ADR 016).
+- **Targets:** native desktop (Windows/macOS/Linux) + browser wasm — one codebase (NFR1/Q2); no server component.
+- **Performance budgets:** proposed P1–P3 (§5.3), *pending confirmation*; measured baseline recorded in [§6](06-quality-model.md).
+- **Licensing:** Apache-2.0; dependencies must stay permissively licensed (ADR 015).
+- **Offline:** fully offline at runtime — no network, telemetry, or external services ([§10.2](10-deployment-view.md#102-network-topology)).
 
 ## 1.4 Stakeholders
 
@@ -60,4 +64,6 @@ The target is a diagramming tool **similar to Visio**, but built on an **open so
 
 | Stakeholder | Interest / concern |
 |-------------|--------------------|
-| [TBD] | |
+| Diagram authors (technical documenters) | Full layout control, fast iteration, portable no-lock-in output |
+| Output readers & tooling | Correct monospace rendering anywhere; byte-stable text (QS7) |
+| Project maintainer (+ AI agents implementing stories) | Quality gates (coverage ≥ 80%, clippy deny, determinism invariants); docs as single source of truth |

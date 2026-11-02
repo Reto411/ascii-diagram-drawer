@@ -18,7 +18,7 @@ left to right direction
 skinparam componentStyle rectangle
 
 actor "User" as user
-component "GUI (thin)\n[framework TBD — ADR pending]" as gui
+component "GUI (thin)\negui/eframe — ADR 008" as gui
 
 package "Platform-independent core (Rust)" {
   [Diagram model\nobjects + explicit grid coordinates] as model
@@ -43,7 +43,7 @@ pipe --> grid
 grid --> txt
 grid --> svgbob : unchanged bytes
 svgbob --> svg
-svg --> png : rasterize (TBD)
+svg --> png : rasterize (ADR 016: resvg)
 @enduml
 ```
 
@@ -62,7 +62,7 @@ svg --> png : rasterize (TBD)
 | # | Key quality goal | Measurable target |
 |---|------------------|-------------------|
 | Q1 | Deterministic output | Same model → byte-identical text *and* byte-identical SVG; `serialize(parse(s)) == s`; enforced by golden-file tests (exact numbers/scenarios in [§6](06-quality-model.md)) |
-| Q2 | Cross-platform portability | One codebase builds and passes the same test suite on Windows, macOS, Linux, and WASM; WASM bundle size budget TBD ([§6](06-quality-model.md)) |
+| Q2 | Cross-platform portability | One codebase builds and passes the same test suite on Windows, macOS, Linux, and WASM; WASM bundle size budget proposed P3, pending confirmation (§5.3/[§6](06-quality-model.md); S-019 measured ≈ 12.5 MiB unoptimized — risk R1) |
 | Q3 | Open, readable format | Opening a `.ad` file in any text editor shows shapes, labels, and positions; diffs in git are meaningful line-by-line changes |
 | Q4 | Low learning curve | A new user composes a first diagram without documentation (NFR4); UI limited to template sidebar + canvas (FR6) |
 | Q5 | Testable core | Rendering/export logic runs headlessly with no windowing dependencies; ≥80% line coverage on the core crates (`cargo tarpaulin`) |

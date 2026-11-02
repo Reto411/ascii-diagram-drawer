@@ -10,7 +10,7 @@ updated: 2026-10-18
 
 > *The subset of functional and non-functional requirements that the architecture must satisfy — traceable to quality goals.*
 >
-> *arc42 convention: this section is a **selection**, not the complete requirements catalog. The full set of requirements is managed in: [TBD — e.g. separate spec doc, issue tracker]. Only architecturally relevant requirements are listed here.*
+> *arc42 convention: this section is a **selection**, not the complete requirements catalog. The full set of requirements is managed in: this chapter (FR/NFR catalog, Q-linked) together with the delivery artifacts — user stories on [`doc/stories/BOARD.md`](../stories/BOARD.md) and change requests under [`doc/crs/`](../crs/CRS.md). Only architecturally relevant requirements are listed here.*
 
 ## 14.1 Functional Requirements
 
