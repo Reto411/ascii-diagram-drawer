@@ -145,7 +145,10 @@ pub fn parse_document(input: &str) -> Result<Document, ParseError> {
             }
             other => {
                 if version.1 > MINOR {
-                    slots.push(Slot::Unknown(raw_line.to_owned()));
+                    // A run of trailing `\r` is line-break decoration (CRLF normalization):
+                    // re-reading a preserved line strips one more `\r`, so keeping any
+                    // would break the byte-for-byte round trip (B-008). Output is LF-only.
+                    slots.push(Slot::Unknown(raw_line.trim_end_matches('\r').to_owned()));
                 } else {
                     return Err(ParseError::new(
                         line_no,
@@ -254,7 +257,11 @@ fn tokenize(raw: &str, line_no: usize) -> Result<Vec<Token>, ParseError> {
             return Ok(tokens);
         };
         match c {
-            ' ' | '\t' => {}
+            // `\r` is whitespace, not word content: a lone trailing `\r` (not part of a
+            // CRLF pair — `lines()` keeps it) must not be absorbed into the last token,
+            // which would mask keywords like `colors` and silently preserve them as
+            // unknown statements (B-009).
+            ' ' | '\t' | '\r' => {}
             '#' => return Ok(tokens),
             '"' => tokens.push(read_string(&mut stream, line_no, col)?),
             // A comma is its own token (list separator — e.g. `connect … via 3 4, 5 6`).
@@ -272,7 +279,7 @@ fn read_word(stream: &mut CharStream, first: char, column: usize) -> Token {
     let mut text = String::new();
     text.push(first);
     while let Some(next) = stream.peek_char() {
-        if matches!(next, ' ' | '\t' | '"' | '#' | ',') {
+        if matches!(next, ' ' | '\t' | '\r' | '"' | '#' | ',') {
             break;
         }
         if let Some((_, c)) = stream.next() {
@@ -1412,6 +1419,34 @@ mod tests {
         );
     }
 
+    /// S-043 AC3 — mutation audit: the zero-length error must point at the connector's
+    /// own declaration (`declared` lookup), surviving neither an inverted id comparison
+    /// nor a deleted match arm (which would fall back to (1, 1)). Zero length is only
+    /// checkable in the model for both-free endpoints (see `reject_zero_length`).
+    #[test]
+    fn zero_length_connector_reports_its_declaration_position() {
+        let input = "ad 1.0\nshape box \"x\" as s1 at 0 0 w 2 h 2\ntext as t1 \"y\" at 1 1\nconnect as c1 from 3 3 to 3 3\n";
+        let err = assert_error(input, 4, 1);
+        assert!(
+            err.message.contains("zero length") || err.message.contains("same cell"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    /// S-043 AC3 — mutation audit: the referencing-connector lookup must match on the
+    /// referenced id (guard), not just take the first connector in the file.
+    #[test]
+    fn unknown_object_error_points_at_the_connector_that_references_it() {
+        let input = "ad 1.0\nshape box \"x\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.w to s1.e\nconnect as c2 from s1.n to ghost.s\n";
+        let err = assert_error(input, 4, 1);
+        assert!(
+            err.message.contains("unknown object id: ghost"),
+            "message: {}",
+            err.message
+        );
+    }
+
     /// S-043 — forward references are legal: a connector may reference a shape declared
     /// *later* in the file (file order = z-order; the model allows this state via CR-010's
     /// standalone endpoints). The parsed diagram preserves file order.
@@ -1477,6 +1512,51 @@ mod tests {
         let out = serialize_document(&doc);
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[3], "foo bar   baz # trailing comment");
+    }
+
+    /// S-043 AC3 — mutation audit: `unknown_count` must reflect the actual number of
+    /// preserved statements (the existing test only ever asserts `== 1`, which a
+    /// constant-1 mutant survives).
+    #[test]
+    fn unknown_count_counts_multiple_preserved_statements() {
+        let input = "ad 1.3\nfoo one\nbar two three\n";
+        let doc = parse_document(input).expect("forward-compat file parses");
+        assert_eq!(doc.unknown_count(), 2);
+    }
+
+    /// S-043 AC3 — mutation audit: the forward-compat gate is strictly `> MINOR` (1.1);
+    /// an unknown statement in a *current*-minor (1.1) file must stay a hard error.
+    /// The existing test uses 1.0, which both `>` and `>=` reject.
+    #[test]
+    fn unknown_statement_in_current_minor_file_is_a_hard_error() {
+        let err = assert_error("ad 1.1\nfoo bar baz\n", 2, 1);
+        assert!(
+            err.message.contains("unknown statement"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    /// S-043 AC4 — B-009: a lone trailing `\r` (not part of a CRLF pair) is whitespace,
+    /// not word content. Before the fix, `colors\r` tokenized as one unknown word and
+    /// was silently preserved in higher-minor files; the re-emitted clean line then
+    /// failed to re-parse ("'colors' statement is empty").
+    #[test]
+    fn lone_cr_at_eof_does_not_mask_a_keyword() {
+        let err = assert_error("ad 1.3\n colors\r", 2, 2);
+        assert!(err.message.contains("colors"), "message: {}", err.message);
+    }
+
+    /// S-043 AC4 — B-009 companion: an *interior* `\r` in a preserved unknown line is
+    /// content and must round-trip verbatim (it is not adjacent to the line break, so
+    /// no CRLF stripping happens on re-read).
+    #[test]
+    fn unknown_line_with_interior_cr_round_trips() {
+        let input = "ad 1.3\nfoo\rbar baz\n";
+        let doc = parse_document(input).expect("valid");
+        let out = serialize_document(&doc);
+        assert!(out.contains("foo\rbar baz"), "serialized: {out:?}");
+        assert_eq!(parse_document(&out).expect("re-saves losslessly"), doc);
     }
 
     #[test]
@@ -1690,6 +1770,36 @@ mod tests {
         assert_eq!(
             connector.bends,
             vec![CellPos::new(3, 1), CellPos::new(4, 4)]
+        );
+    }
+
+    /// S-043 AC3 — mutation audit: a comma is its own token even when glued to the
+    /// following number (`via 3 4,5 6`); deleting the dedicated `,` tokenizer arm would
+    /// let `read_word` swallow `,5` and reject this legal input.
+    #[test]
+    fn via_list_accepts_comma_without_trailing_space() {
+        let input = "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nshape box \"b\" as s2 at 5 0 w 2 h 2\nconnect as c1 from s1.e to s2.w via 3 1,4 4\n";
+        let diagram = parse(input).expect("valid");
+        let Object::Connector(connector) = &diagram.objects()[2] else {
+            panic!("expected connector")
+        };
+        assert_eq!(
+            connector.bends,
+            vec![CellPos::new(3, 1), CellPos::new(4, 4)]
+        );
+    }
+
+    /// S-043 AC3 — mutation audit: a missing separator in a `via` list must be reported
+    /// as an *unexpected token* (not silently consumed by an over-eager comma guard).
+    #[test]
+    fn via_list_missing_separator_is_an_unexpected_token() {
+        let input = "ad 1.0\nshape box \"a\" as s1 at 0 0 w 2 h 2\nconnect as c1 from s1.e to s1.w via 3 4 5\n";
+        let err = parse(input).expect_err("must fail");
+        assert_eq!(err.line, 3);
+        assert!(
+            err.message.contains("unexpected token"),
+            "message: {}",
+            err.message
         );
     }
 

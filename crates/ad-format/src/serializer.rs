@@ -484,6 +484,17 @@ mod tests {
     }
 
     #[test]
+    fn unknown_statements_normalize_trailing_cr_runs() {
+        // B-008: a run of trailing \r is line-break decoration (CRLF normalization);
+        // preserving it would not round-trip because a re-read strips one more.
+        let input = "ad 1.3\nfoo one\r\r\n";
+        let doc = parse_document(input).expect("valid");
+        let out = serialize_document(&doc);
+        assert_eq!(out, "ad 1.3\nscale 1\nfoo one\n");
+        assert_eq!(parse_document(&out).expect("re-saves losslessly"), doc);
+    }
+
+    #[test]
     fn document_without_unknowns_matches_plain_serialize() {
         let input = "ad 1.1\nscale 2\ntext as t1 \"x\" at 0 0\n";
         let doc = parse_document(input).expect("valid");

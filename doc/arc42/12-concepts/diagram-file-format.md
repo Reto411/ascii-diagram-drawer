@@ -73,11 +73,11 @@ The writer is deterministic; "canonical form" means:
 
 ### Parsing rules (lenient in, strict out)
 
-- Whitespace between tokens: any run of spaces/tabs; leading indentation and trailing whitespace on statement lines are stripped (tokenization leniency for *known* statements — for `unknown-stmt` the verbatim-preservation rule in [Versioning](#versioning--unknown-field-tolerance) takes precedence: they are re-emitted exactly as read, whitespace included).
+- Whitespace between tokens: any run of spaces/tabs; leading indentation and trailing whitespace on statement lines are stripped (tokenization leniency for *known* statements — for `unknown-stmt` the verbatim-preservation rule in [Versioning](#versioning-unknown-field-tolerance) takes precedence: they are re-emitted exactly as read, whitespace included).
 - A line whose first token is **not** a known keyword (`scale`/`shape`/`text`/`connect`) is an `unknown-stmt` — see versioning below.
 - A line whose first token **is** a known keyword but fails to parse is a hard error in every version (corruption, not forward-compatibility).
 - Header version tokenization: the canonical header is `ad <major>.<minor>`; whitespace around the dot (`ad 1 . 0`) is accepted as input leniency — the serializer never emits it.
-- Input CRLF is tolerated: a trailing `\r` before the line break is stripped. Output is LF only.
+- Input CRLF is tolerated: `\r` is whitespace to the tokenizer (never word content), and any run of trailing `\r` before a line break or at end-of-file is stripped as line-break decoration from preserved lines (one = classic CRLF; longer runs normalize identically, since re-emitting them could not round-trip). Output is LF only. An interior `\r` inside a preserved line is content and round-trips verbatim.
 - Comments: `#` outside a string starts a comment running to end of line. Whole-line and inline comments are both valid.
 
 ### Versioning + unknown-field tolerance
