@@ -2,8 +2,8 @@
 title: S-038-resize-handle-symbol
 description: CR-018 — dedicated resize symbol on the resize handle (FR21) (skeleton; ACs at implementation)
 scope: gui-app
-status: in-progress
-updated: 2026-11-01
+status: done
+updated: 2026-11-02
 ---
 
 # S-038: gui-app — dedicated resize symbol on the resize handle (FR21)
