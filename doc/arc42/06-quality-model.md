@@ -44,6 +44,8 @@ Performance (from §5.3 budgets — proposed, pending confirmation)
 └── P3 Web initial download < 2 MB compressed
 ```
 
+> **Measured baseline (S-020, 2026-11-02)** — `cargo bench -p render-pipeline` / `-p exporters` (release, devcontainer x86_64): first render of the deterministic 500-object fixture ≈ **0.41 ms** (≈ 240× under the proposed P1 budget; 50 objects ≈ 0.06 ms). Export scaling (100 → 500 → 1000 objects): text 10.7 µs → 36.3 µs → 39.6 µs (sub-linear), SVG 38.1 ms → 291 ms → 410 ms (≈ linear, mildly super-linear), PNG 50 ms → 344 ms → 470 ms (≈ linear). Budgets remain **proposed, pending confirmation** — these numbers are recorded, not gated.
+
 ## 6.2 Quality Scenarios
 
 | ID | Goal | Scenario (situation/stimulus → measurable requirement) | Verification |
