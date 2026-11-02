@@ -437,30 +437,6 @@ impl Gui {
         self.click_at(rect.center())
     }
 
-    /// Click an item nested one level down in a top-bar dropdown (CR-011 AC4):
-    /// open the menu, hover the submenu label until its popup lays out (egui
-    /// `SubMenuButton`s open on hover), then click the item. Returns the release
-    /// frame of the item click.
-    fn click_submenu_item(&mut self, menu: &str, submenu: &str, item: &str) -> egui::FullOutput {
-        let _ = self.click_topbar_button(menu);
-        let out = self.frame();
-        let sub_rect = find_text_exact(&out, submenu).unwrap_or_else(|| {
-            panic!(
-                "menu {menu:?} does not show submenu {submenu:?}; texts: {:?}",
-                texts(&out)
-            )
-        });
-        let _ = self.pump(vec![Event::PointerMoved(sub_rect.center())]);
-        let out = self.frame();
-        let rect = find_text_exact(&out, item).unwrap_or_else(|| {
-            panic!(
-                "submenu {submenu:?} of {menu:?} does not show {item:?}; texts: {:?}",
-                texts(&out)
-            )
-        });
-        self.click_at(rect.center())
-    }
-
     /// Open a path prompt via the File menu and return its kind after it appears.
     /// S-039 / CR-001 — with no dialog available (the fake's default), `Save As…`
     /// and `Export…` open the in-app format choice first; this helper clicks the

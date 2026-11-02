@@ -585,13 +585,6 @@ impl DrawingApp {
         self
     }
 
-    /// The in-app format choice currently showing (S-039 AC5; test support).
-    #[cfg(test)]
-    #[must_use]
-    pub fn format_choice(&self) -> Option<FormatChoice> {
-        self.format_choice
-    }
-
     /// True while a text object is being edited inline (S-018; test support).
     #[cfg(test)]
     pub fn is_editing(&self) -> bool {
@@ -1532,7 +1525,7 @@ impl DrawingApp {
                         ui.add_sized(
                             [240.0, 64.0],
                             egui::TextEdit::multiline(label_buffer)
-                                .id_source(egui::Id::new(("region_field", "label")))
+                                .id_source(egui::Id::unique(("region_field", "label")))
                                 .font(egui::TextStyle::Monospace),
                         );
                     });
@@ -1549,7 +1542,7 @@ impl DrawingApp {
                         ui.add_sized(
                             [240.0, 64.0],
                             egui::TextEdit::multiline(buffer)
-                                .id_source(egui::Id::new(("region_field", name.clone())))
+                                .id_source(egui::Id::unique(("region_field", name.clone())))
                                 .font(egui::TextStyle::Monospace),
                         );
                     });
