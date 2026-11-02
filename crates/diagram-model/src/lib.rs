@@ -698,15 +698,21 @@ mod tests {
         );
     }
 
-    /// A fresh diagram is empty with scale 1 and no colors.
+    /// A fresh diagram is empty with scale 1 and no colors; `is_empty` flips once an
+    /// object exists (mutation audit S-043 AC3: a constant-`true` `is_empty` survived
+    /// because only the empty case was ever asserted).
     #[test]
     fn new_diagram_is_empty_with_scale_one() {
-        let diagram = Diagram::new();
+        let mut diagram = Diagram::new();
         assert_eq!(diagram.len(), 0);
         assert!(diagram.is_empty());
         assert_eq!(diagram.scale(), 1);
         assert_eq!(diagram.objects().len(), 0);
         assert_eq!(diagram.colors(), crate::DiagramColors::default());
+
+        diagram.place_shape(shape("s1", "box")).expect("places");
+        assert!(!diagram.is_empty(), "one object is not empty");
+        assert_eq!(diagram.len(), 1);
     }
 
     /// Generated ids are deterministic and skip already-used numbers.
@@ -1142,7 +1148,8 @@ mod tests {
         );
     }
 
-    /// Scale can be set at construction and later; zero is rejected.
+    /// Scale can be set at construction and later; zero is rejected, one is accepted
+    /// (boundary — mutation audit S-043 AC3: `<` had mutated to `<=` uncaught).
     #[test]
     fn with_scale_and_set_scale() {
         let mut diagram = Diagram::with_scale(2).expect("valid scale");
@@ -1157,6 +1164,83 @@ mod tests {
             Err(ModelError::ScaleTooSmall { scale: 0 })
         );
         assert_eq!(diagram.scale(), 3);
+        assert_eq!(diagram.set_scale(1), Ok(()));
+        assert_eq!(diagram.scale(), 1);
+    }
+
+    /// `set_shape_label` rewrites only the label of a shape; text and unknown ids are
+    /// rejected (mutation audit S-043 AC3: the function had no direct coverage — an
+    /// `Ok(())` stub and a deleted match arm both survived).
+    #[test]
+    fn set_shape_label_updates_only_shapes() {
+        let mut diagram = Diagram::new();
+        diagram.place_shape(shape("s1", "box")).expect("places");
+        diagram.place_text(text("t1")).expect("places");
+
+        diagram
+            .set_shape_label(&oid("s1"), "renamed")
+            .expect("a shape");
+        let Object::Shape(shape) = &diagram.objects()[0] else {
+            panic!("expected the shape back");
+        };
+        assert_eq!(shape.label, "renamed");
+
+        assert_eq!(
+            diagram.set_shape_label(&oid("t1"), "nope"),
+            Err(ModelError::NotAShape(oid("t1")))
+        );
+        assert_eq!(
+            diagram.set_shape_label(&oid("ghost"), "nope"),
+            Err(ModelError::UnknownObject(oid("ghost")))
+        );
+    }
+
+    /// `from_parts` — the bulk constructor used by file import (S-043/ADR 018) — validates
+    /// scale, id uniqueness and endpoint referential integrity in one pass (mutation audit
+    /// S-043 AC3: none of its checks had direct model-level coverage; ad-format's tests
+    /// exercise them only through the parser).
+    #[test]
+    fn from_parts_validates_scale_ids_and_endpoints() {
+        // Valid document: two shapes + a connector referencing both (scale boundary = 1).
+        let objects = vec![
+            Object::Shape(shape("s1", "box")),
+            Object::Shape(shape("s2", "ellipse")),
+            Object::Connector(connector("c1", "s1", "s2")),
+        ];
+        let diagram = Diagram::from_parts(objects, 1, Default::default()).expect("valid");
+        assert_eq!(diagram.objects().len(), 3);
+        assert_eq!(diagram.scale(), 1);
+
+        // Scale zero is rejected at the boundary.
+        assert_eq!(
+            Diagram::from_parts(
+                vec![Object::Shape(shape("s1", "box"))],
+                0,
+                Default::default()
+            ),
+            Err(ModelError::ScaleTooSmall { scale: 0 })
+        );
+
+        // Duplicate ids are rejected (distinct ids in the valid case above must pass).
+        let dup = vec![
+            Object::Shape(shape("s1", "box")),
+            Object::Shape(shape("s1", "ellipse")),
+        ];
+        assert_eq!(
+            Diagram::from_parts(dup, 1, Default::default()),
+            Err(ModelError::DuplicateId(oid("s1")))
+        );
+
+        // An endpoint referencing a missing object is rejected (the valid case above
+        // proves an *existing* reference passes the same lookup).
+        let dangling = vec![
+            Object::Shape(shape("s1", "box")),
+            Object::Connector(connector("c1", "s1", "ghost")),
+        ];
+        assert_eq!(
+            Diagram::from_parts(dangling, 1, Default::default()),
+            Err(ModelError::UnknownObject(oid("ghost")))
+        );
     }
 
     /// FR15 — colors are presentation data on the aggregate: one role at a time,
