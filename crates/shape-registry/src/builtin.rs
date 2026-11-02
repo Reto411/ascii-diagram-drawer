@@ -6,10 +6,12 @@ use crate::geometry::{CellPos, Region};
 use crate::types::{AnchorSet, GeometryKind, RegionSet, ShapeType, TemplateGrid};
 
 /// The built-in catalog in deterministic order: box and ellipse (S-005) first, then the
-/// core UML set (FR18 / CR-015) in §14's list order.
-pub const BUILTIN_NAMES: [&str; 13] = [
+/// core UML set (FR18 / CR-015) in §14's list order, with the compartmented `class`
+/// shape (CR-021) leading the UML section.
+pub const BUILTIN_NAMES: [&str; 14] = [
     "box",
     "ellipse",
+    "class",
     "lollipop",
     "actor",
     "activation",
@@ -29,6 +31,7 @@ pub fn builtin_catalog() -> Vec<ShapeType> {
     vec![
         box_shape(),
         ellipse_shape(),
+        class_shape(),
         lollipop_shape(),
         actor_shape(),
         activation_shape(),
@@ -141,6 +144,43 @@ fn ellipse_shape() -> ShapeType {
         (0, 2),
         (8, 2),
     )
+}
+
+/// UML class box (CR-021): three compartments — name, attributes, methods — each
+/// declared as a shape-owned text region (FR19 / S-037), so the class's semantics are
+/// written through the double-click content window instead of the free label. The
+/// default label still stamps until region content overrides it (S-037 rule: regions
+/// win on overlap).
+fn class_shape() -> ShapeType {
+    let mut regions = RegionSet::new();
+    for (name, rect) in [
+        ("name", Region::new(1, 1, 11, 2)),
+        ("attributes", Region::new(1, 4, 11, 2)),
+        ("methods", Region::new(1, 7, 11, 2)),
+    ] {
+        regions.add(name, rect).expect("built-in region is valid");
+    }
+    ShapeType {
+        type_id: "class".into(),
+        name: "class".to_string(),
+        glyph_pattern: TemplateGrid::from_rows(&[
+            "+-----------+",
+            "|           |",
+            "|           |",
+            "+-----------+",
+            "|           |",
+            "|           |",
+            "+-----------+",
+            "|           |",
+            "|           |",
+            "+-----------+",
+        ])
+        .expect("built-in art is valid"),
+        anchor_set: standard_anchors((6, 0), (6, 9), (0, 4), (12, 4)),
+        geometry: GeometryKind::Pattern,
+        resize_rules: None,
+        regions,
+    }
 }
 
 /// UML interface lollipop: a small hollow circle on a stick.
@@ -324,11 +364,12 @@ mod tests {
     #[test]
     fn catalog_is_deterministic_and_contains_the_core_uml_set() {
         let catalog = builtin_catalog();
-        assert_eq!(catalog.len(), 13);
+        assert_eq!(catalog.len(), 14);
         let names: Vec<&str> = catalog.iter().map(|s| s.type_id.as_str()).collect();
         assert_eq!(names, BUILTIN_NAMES);
-        // FR18's minimum list, verbatim.
+        // FR18's minimum list, verbatim (CR-021 adds the class-diagram shape).
         for required in [
+            "class",
             "lollipop",
             "actor",
             "activation",
@@ -386,6 +427,21 @@ mod tests {
     fn uml_shapes_carry_their_exact_glyph_art() {
         let catalog = builtin_catalog();
         let art: &[(&str, &[&str])] = &[
+            (
+                "class",
+                &[
+                    "+-----------+",
+                    "|           |",
+                    "|           |",
+                    "+-----------+",
+                    "|           |",
+                    "|           |",
+                    "+-----------+",
+                    "|           |",
+                    "|           |",
+                    "+-----------+",
+                ],
+            ),
             (
                 "lollipop",
                 &[" _ ", "( )", "`-'", " | ", " | ", " | ", " | "],
@@ -487,6 +543,7 @@ mod tests {
         let catalog = builtin_catalog();
         // name -> (n, s, w, e)
         let anchors: &[(&str, [(u32, u32); 4])] = &[
+            ("class", [(6, 0), (6, 9), (0, 4), (12, 4)]),
             ("lollipop", [(1, 0), (1, 6), (0, 1), (2, 1)]),
             ("actor", [(3, 0), (3, 3), (2, 1), (4, 1)]),
             ("activation", [(2, 0), (2, 6), (0, 3), (4, 3)]),
@@ -523,11 +580,11 @@ mod tests {
         }
     }
 
-    /// FR19 — the compartmented UML shapes (component, deployment node, artifact, state)
-    /// declare exactly one `name` region covering their interior; every other built-in
-    /// stays label-only.
+    /// FR19 — the compartmented UML shapes declare their interior regions: component,
+    /// deployment node, artifact and state exactly one `name` region; the class box
+    /// (CR-021) its three compartments. Every other built-in stays label-only.
     #[test]
-    fn compartmented_builtins_declare_exactly_one_name_region() {
+    fn compartmented_builtins_declare_their_regions() {
         let catalog = builtin_catalog();
         // name -> exact region rect (x, y, width, height)
         type Rect = (u32, u32, u32, u32);
@@ -551,7 +608,7 @@ mod tests {
             );
         }
         for name in &BUILTIN_NAMES {
-            if expected.iter().any(|(n, _)| n == name) {
+            if expected.iter().any(|(n, _)| n == name) || *name == "class" {
                 continue;
             }
             let shape = catalog
@@ -560,5 +617,27 @@ mod tests {
                 .expect("in catalog");
             assert!(shape.regions.is_empty(), "{name} is label-only");
         }
+    }
+
+    /// CR-021 — the class box declares exactly its three compartments, one per UML
+    /// section, each covering the interior of its compartment (x 1..11 within the
+    /// 13-wide art; two content rows between the divider lines).
+    #[test]
+    fn class_declares_its_three_compartment_regions() {
+        let shape = builtin_catalog()
+            .into_iter()
+            .find(|s| s.type_id == "class")
+            .expect("class is a built-in");
+        assert_eq!(shape.regions.len(), 3, "three compartments");
+        // BTreeMap order: alphabetical by name.
+        let names: Vec<&str> = shape.regions.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["attributes", "methods", "name"]);
+        let rect = |r: Region| (r.x, r.y, r.width, r.height);
+        assert_eq!(rect(shape.regions.get("name").expect("name")), (1, 1, 11, 2));
+        assert_eq!(
+            rect(shape.regions.get("attributes").expect("attributes")),
+            (1, 4, 11, 2)
+        );
+        assert_eq!(rect(shape.regions.get("methods").expect("methods")), (1, 7, 11, 2));
     }
 }

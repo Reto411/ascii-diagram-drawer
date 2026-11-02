@@ -259,7 +259,7 @@ mod tests {
         let registry = ShapeRegistry::builtin();
         let catalog = RegistryCatalog::new(registry.clone());
         let ids: Vec<&str> = registry.builtins().map(|s| s.type_id.as_str()).collect();
-        assert_eq!(ids.len(), 13);
+        assert_eq!(ids.len(), 14);
 
         // Deterministic order across the seam: exactly the built-ins, in catalog order.
         let listed: Vec<String> = catalog.list().iter().map(|s| s.type_id.clone()).collect();

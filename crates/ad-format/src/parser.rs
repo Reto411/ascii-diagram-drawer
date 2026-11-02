@@ -1654,6 +1654,35 @@ mod tests {
         );
     }
 
+    /// CR-021: the compartmented class carries all three region clauses — parsed into
+    /// the instance's per-region content and re-emitted canonically (sorted by name),
+    /// so a saved diagram restores every compartment verbatim.
+    #[test]
+    fn class_shape_carries_its_three_region_clauses_through_round_trip() {
+        // The `\n` inside the quoted attribute content is the file-level escape for a
+        // line break (C6); written as \\n in this Rust literal.
+        let input = "ad 1.1\nscale 2\nshape class \"\" as c1 at 0 0 w 13 h 10 region methods \"move()\" region name \"Animal\" region attributes \"+ legs: int\\n- age: int\"\n";
+        let diagram = parse(input).expect("valid class statement");
+        match &diagram.objects()[0] {
+            Object::Shape(shape) => {
+                assert_eq!(shape.type_id, "class");
+                assert_eq!(shape.region_content("name"), Some("Animal"));
+                assert_eq!(
+                    shape.region_content("attributes"),
+                    Some("+ legs: int\n- age: int")
+                );
+                assert_eq!(shape.region_content("methods"), Some("move()"));
+            }
+            other => panic!("expected shape, got {other:?}"),
+        }
+        let out = serialize(&diagram);
+        assert_eq!(
+            out,
+            "ad 1.1\nscale 2\nshape class \"\" as c1 at 0 0 w 13 h 10 region attributes \"+ legs: int\\n- age: int\" region methods \"move()\" region name \"Animal\"\n"
+        );
+        assert_eq!(parse(&out).expect("re-parse"), diagram);
+    }
+
     /// AC2 (S-037): a region name declared twice in one shape statement is an error.
     #[test]
     fn shape_duplicate_region_clause_is_an_error() {

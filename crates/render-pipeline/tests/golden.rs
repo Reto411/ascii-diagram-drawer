@@ -53,6 +53,23 @@ fn ellipse(id: u32, label: &str, x: u32, y: u32) -> Object {
     )
 }
 
+/// A built-in UML class (CR-021) at its natural 13x10 size with per-compartment region
+/// content; the free label stays empty so only the regions stamp.
+fn class_obj(id: u32, x: u32, y: u32, name: &str, attributes: &str, methods: &str) -> Object {
+    let mut shape = ShapeInstance::new(
+        ObjectId::generated(id),
+        "class",
+        "",
+        CellPos::new(x, y),
+        CellSize::new(13, 10).expect("non-zero test size"),
+    )
+    .expect("valid shape");
+    shape.regions.insert("name".into(), name.into());
+    shape.regions.insert("attributes".into(), attributes.into());
+    shape.regions.insert("methods".into(), methods.into());
+    Object::Shape(shape)
+}
+
 fn text(id: u32, x: u32, y: u32, content: &str) -> Object {
     Object::Text(
         TextInstance::new(ObjectId::generated(id), CellPos::new(x, y), content)
@@ -150,6 +167,16 @@ fn scenarios() -> Vec<(&'static str, Diagram)> {
     vec![
         // A single box: corners and straights only (C1 rule table basics).
         ("box", diagram(1, vec![box_obj(0, "Hello", 0, 0, 9, 5)])),
+        // CR-021: the compartmented class — each region's content stamps into its own
+        // compartment; two-line attribute content maps one line per row (S-037 rule),
+        // and the 11-char method line fills its compartment edge-to-edge.
+        (
+            "class-compartmented",
+            diagram(
+                1,
+                vec![class_obj(0, 0, 0, "Animal", "+ legs: int\n- age: int", "move()")],
+            ),
+        ),
         // Pattern art stamped verbatim with a label on its space cells (ADR 007).
         ("ellipse", diagram(1, vec![ellipse(0, "DB", 0, 0)])),
         // AC2: the mixed diagram — box + ellipse + free text (quoted) in one render.

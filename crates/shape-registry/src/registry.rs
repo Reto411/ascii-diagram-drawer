@@ -202,6 +202,7 @@ mod tests {
                 "actor",
                 "artifact",
                 "box",
+                "class",
                 "component",
                 "decision",
                 "deployment",
