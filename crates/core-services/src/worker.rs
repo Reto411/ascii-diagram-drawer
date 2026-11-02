@@ -209,8 +209,11 @@ fn run_worker(receiver: mpsc::Receiver<PngWork>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the native (threaded-worker) tests below need timing helpers.
+    #[cfg(not(target_arch = "wasm32"))]
     use std::time::{Duration, Instant};
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// A 300×150 frame: rasterization takes well over 100 ms (measured ≈ 150 ms in
     /// release, slower in debug) — enough headroom for the timing assertions.
     fn large_grid() -> ResolvedGrid {
@@ -229,6 +232,9 @@ mod tests {
         ResolvedGrid::from_rows(&["+---+", "| A |", "+---+"]).expect("valid grid")
     }
 
+    // The threaded worker (and its queue/drop semantics) is native-only — wasm
+    // runs the inline executor, covered by the ungated tests below (S-019 AC2).
+    #[cfg(not(target_arch = "wasm32"))]
     /// Polls until the job leaves `Pending`, bounded so a hang fails loudly.
     fn wait_for(job: &PngJob) -> JobState {
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -244,6 +250,7 @@ mod tests {
     /// AC1 — a full bounded queue rejects with the typed error; nothing grows
     /// unbounded. With capacity 1 and a long job in flight, three rapid submits must
     /// include at least one `QueueFull` (and at most two successes).
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn overflow_is_a_typed_rejection() {
         let worker = PngWorker::with_capacity(1);
@@ -277,6 +284,7 @@ mod tests {
     /// AC2 — submitting does not block beyond the enqueue: for a job whose
     /// rasterization takes well over 100 ms, `submit` returns in milliseconds and the
     /// first poll still sees `Pending`; the result then arrives intact.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn submit_returns_while_rasterization_is_in_flight() {
         let worker = PngWorker::new();
@@ -309,6 +317,7 @@ mod tests {
 
     /// AC4 — the worker API and the direct exporter call produce byte-identical PNGs
     /// for the same grid (the shared-golden requirement: one code path either way).
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn worker_output_is_byte_identical_to_the_direct_call() {
         let worker = PngWorker::new();
@@ -357,6 +366,7 @@ mod tests {
     /// The remaining observable surfaces: a failed rasterization is surfaced as
     /// `Error`, `QueueFull` carries an actionable message, and `Default` builds the
     /// threaded worker (native) which serves a job end-to-end.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn error_results_and_queue_full_message_are_surfaced() {
         let (tx, rx) = mpsc::channel::<Result<Vec<u8>, ExportError>>();
@@ -385,6 +395,7 @@ mod tests {
 
     /// Drop semantics: dropping the worker stops new submissions but never loses
     /// already-submitted work — a queued job still completes after the drop.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn dropping_the_worker_still_completes_queued_jobs() {
         let worker = PngWorker::with_capacity(2);

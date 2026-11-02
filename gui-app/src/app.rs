@@ -128,7 +128,7 @@ impl Default for PreviewPane {
 /// dialog is available (wasm target, or a native host without a D-Bus session —
 /// S-039 / CR-001 AC5; on desktops the system dialog does this job instead).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PathPrompt {
+pub enum PathPrompt {
     /// Collecting a path to open.
     Open,
     /// Collecting a path to save the current document as (sets the current file).
@@ -218,7 +218,9 @@ pub struct DrawingApp {
     /// FR19 (CR-016) — the open region-content editor for a shape instance, if any.
     pub(crate) shape_text_edit: Option<ShapeTextEditState>,
     /// B-004 / ADR 017 v3 — the in-flight client-side window-resize gesture
-    /// (an edge/corner grip is being dragged); `None` when idle.
+    /// (an edge/corner grip is being dragged); `None` when idle. Native-only:
+    /// the browser resizes its own window, so on wasm this stays `None`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     resize_grab: Option<crate::appbar::ResizeGrab>,
     /// In-flight PNG export (S-015 RS4): ticked once per frame while the worker
     /// rasterizes; the UI stays responsive meanwhile (ADR 012).
@@ -461,14 +463,30 @@ impl DrawingApp {
     #[must_use]
     pub fn open(&mut self, path: &Path) -> crate::fileio::OpenOutcome {
         let outcome = crate::fileio::open(self.services.store.as_ref(), path);
+        self.apply_open(outcome)
+    }
+
+    /// Web target (S-019): apply a document delivered by the browser file picker —
+    /// same rules as [`Self::open`], but the content arrived already read, so it is
+    /// parsed through the seam's text parser instead of the store's `load`.
+    #[must_use]
+    #[cfg(target_arch = "wasm32")]
+    pub fn open_from_picked(&mut self, name: &str, text: &str) -> crate::fileio::OpenOutcome {
+        let outcome = crate::fileio::open_text(name, text);
+        self.apply_open(outcome)
+    }
+
+    /// The shared open rules (AC1): replace the model only on success; keep it and
+    /// show a notice on parse/IO failure; reset view state for new documents.
+    fn apply_open(&mut self, outcome: crate::fileio::OpenOutcome) -> crate::fileio::OpenOutcome {
         if let crate::fileio::OpenOutcome::Loaded {
             diagram,
             skipped_unknowns,
-            ..
+            path,
         } = &outcome
         {
             self.diagram = diagram.clone();
-            self.current_file = Some(path.to_path_buf());
+            self.current_file = Some(path.clone());
             self.skipped_unknowns = *skipped_unknowns;
             // A new document invalidates any in-flight interaction and starts the
             // view at the model origin (S-022).
@@ -477,6 +495,17 @@ impl DrawingApp {
         }
         self.status = crate::fileio::open_message(&outcome);
         outcome
+    }
+
+    /// Web target (S-019): once per frame, deliver a completed browser file pick to
+    /// the open flow. No-op on native.
+    #[cfg(target_arch = "wasm32")]
+    fn tick_web_open(&mut self) {
+        if let Some(picked) = crate::webio::take_picked() {
+            // The outcome is applied inside (`apply_open`); only the status line
+            // matters here.
+            let _ = self.open_from_picked(&picked.name, &picked.text);
+        }
     }
 
     /// AC2/AC4 — `Save` (or Ctrl+S): writes immediately for clean documents; for lossy
@@ -618,12 +647,23 @@ impl DrawingApp {
     /// the model and remembers the file; parse/IO errors keep it — S-014 RS2/RS5);
     /// no dialog available → the inline prompt.
     pub fn begin_open(&mut self) {
-        match self.ask_dialog(DialogKind::Open, None) {
-            DialogResult::Chosen(path) => {
-                let _ = self.open(&path);
+        #[cfg(target_arch = "wasm32")]
+        {
+            // S-019: no system dialogs in the browser — the DOM file picker stands
+            // in; its result arrives through [`Self::tick_web_open`] on a later frame.
+            if let Err(e) = crate::webio::pick_ad_file() {
+                self.status = format!("Could not open the file picker: {e}");
             }
-            DialogResult::Cancelled => self.status = "Open cancelled".to_owned(),
-            DialogResult::Unavailable(_) => self.begin_path_prompt(PathPrompt::Open),
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match self.ask_dialog(DialogKind::Open, None) {
+                DialogResult::Chosen(path) => {
+                    let _ = self.open(&path);
+                }
+                DialogResult::Cancelled => self.status = "Open cancelled".to_owned(),
+                DialogResult::Unavailable(_) => self.begin_path_prompt(PathPrompt::Open),
+            }
         }
     }
 
@@ -812,6 +852,24 @@ impl DrawingApp {
 
     /// FR13 (CR-005) — change the UI theme from the Options menu: applies live to
     /// the context and persists to the app config file. Persistence failures are
+    /// Persists the current options to the platform store (CR-005 / S-019): the
+    /// config file on native, `localStorage` on web. `None` = no store to write to
+    /// (native without a config path — nothing to report); otherwise the save result.
+    fn persist_config(&self) -> Option<Result<(), String>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = self.config_path.as_ref()?;
+            Some(self.config.save(path).map_err(|e| e.to_string()))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // `config_path` is a native concept — `directories` is stubbed to `None`
+            // on wasm, so the web build always has exactly one store (localStorage).
+            debug_assert!(self.config_path.is_none());
+            Some(self.config.save_web())
+        }
+    }
+
     /// reported in the status bar, never fatal.
     pub fn set_theme(&mut self, ctx: &egui::Context, theme: Theme) {
         if theme == self.config.theme {
@@ -820,11 +878,9 @@ impl DrawingApp {
         self.config.theme = theme;
         ctx.set_theme(theme.preference());
         self.applied_theme = Some(theme);
-        match &self.config_path {
-            Some(path) => match self.config.save(path) {
-                Ok(()) => self.status = format!("Theme: {} (saved)", theme.short()),
-                Err(e) => self.status = format!("Could not save options: {e}"),
-            },
+        match self.persist_config() {
+            Some(Ok(())) => self.status = format!("Theme: {} (saved)", theme.short()),
+            Some(Err(e)) => self.status = format!("Could not save options: {e}"),
             None => self.status = format!("Theme: {}", theme.short()),
         }
     }
@@ -857,12 +913,7 @@ impl DrawingApp {
             .map_err(|_| format!("\"{hex_text}\" is not a #rrggbb color"))?;
         self.diagram.set_color(role, Some(rgb));
         self.config.record_recent_color(&rgb.to_hex());
-        let mut saved = true;
-        if let Some(path) = &self.config_path
-            && self.config.save(path).is_err()
-        {
-            saved = false;
-        }
+        let saved = !matches!(self.persist_config(), Some(Err(_)));
         self.status = format!(
             "{} color set to {}{}",
             role.label(),
@@ -2312,6 +2363,10 @@ impl DrawingApp {
         // completion the exact bytes are written and the "exporting" state clears.
         self.tick_png_export();
 
+        // S-019 — deliver a completed browser file pick (web only; no-op on native).
+        #[cfg(target_arch = "wasm32")]
+        self.tick_web_open();
+
         // FR13 (CR-005) / FR14 (CR-006, ADR 017) — apply the configured theme
         // exactly once per change. At startup (`applied_theme` is None) this
         // re-runs what `theme::install` already did before the first pass
@@ -2778,9 +2833,7 @@ impl DrawingApp {
                         for (key, open) in toggles {
                             self.config.set_sidebar_expanded(&key, open);
                         }
-                        if let Some(path) = &self.config_path
-                            && let Err(e) = self.config.save(path)
-                        {
+                        if let Some(Err(e)) = self.persist_config() {
                             self.status = format!("Could not save options: {e}");
                         }
                     }

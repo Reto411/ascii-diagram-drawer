@@ -26,14 +26,18 @@ pub mod registry_state;
 pub mod renderer;
 pub mod services;
 pub mod store;
+#[cfg(target_arch = "wasm32")]
+pub mod webio;
 pub mod worker;
 
 pub use catalog::RegistryCatalog;
-pub use collections::{CollectionLoadWarning, load_from_dir};
+pub use collections::{CollectionLoadWarning, load_from_dir, load_from_text};
 pub use exporter::GridExporter;
 pub use preview::{RgbaImage, text_to_rgba};
 pub use registry_state::SharedRegistry;
 pub use renderer::PipelineRenderer;
 pub use services::Services;
-pub use store::{FsStore, MemoryStore};
+pub use store::{FsStore, MemoryStore, parse_ad_text};
+#[cfg(target_arch = "wasm32")]
+pub use webio::{WebStore, download_bytes};
 pub use worker::{JobState, PngJob, PngWorker, QueueFull};

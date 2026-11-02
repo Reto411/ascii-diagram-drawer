@@ -126,17 +126,27 @@ impl PngExport {
     }
 }
 
-/// Writes export bytes to `path` on native targets; wasm has no filesystem — the
-/// browser download lands in S-019 (same sanctioned exception as S-014's `.txt`).
+/// Writes export bytes to `path` on native targets; on web (S-019) the "file" is a
+/// browser download carrying the requested file name (same sanctioned exception as
+/// S-014's `.txt`).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::write(path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))
 }
 
-/// AC — web target: no filesystem; the browser download lands in S-019.
+/// Web target (S-019): a browser download with the right MIME type for the extension.
 #[cfg(target_arch = "wasm32")]
-pub fn write_bytes_file(_path: &Path, _bytes: &[u8]) -> Result<(), String> {
-    Err("export download arrives with the wasm milestone (S-019)".to_owned())
+pub fn write_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("export");
+    let mime = match path.extension().and_then(|e| e.to_str()) {
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
+    };
+    core_services::download_bytes(name, mime, bytes.to_vec())
 }
 
 #[cfg(test)]

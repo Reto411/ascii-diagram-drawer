@@ -28,7 +28,11 @@
 //! release) and silently did nothing on KDE Plasma/KWin — see B-004.
 
 use eframe::egui;
-use egui::{Align, Layout, Pos2, Rect, RichText, Sense, Ui};
+use egui::{Pos2, RichText, Sense, Ui};
+// Native-only: the window controls and edge/corner resize grips (NFR1 — the
+// browser keeps its own chrome) are the sole users of these types.
+#[cfg(not(target_arch = "wasm32"))]
+use egui::{Align, Layout, Rect};
 
 /// The app bar height in points: M3's 64dp top app bar is mobile-sized — a
 /// dense desktop tool wants one compact row.
@@ -143,6 +147,7 @@ pub fn resize_step(grab: ResizeGrab, pointer: Pos2) -> (egui::Vec2, Option<Pos2>
 }
 
 /// The cursor icon for a resize direction.
+#[cfg(not(target_arch = "wasm32"))]
 fn cursor_for(dir: egui::viewport::ResizeDirection) -> egui::CursorIcon {
     use egui::viewport::ResizeDirection::*;
     match dir {
@@ -159,6 +164,7 @@ fn cursor_for(dir: egui::viewport::ResizeDirection) -> egui::CursorIcon {
 
 /// The eight grip zones for a window rect: edges first, corners last (on a
 /// hit-test tie the later widget wins, so a corner owns its own square).
+#[cfg(not(target_arch = "wasm32"))]
 fn grip_zones(screen: &Rect) -> [(&'static str, Rect, egui::viewport::ResizeDirection); 8] {
     let (l, t) = (screen.min.x, screen.min.y);
     let (r, b) = (screen.max.x, screen.max.y);
@@ -245,10 +251,10 @@ pub fn show(ui: &mut Ui, title: &str) {
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
                 ui.label(RichText::new(title).strong());
+                // NFR1: window controls exist only where a window exists — the
+                // browser target keeps its own chrome (no fake buttons).
+                #[cfg(not(target_arch = "wasm32"))]
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // NFR1: window controls exist only where a window exists —
-                    // the browser target keeps its own chrome (no fake buttons).
-                    #[cfg(not(target_arch = "wasm32"))]
                     window_controls(ui);
                 });
             });

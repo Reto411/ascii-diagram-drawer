@@ -12,7 +12,7 @@ use crate::collections::{CollectionLoadWarning, load_from_dir};
 use crate::exporter::GridExporter;
 use crate::registry_state::SharedRegistry;
 use crate::renderer::PipelineRenderer;
-use crate::store::{FsStore, MemoryStore};
+use crate::store::FsStore;
 use crate::worker::PngWorker;
 
 /// All application services behind the ADR 009 seam. The GUI depends only on this
@@ -83,8 +83,20 @@ impl Services {
     #[must_use]
     pub fn web() -> Self {
         let state = SharedRegistry::standalone(ShapeRegistry::builtin());
+        // Target-aware store (S-019): on wasm the session-memory store also triggers a
+        // browser download on every save; native keeps the plain in-memory store.
+        let store: Arc<dyn DiagramStore> = {
+            #[cfg(target_arch = "wasm32")]
+            {
+                Arc::new(crate::webio::WebStore::default())
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                Arc::new(crate::store::MemoryStore::default())
+            }
+        };
         Self {
-            store: Arc::new(MemoryStore::default()),
+            store,
             renderer: Arc::new(PipelineRenderer::with_shared(state.clone())),
             exporter: Arc::new(GridExporter),
             catalog: Arc::new(RegistryCatalog::with_shared(state)),

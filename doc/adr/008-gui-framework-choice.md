@@ -3,7 +3,7 @@ title: 008 - gui-framework-choice
 description: which GUI framework targets native desktop AND web/WASM from one Rust codebase — decided egui/eframe via weighted decision matrix (status proposed); read before any GUI code
 scope: GUI / tech stack
 status: accepted
-updated: 2026-10-29
+updated: 2026-11-02
 version: 3
 ---
 
@@ -82,6 +82,7 @@ Remaining verification happens *inside* the first GUI milestone, not before it: 
 
 ## Version history
 
+- **v4 (2026-11-02):** The browser half of the milestone matrix is closed by S-019 — no framework rework needed. `gui-app` split into lib + bin (`cdylib` for wasm, `rlib` for native/tests): one app codebase with two thin entry points — native `run_native()` and web `src/web.rs` (eframe 0.37 `WebRunner` + `#[wasm_bindgen] WebHandle`, per eframe's documented pattern). Trunk 0.22 builds the servable static bundle (`cd gui-app && trunk build --release` → `gui-app/dist/`); `cargo check -p gui-app --target wasm32-unknown-unknown` exits 0. The full core test suite runs **unmodified** on wasm: standard libtest binaries compiled to `wasm32-wasip1`, executed under Node WASI via `scripts/wasm-core-tests.mjs` (5 crates, 343 tests — QS4's draft proposed `wasm-bindgen-test`; the deviation is recorded in §6.3; goldens byte-identical). Web fallbacks are cfg-gated at the app/service seams only (Q2.2 held): file IO → DOM picker + download anchor, options → localStorage, system dialogs → inline prompt, PNG worker → inline executor, window controls/grips → hidden. Bundle measured 13,137,832 B uncompressed/unoptimized (`wasm-opt` skipped — sandbox egress blocks the binaryen download) → open risk R1 against the proposed 2 MB P3 budget. Manual browser smoke checklist recorded in S-019's Verification.
 - **v3 (2026-10-29):** status `proposed` → `accepted`. First GUI milestone (S-012) implemented: eframe/egui 0.37 app with WYSIWYG canvas, template sidebar, click-to-place and drag with live re-render; native build + wasm compile check pass, interaction logic covered by headless unit tests. API churn was manageable (0.36+ moved to a scene-based `App::ui(&mut Ui)` API; `NativeOptions` is now native-only) — no fallback to Slint needed. Browser runtime verification (real web bundle) remains S-019.
 - **v2 (2026-10-18):** joint evaluation completed — weights and scores agreed as drafted; **egui/eframe selected** (48/50), Slint recorded as fallback (46). Verification of trailing candidates deprioritized. Decision pending implementation (status `proposed`).
 - **v1 (2026-10-18):** opened for joint evaluation — candidate evidence gathered, weighted matrix drafted (provisional). No decision yet.

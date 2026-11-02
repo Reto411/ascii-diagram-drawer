@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# S-019: `cdylib` is the wasm entry (Trunk/wasm-bindgen); `rlib` keeps native tests linking.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 # Allowed edges per §8.3: { ui-api, core-services, diagram-model } only — never the
 # other context crates directly (ADR 009). eframe/egui land in S-012.
 [dependencies]
@@ -32,3 +36,25 @@ workspace = true
 
 [target.'cfg(not(target_arch="wasm32"))'.dependencies]
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+
+# Web build (S-019): the `#[wasm_bindgen]` entry glue (`web.rs`) and the DOM file
+# picker / localStorage persistence (`webio.rs`, `config.rs`). eframe brings its own
+# wasm deps for the renderer; these are only what OUR code touches directly.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+log = "0.4"
+web-sys = {
+    version = "0.3",
+    features = [
+        "CssStyleDeclaration",
+        "Document",
+        "Element",
+        "File",
+        "FileList",
+        "HtmlCanvasElement",
+        "HtmlInputElement",
+        "Storage",
+        "Window",
+    ],
+}

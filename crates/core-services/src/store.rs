@@ -18,6 +18,20 @@ fn map_parse(err: ad_format::ParseError) -> StoreError {
     }
 }
 
+/// Text-side twin of [`FsStore::load`] for targets where the file content arrives
+/// already read (browser file picker — S-019): parses `.ad` text into the seam's
+/// [`LoadedDocument`] with the same error mapping as the filesystem store.
+///
+/// # Errors
+/// [`StoreError::Parse`] when the text is not a valid `.ad` document (line/column kept).
+pub fn parse_ad_text(text: &str) -> Result<LoadedDocument, StoreError> {
+    let document = ad_format::parse_document(text).map_err(map_parse)?;
+    Ok(LoadedDocument {
+        skipped_unknowns: document.unknown_count(),
+        diagram: document.diagram,
+    })
+}
+
 /// Filesystem-backed store (native targets): reads/writes `.ad` files. Stateless —
 /// every call touches the disk at `path`.
 #[derive(Debug, Default, Clone, Copy)]

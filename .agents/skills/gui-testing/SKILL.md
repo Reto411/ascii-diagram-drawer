@@ -127,4 +127,9 @@ Known rasterizer conventions (why the PNGs match what a GPU would show): epaint 
 
 ## wasm target
 
-This skill covers the **native** target (headless frame pumping + software rasterizer). The web milestone (S-019) verifies differently: `cargo check -p gui-app --target wasm32-unknown-unknown` + the headless core test suite on wasm — there is no browser in the isolated devcontainer, so no screenshots for wasm.
+This skill covers the **native** target (headless frame pumping + software rasterizer). The web milestone (S-019, done 2026-11-02) verifies differently — there is no browser in the isolated devcontainer, so no screenshots for wasm:
+
+- `cd gui-app && trunk build --release` → servable static bundle in `gui-app/dist/` (Trunk 0.22 + eframe `WebRunner`; `data-wasm-opt="0"` because sandbox egress blocks the binaryen download — size is an unoptimized upper bound, risk R1)
+- `cargo check -p gui-app --target wasm32-unknown-unknown` exits 0
+- core test suite on wasm: `node scripts/wasm-core-tests.mjs` — standard libtest binaries compiled to `wasm32-wasip1`, run under Node WASI (per-crate cwd preopen so golden paths resolve); no `wasm-bindgen-test`
+- manual browser smoke checklist for a human lives in [S-019's Verification](../../../doc/stories/S-019-wasm-web-milestone.md#verification)

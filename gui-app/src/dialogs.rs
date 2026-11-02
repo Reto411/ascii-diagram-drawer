@@ -236,6 +236,9 @@ mod tests {
         );
     }
 
+    // Native-only: `RfdBackend` does not exist on wasm (no system dialogs —
+    // S-019 / ADR 018).
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn rfd_backend_is_unavailable_without_a_dbus_session() {
         // Never touch the environment (tests run in parallel and share it). On a

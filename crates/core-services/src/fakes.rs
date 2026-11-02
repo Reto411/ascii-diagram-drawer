@@ -207,6 +207,9 @@ impl Exporter for FakeExporter {
 #[derive(Debug, Default)]
 pub struct FakeCatalog {
     entries: Mutex<BTreeMap<String, (ShapeInfo, Vec<AnchorInfo>)>>,
+    /// The last `(name, text)` handed to [`import_collection`](ShapeCatalog::import_collection) —
+    /// test hook for the web import flow (S-019).
+    last_import: Mutex<Option<(String, String)>>,
 }
 
 impl FakeCatalog {
@@ -218,6 +221,15 @@ impl FakeCatalog {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(info.type_id.clone(), (info, anchors));
         self
+    }
+
+    /// The last `(name, text)` passed to `import_collection`, if any (test hook).
+    #[must_use]
+    pub fn last_import(&self) -> Option<(String, String)> {
+        self.last_import
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -284,6 +296,17 @@ impl ShapeCatalog for FakeCatalog {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(info.type_id.clone(), (info, template.anchors.clone()));
+        Ok(())
+    }
+
+    fn import_collection(&self, name: &str, text: &str) -> Result<(), CatalogError> {
+        // The fake does not parse `.adc` — it records the call (the real backend's
+        // validation is covered in core-services' own tests).
+        *self
+            .last_import
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((name.to_owned(), text.to_owned()));
         Ok(())
     }
 }

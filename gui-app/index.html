@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ascii-diagram-drawer</title>
+    <!-- S-019 AC1: Trunk builds the crate's lib target (wasm-bindgen glue) and replaces
+         this link with a bootstrap module that inits the wasm and exposes all exports on
+         `window.wasmBindings`, then dispatches `TrunkApplicationStarted`. -->
+    <!-- data-wasm-opt="0": this sandbox's proxy blocks the binaryen download (github.com),
+         so wasm-opt is skipped; the measured bundle size is an unoptimized upper bound. -->
+    <link data-trunk rel="rust" data-target-name="gui_app" data-wasm-opt="0" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1e1e1e;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="egui_canvas"></canvas>
+    <script type="module">
+      // Runs after Trunk's bootstrap (modules execute in document order), so the wasm
+      // is already instantiated and `window.wasmBindings` holds every export.
+      const { WebHandle } = window.wasmBindings;
+
+      const handle = new WebHandle();
+      const canvas = document.getElementById('egui_canvas');
+      try {
+        await handle.start(canvas);
+      } catch (err) {
+        console.error('ascii-diagram-drawer failed to start', err);
+      }
+      // Surface wasm panics in the browser instead of a silently frozen canvas:
+      // WebRunner catches frame panics and stops rendering, so poll for them.
+      const watch = () => {
+        if (handle.hasPanicked()) {
+          document.body.innerText = `panic: ${handle.panicMessage()}\n\n${handle.panicCallstack() ?? ''}`;
+          return;
+        }
+        requestAnimationFrame(watch);
+      };
+      requestAnimationFrame(watch);
+    </script>
+  </body>
+</html>

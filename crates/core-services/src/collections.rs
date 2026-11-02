@@ -8,6 +8,30 @@ use std::path::Path;
 
 use shape_registry::{ShapeRegistry, parse_collection};
 
+/// Loads one collection from `.adc` **text** (no filesystem — the web import path,
+/// S-019 / ADR 009 v5): the same validation as directory discovery. `name` is the
+/// collection's file stem; a nameless document keeps it.
+///
+/// # Errors
+/// The single [`CollectionLoadWarning`] when the text is not a valid `.adc`
+/// document (parse errors carry line/column in the reason).
+pub fn load_from_text(
+    registry: &mut ShapeRegistry,
+    name: &str,
+    text: &str,
+) -> Result<(), CollectionLoadWarning> {
+    parse_collection(name, text)
+        .map(|file| registry.add_collection(file.collection))
+        .map_err(|e| CollectionLoadWarning {
+            file: if name.is_empty() {
+                "(imported collection)".to_owned()
+            } else {
+                format!("{name}.adc")
+            },
+            reason: e.to_string(),
+        })
+}
+
 /// A collection file that was skipped at startup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectionLoadWarning {

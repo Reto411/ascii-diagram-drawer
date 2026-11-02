@@ -3,7 +3,7 @@ title: "arc42-6-quality-model"
 description: complete quality attribute set — quality tree, measurable quality scenarios (usage + change), and the test strategy/coverage gates that verify them
 scope: architecture / quality assurance
 status: draft
-updated: 2026-10-23
+updated: 2026-11-02
 ---
 
 # 6. Quality Model
@@ -51,7 +51,7 @@ Performance (from §5.3 budgets — proposed, pending confirmation)
 | QS1 | Q1.1 | Rendering any saved diagram model twice — on any supported platform, at any time — yields **byte-identical** text output (0 diff bytes) | Golden-file tests run on **every** CI platform; double-render assertion in unit tests |
 | QS2 | Q1.2 | For any model, text, SVG, and PNG exports are derived from one resolved grid: a change to the model changes all three outputs consistently (no export can diverge from the text) | Integration test: fixture rendered through all three exporters; snapshot comparison of the shared grid stage |
 | QS3 | Q1.3 | Rendering with different wall-clock times, locales, thread counts, and environment variables yields identical output (pure function) | Unit tests varying locale/time env where the platform allows; code review gate: no `Instant`/env/locale access in core (clippy lint list) |
-| QS4 | Q2.1 | CI on Windows, macOS, Linux runners **and** the wasm32 target passes 100% of the core test suite unmodified | CI matrix job per target; wasm tests via `wasm-bindgen-test` |
+| QS4 | Q2.1 | CI on Windows, macOS, Linux runners **and** the wasm32 target passes 100% of the core test suite unmodified | CI matrix job per target; wasm tests: standard libtest binaries compiled to `wasm32-wasip1`, run under Node WASI via `scripts/wasm-core-tests.mjs` (S-019 — deviates from the draft's `wasm-bindgen-test`: same harness, no new test framework) |
 | QS5 | Q2.2 | Adding a new platform target requires **zero** changes to core crates (adaptation only in app/GUI crates) | Architecture test: core compiles for all targets with an allow-listed set of `cfg` gates; review gate on any new `cfg(target_*)` in core |
 | QS6 | Q3.1 | Opening any .ad file in a plain text editor shows every shape, label, position, and anchor as human-readable text — no binary or base64 sections | Format lint test: parser rejects/flags non-UTF-8 or blob payloads; fixture review in spec PRs |
 | QS7 | Q3.2 | Saving then loading any diagram (including generated random models) yields a semantically identical model — 0 semantic diff | Property-based round-trip test (`proptest`): generate → save → load → assert equality |

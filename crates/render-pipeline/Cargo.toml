@@ -9,8 +9,17 @@ license.workspace = true
 diagram-model = { path = "../diagram-model" }
 shape-registry = { path = "../shape-registry" }
 
-[dev-dependencies]
+# proptest's default `fork`/`timeout` features need rusty-fork (process forking),
+# which does not compile for wasm — the wasm32 test runs (S-019 AC2) use in-process
+# execution; native keeps the full defaults.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1.12.0"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+# proptest → rand → getrandom: bare wasm has no OS entropy source — `wasm_js`
+# switches getrandom to crypto.getRandomValues (S-019 AC2).
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [lints]
 workspace = true

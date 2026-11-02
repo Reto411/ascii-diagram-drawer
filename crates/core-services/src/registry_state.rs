@@ -102,6 +102,25 @@ impl SharedRegistry {
         Ok(())
     }
 
+    /// Imports one collection from `.adc` **text** (the web path — S-019 / ADR 009 v5):
+    /// validates the document, then updates the shared registry so every service that
+    /// reads it lists and resolves the collection at once. Re-importing a name
+    /// replaces that collection (idempotent). The registry is left unchanged on any
+    /// failure.
+    ///
+    /// # Errors
+    /// [`CatalogError::Invalid`] for an empty/bad collection name or invalid `.adc`
+    /// text (parse errors carry line/column in the message).
+    pub fn import_collection(&self, name: &str, text: &str) -> Result<(), CatalogError> {
+        invalid_token(name, "collection name")?;
+        let file =
+            shape_registry::parse_collection(name, text).map_err(|e| CatalogError::Invalid {
+                message: e.to_string(),
+            })?;
+        self.lock().add_collection(file.collection);
+        Ok(())
+    }
+
     /// Validates the seam-level [`NewTemplate`] into a registry [`ShapeType`].
     fn build_shape(
         &self,

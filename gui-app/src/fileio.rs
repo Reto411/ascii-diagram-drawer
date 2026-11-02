@@ -40,6 +40,35 @@ pub enum OpenOutcome {
     IoError { path: PathBuf, message: String },
 }
 
+/// Text-side twin of [`open`] for targets where the content arrives already read
+/// (browser file picker — S-019): parses `.ad` text through the seam's parser with
+/// the same outcome vocabulary; `name` is the document's display name.
+#[must_use]
+pub fn open_text(name: &str, text: &str) -> OpenOutcome {
+    let path = PathBuf::from(name);
+    match core_services::parse_ad_text(text) {
+        Ok(LoadedDocument {
+            diagram,
+            skipped_unknowns,
+        }) => OpenOutcome::Loaded {
+            path,
+            diagram,
+            skipped_unknowns,
+        },
+        Err(StoreError::Parse {
+            line,
+            column,
+            message,
+        }) => OpenOutcome::ParseError {
+            path,
+            line,
+            column,
+            message,
+        },
+        Err(StoreError::Io { message }) => OpenOutcome::IoError { path, message },
+    }
+}
+
 /// Runs the open flow against the store seam (AC1): parse errors and IO errors are
 /// mapped to notices; nothing here mutates any model.
 #[must_use]
@@ -196,17 +225,21 @@ pub fn text_output(services: &Services, diagram: &Diagram) -> Result<String, Str
 
 /// Writes an auxiliary text output to `path` (the AC3 file sink). This is the single
 /// sanctioned direct-file-access helper in gui-app — `.ad` documents still go through
-/// the store seam exclusively (ADR 009 v4 notes). Native only: on web targets the
-/// browser download replaces this call (S-019).
+/// the store seam exclusively (ADR 009 v4 notes).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_text_file(path: &Path, text: &str) -> Result<(), String> {
     std::fs::write(path, text).map_err(|err| format!("{}: {err}", path.display()))
 }
 
-/// Web target: no filesystem — the browser download lands in S-019.
+/// Web target (S-019): the "file" is a browser download carrying the requested file
+/// name — the user's OS decides where it lands.
 #[cfg(target_arch = "wasm32")]
-pub fn write_text_file(_path: &Path, _text: &str) -> Result<(), String> {
-    Err("not available on web — the text download lands with the wasm milestone (S-019)".to_owned())
+pub fn write_text_file(path: &Path, text: &str) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("output.txt");
+    core_services::download_bytes(name, "text/plain", text.as_bytes().to_vec())
 }
 
 #[cfg(test)]

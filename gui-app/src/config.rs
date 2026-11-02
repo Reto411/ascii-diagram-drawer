@@ -122,7 +122,40 @@ impl AppConfig {
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(path, json + "\n")
     }
+
+    /// Web (S-019): loads the options from `localStorage` — the web stand-in for the
+    /// config file (same JSON, same lenient loading). Never fatal: no window, no
+    /// storage access, or corrupt text all yield the defaults.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub fn load_web() -> Self {
+        web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .and_then(|s| s.get_item(WEB_STORAGE_KEY).ok().flatten())
+            .map(|text| serde_json::from_str(&text).unwrap_or_default())
+            .unwrap_or_default()
+    }
+
+    /// Web (S-019): writes the options to `localStorage`, best-effort — the caller
+    /// reports failures through the status bar, like native saves do.
+    ///
+    /// # Errors
+    /// A message when storage is unavailable or the write fails.
+    #[cfg(target_arch = "wasm32")]
+    pub fn save_web(&self) -> Result<(), String> {
+        let storage = web_sys::window()
+            .and_then(|w| w.local_storage().ok().flatten())
+            .ok_or("no access to localStorage")?;
+        let json = serde_json::to_string(self).map_err(|e| e.to_string())?;
+        storage
+            .set_item(WEB_STORAGE_KEY, &json)
+            .map_err(|e| format!("localStorage write failed: {e:?}"))
+    }
 }
+
+/// Web (S-019): the `localStorage` key for the persisted options.
+#[cfg(target_arch = "wasm32")]
+const WEB_STORAGE_KEY: &str = "ascii-diagram-drawer.config";
 
 /// The default options file: the platform config directory
 /// (`$XDG_CONFIG_HOME`/`~/.config`, `%APPDATA%`, `~/Library/Application Support`)

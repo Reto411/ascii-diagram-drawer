@@ -112,4 +112,10 @@ pub trait ShapeCatalog {
     /// to its `.adc` file and updating every service that reads the catalog — the
     /// sidebar lists it immediately and the renderer resolves it (S-017 AC3).
     fn register(&self, collection: &str, template: NewTemplate) -> Result<(), CatalogError>;
+
+    /// Imports one collection from `.adc` **text** under `name` — the web mechanism
+    /// for user-supplied collections (ADR 009 v5; S-019): targets without a
+    /// filesystem have no discovery directory, so the document arrives pre-read.
+    /// Updates every service that reads the catalog, like [`register`](Self::register).
+    fn import_collection(&self, name: &str, text: &str) -> Result<(), CatalogError>;
 }

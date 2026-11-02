@@ -2,9 +2,11 @@
 title: handoff-s019
 description: session handoff — S-018 done and committed; what the next session needs to start S-019 (wasm milestone), incl. wasm tooling recon
 scope: delivery / gui-app / devcontainer
-status: stable
-updated: 2026-10-29
+status: superseded
+updated: 2026-11-02
 ---
+
+> **Superseded (2026-11-02):** S-019 is DONE — see [S-019](../../doc/stories/S-019-wasm-web-milestone.md) (all 5 ACs verified) and the BOARD.md Done row. Kept for history (the wasm tooling recon below informed the Trunk/wasip1 choices).
 
 # Handoff: S-018 done → S-019 next
 

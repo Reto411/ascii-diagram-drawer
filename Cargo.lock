@@ -131,6 +131,7 @@ name = "ad-format"
 version = "0.1.0"
 dependencies = [
  "diagram-model",
+ "getrandom 0.4.3",
  "proptest",
 ]
 
@@ -785,11 +786,14 @@ dependencies = [
  "ad-format",
  "diagram-model",
  "exporters",
+ "js-sys",
  "render-pipeline",
  "shape-registry",
  "tempfile",
  "toml",
  "ui-api",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -855,6 +859,7 @@ dependencies = [
 name = "diagram-model"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.4.3",
  "proptest",
 ]
 
@@ -1517,9 +1522,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.1",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1660,12 +1667,16 @@ dependencies = [
  "diagram-model",
  "directories",
  "eframe",
+ "log",
  "png 0.17.16",
  "rfd",
  "serde",
  "serde_json",
  "tempfile",
  "ui-api",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -3334,6 +3345,7 @@ name = "render-pipeline"
 version = "0.1.0"
 dependencies = [
  "diagram-model",
+ "getrandom 0.4.3",
  "proptest",
  "shape-registry",
 ]

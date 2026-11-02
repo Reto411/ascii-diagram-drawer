@@ -158,6 +158,10 @@ impl ShapeCatalog for RegistryCatalog {
     fn register(&self, collection: &str, template: NewTemplate) -> Result<(), CatalogError> {
         self.state.register(collection, template)
     }
+
+    fn import_collection(&self, name: &str, text: &str) -> Result<(), CatalogError> {
+        self.state.import_collection(name, text)
+    }
 }
 
 #[cfg(test)]
