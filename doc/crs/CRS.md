@@ -3,7 +3,7 @@ title: change-request-board
 description: persistent change-request board — open / closed; single source of truth for CR status (CRs live in doc/crs/CR-NNN-*.md)
 scope: delivery
 status: stable
-updated: 2026-11-01
+updated: 2026-11-02
 ---
 
 # Change Request Board
@@ -14,13 +14,13 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Priority | Status | File |
 |----|-------|----------|--------|------|
-| CR-020 | Arrow object behavior and Visio-style line handles — move by drag, visible endpoint/bend handles, double-click bend insertion, in-canvas tip dropdown | high | accepted | [CR-020-arrow-object-behavior-and-line-handles.md](CR-020-arrow-object-behavior-and-line-handles.md) |
 | CR-021 | UML category with per-diagram subcategories (Class/Component/Activity) and clearer template entries — whole-row grabable, separator lines | high | accepted | [CR-021-uml-category-and-template-row-clarity.md](CR-021-uml-category-and-template-row-clarity.md) |
 
 ## Closed
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
+| CR-020 | Arrow object behavior and Visio-style line handles — move by drag, visible endpoint/bend handles, double-click bend insertion, in-canvas tip dropdown | 2026-11-02 | implemented — S-041, commit `55abd09` (FR9; sticky anchor drag + LineHandlesOverlay, ADR 013 v7) |
 | CR-019 | Window close button at the top right (rightmost of the app-bar controls) | 2026-11-02 | implemented — S-040, commit `a507e44` (FR14; app-bar control order) |
 | CR-001 | Native file dialogs for Open, Save and Export | 2026-11-01 | implemented — S-039, commit `5f3edd1` (FR2/FR4/FR5; rfd + xdg-portal seam) |
 | CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | 2026-11-01 | implemented — S-036, commit `6327c3d` (FR18) |

@@ -2,7 +2,7 @@
 title: Arrow object behavior and Visio-style line handles
 description: change request — connectors/arrows behave as normal objects (drag body moves the whole arrow), selected arrows show visible draggable handles at both endpoints and all bends, double-click on a segment inserts a bend, and an in-canvas dropdown selects the tip style per end; filed 2026-11-01
 scope: change request — connector/arrow interaction model (FR9)
-status: accepted
+status: implemented
 filed: 2026-11-01
 priority: high
 format-compat: none
@@ -58,3 +58,17 @@ On acceptance: update §14 FR9 to the proposed wording (this CR keeps the verbat
 - [ ] **Reject** — <reason>
 
 Decided: accepted (2026-11-01) — blanket acceptance by the user: "Fix all bugs, implement all change requests and do extensive regression testing including End to end tests". Applied on acceptance: §14 FR9 updated, concept C9 GUI paragraph updated, skeleton story S-041 on the board. ADR 013 untouched (routing stays a pure function of endpoint/bend positions — no version bump).
+
+## Implementation
+
+> Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
+
+Landed as **S-041**, commit `55abd09` (2026-11-02), all in `gui-app` (no model/format changes — every needed operation pre-existed):
+
+1. **Move like an object** — `editor.rs` gained `Gesture::ConnectorMove`: pressing a body cell selects the connector and snapshots press-time endpoints + bends; dragging translates *both* ends and every bend by one delta, a bound end detaching in place (free at its anchor cell) on first displacement; release reports `ConnectorMoved`. Re-attach lives in `app.rs::reattach_moved_ends` — after a move, each free end dropped exactly on an anchor is re-attached. The old S-028 “drag from body adds a bend” gesture is gone.
+2. **Visio line handles** — `canvas.rs::overlays` now emits square `EndpointHandle`s at both resolved endpoints and `BendHandle`s at every declared bend of each selected connector; `hit_target` exposes the endpoint cells (plus the visible tip glyph cell when non-bare) above bodies, so the drawn marker and the gesture target coincide. Bend handles keep S-028's axis rule + collinear-drop removal.
+3. **Double-click inserts a bend** — `on_double_click` routes `HitTarget::ConnectorBody` to `diagram.add_bend(id, segment, cell)` at the clicked cell (`BendAdded`, connector selected); double-click on a bend/endpoint/empty space is a no-op.
+4. **In-canvas tip dropdown** — press-without-move on an endpoint opens an egui area anchored at that endpoint listing the four tip styles; picking one applies `set_tip` to that end only and closes. Right-click/Escape close without change (S-013 cancel role kept); any other canvas press closes the menu first. Press-to-cycle is replaced entirely — `cycle_tip` no longer exists in the tree.
+5. **Both kinds** — every gesture is endpoint-model-driven, so shape-to-shape connectors and standalone arrows (S-031) share it unchanged.
+
+Feature bar: `ui_decomposition_arrow_handles` builds two boxes + a connector + a standalone arrow purely through the real UI, then drives body-drag, double-click insertion, handle drags and the dropdown through it. 10 new tests (6 editor + 3 tier-0b + 1 app) + harness helpers `settle(n)`/`right_click_at`; WYSIWYG intact — handles are overlay-only, all goldens byte-identical. Gates: workspace fmt/clippy(0)/test green (700 passed); tarpaulin **93.42%** ≥ 80%; mkdocs strict clean.
