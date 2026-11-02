@@ -2,7 +2,7 @@
 title: S-043 - quality-testing-property-mutation-fuzz
 description: adds the three missing test-quality layers — proptest operation-sequence invariants, cargo-mutants baseline + triage, cargo-fuzz parser targets
 scope: diagram-model + ad-format + render-pipeline (tests) | tooling (Dockerfile, AGENTS.md) | docs (ADR 018)
-status: in-progress
+status: done
 updated: 2026-11-01
 ---
 
@@ -30,32 +30,9 @@ Q5 ("testable core") and the QS family are currently guarded by hand-written uni
 
 > Filled in while working the story: approach, files touched, decisions made (link ADRs), deviations from plan.
 
-### ⚠️ Handoff state — 2026-11-01 (planning agent deferred by user instruction)
+### Handoff resolved — 2026-11-01
 
-The planning agent started implementing this story and was instructed to **defer**. Everything below is **uncommitted work-in-progress in the working tree** (verified green at handoff except where noted). A working agent resumes from here; do not discard these changes without review — they contain fixes for two real bugs found by the new properties.
-
-**Already implemented (AC1 + AC2a, uncommitted):**
-
-- `crates/diagram-model/src/testgen.rs` (new) — shared proptest module: `Op` enum covering place/move/resize/delete shapes+text, connect, attach/detach/free endpoints, add/move/remove bends, tip styles, scale, colors; `apply()` dispatch, `replay()`, and `invariant_violations()` (the invariant list from AC1). Shared by all three test suites to avoid duplicating the generator.
-- `crates/diagram-model/tests/operations.rs` (new) — AC1: 3 properties (`operation_sequences_keep_model_invariants`, `failed_operations_leave_the_diagram_unchanged`, `replaying_the_same_sequence_yields_equal_diagrams`). **Green at handoff.**
-- `crates/ad-format/tests/round_trip.rs` (+95) — AC2a operation-sequence round-trip property (`parse(serialize(d)) == d` + byte-stable re-serialization). **Green at handoff.**
-- `crates/render-pipeline/tests/properties.rs` (+125) — AC2b operation-sequence render property (no panic; deterministic grid; alphabet purity; typed errors only). **Added but final full-suite verification NOT confirmed at handoff — re-run first.**
-- `crates/diagram-model/Cargo.toml` + `Cargo.lock` — proptest dev-dependency.
-
-**Two real bugs found by the new properties (both fixed in the working tree):**
-
-1. **`Diagram::set_endpoint` partial mutation on rejection** (diagram-model, `src/lib.rs`): mutated endpoint state *before* rejecting a zero-length result, leaving invalid state behind on error. Fixed: validate before mutating; regression test added to the lib unit tests. The old test asserted the error but never checked post-rejection state — that's why it survived.
-2. **`.ad` forward-reference lossiness** (ad-format, `src/parser.rs`, +148 lines): the serializer emits objects in insertion order, so a connector created before its target shape serializes as a *forward reference*; the old parser resolved references only against earlier statements → `parse(serialize(d))` failed with `UnknownObject`. Fixed with a **two-phase parse** (buffer all statements, then resolve/apply once every id exists) backed by a new one-shot trusted constructor **`Diagram::from_parts`** in diagram-model (full invariant validation, preserves z-order). Forward-reference regression tests added to the parser suite. Green at handoff.
-
-**Open items for the working agent (in order):**
-
-1. Re-run `cargo test --workspace`; confirm render-pipeline properties pass (AC2b). Check `crates/ad-format/tests/round_trip.proptest-regressions` (untracked proptest artifact with the saved failing seed) — confirm the seed now passes, then **delete the file**.
-2. **Doc update required for bug #2:** `doc/arc42/12-concepts/diagram-file-format.md` (~line 60) says a connector end "must reference an existing shape object" — update to state that ids are file-local and forward references are legal (resolved after the full document is read). Same commit as the parser change.
-3. Consider filing the two bugs in `doc/bugs/` (B-NNN) per the bug-report convention, or record them in Verification as findings of this story — working agent's call; either way they must be documented.
-4. AC3: cargo-mutants baselines for `diagram-model/src/lib.rs` + `ad-format/src/parser.rs`, survivor triage table in Verification. (Tool not yet in the devcontainer — see AC5.)
-5. AC4: `fuzz/` crate with `parse_ad` + `parse_adc` targets, ≥120 s runs.
-6. AC5: Dockerfile layer for cargo-mutants/cargo-fuzz/pinned nightly (ADR 014 bake-in pattern), AGENTS.md commands, ADR 018 → accepted, full standard gates incl. tarpaulin ≥ 80 %.
-7. Commit strategy — split the WIP into reviewable commits, e.g.: (a) set_endpoint fix + regression test; (b) from_parts + two-phase parser + forward-ref tests + concept doc update; (c) testgen + the three property suites (+ Cargo.toml/lock). Fill in this file's Verification section as each AC lands.
+The planning agent's WIP (testgen module, the three property suites, `set_endpoint` fix B-005, two-phase parse + `from_parts` for B-006) was resumed and completed in one session: all open handoff items closed, the two found bugs filed as [B-005](../bugs/B-005-set-endpoint-mutates-on-rejection.md) / [B-006](../bugs/B-006-ad-forward-reference-lossiness.md), and the fuzz campaign (AC4) found two more round-trip bugs — [B-007](../bugs/B-007-unknown-statement-trim-breaks-roundtrip.md) and [B-008](../bugs/B-008-cr-run-normalization-breaks-roundtrip.md) / [B-009](../bugs/B-009-lone-cr-masks-keyword-silent-preservation.md) — all fixed with regression tests. See the Verification section for final evidence.
 
 
 
@@ -63,8 +40,8 @@ The planning agent started implementing this story and was instructed to **defer
 
 > One line per AC with evidence (test name, command + result summary). All ACs must be ✅ before the story is marked done.
 
-- [ ] AC1 — 
-- [ ] AC2 — 
-- [ ] AC3 — 
-- [ ] AC4 — 
-- [ ] AC5 —
+- [x] **AC1** — `cargo test -p diagram-model --test operations`: 3 properties green — `operation_sequences_keep_model_invariants`, `failed_operations_leave_the_diagram_unchanged` (clone-before / `PartialEq`-after on every typed error), `replaying_the_same_sequence_yields_equal_diagrams`. Shared generator: `crates/diagram-model/src/testgen.rs` (`Op` over place/move/resize/delete, connect, attach/detach/free endpoints, bends, tips, scale, colors). Committed in the AC1+AC2 commit.
+- [x] **AC2** — (a) `ad-format/tests/round_trip.rs::operation_generated_diagrams_round_trip` — `parse(serialize(d)) == d` + byte-stable re-serialization after random operation sequences; (b) `render-pipeline/tests/properties.rs::operation_generated_diagrams_render_deterministically_or_fail_typed` — no panic, deterministic grid, svgbob-alphabet purity, typed errors only. Both green in the workspace suite.
+- [x] **AC3** — cargo-mutants baselines (2026-11-01, post all fixes): `diagram-model/src/lib.rs`: **62 mutants — 54 killed, 8 unviable, 0 surviving** (exit 0). `ad-format/src/parser.rs`: **111 mutants — 89 killed, 19 unviable, 3 timeouts, 0 missed**. Triage: the initial runs surfaced 7 (parser) + 10 (model) survivors — all genuine gaps, **all killed by tests added in this story**: parser `unknown_statements_are_counted`, `unknown_statement_in_current_minor_file_is_a_hard_error`, zero-length error-position test, `connect_to_missing_object_reports_the_connector_line`, two `via` tokenizer tests; model `is_empty` non-empty assertion, `set_shape_label_updates_only_shapes`, `set_scale(1)` boundary assertion, `from_parts_validates_scale_ids_and_endpoints`. The 3 remaining parser entries are `TIMEOUT`-class (not missed): `CharStream::next`/`peek_char` EOF mutants that turn the stream into an infinite NUL source — cargo-mutants times out the test instead of observing a failure; these are liveness mutants, and termination is enforced by AC4's fuzzing (per-execution timeout). No equivalent mutants claimed.
+- [x] **AC4** — `fuzz/` crate (own `[workspace]`), targets `parse_ad` + `parse_adc`. Final post-fix runs: `parse_ad` **3,494,389 runs / 121 s, exit 0, zero artifacts**; `parse_adc` **945,293 runs / 226 s, exit 0, zero crashes** (one statistical slow-unit artifact re-runs in 20 ms — noise from concurrent CPU load). The campaign found and fixed three real bugs: [B-007](../bugs/B-007-unknown-statement-trim-breaks-roundtrip.md) (serializer trimmed preserved lines), [B-008](../bugs/B-008-cr-run-normalization-breaks-roundtrip.md) (trailing `\r` runs in preserved lines), [B-009](../bugs/B-009-lone-cr-masks-keyword-silent-preservation.md) (lone `\r` absorbed into tokens, masking keywords). All three now have regression tests; the crash inputs are rejected at parse time or round-trip losslessly.
+- [x] **AC5** — `.devcontainer/Dockerfile`: cargo-mutants + cargo-fuzz + pinned nightly layer (ADR 014 bake-in pattern); `AGENTS.md` documents all three commands and when to run them; ADR 018 → `accepted` (v2, corpus kept local not in git). Standard gates: fmt clean, clippy 0 warnings, workspace tests green, tarpaulin ≥ 80 % (see commit), mkdocs strict clean.

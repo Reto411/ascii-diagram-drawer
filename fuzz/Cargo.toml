@@ -1,0 +1,30 @@
+[package]
+name = "ascii-diagram-drawer-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Deliberately detached from the main workspace (ADR 018): fuzz targets use
+# nightly-only libFuzzer instrumentation and their own Cargo.lock, and must not
+# enter the stable build, the test suite, or the T5 dependency audit.
+[workspace]
+
+[dependencies]
+ad-format = { path = "../crates/ad-format" }
+shape-registry = { path = "../crates/shape-registry" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "parse_ad"
+path = "fuzz_targets/parse_ad.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse_adc"
+path = "fuzz_targets/parse_adc.rs"
+test = false
+doc = false

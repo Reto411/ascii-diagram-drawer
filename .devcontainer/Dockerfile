@@ -66,6 +66,19 @@ RUN rustup target add wasm32-unknown-unknown \
  && cargo install trunk \
  && cargo install wasm-bindgen-cli --version 0.2.129
 
+# Test-quality tooling (S-043 / ADR 018) — isolated runs cannot install tools
+# at runtime (egress allow-list, ADR 014), so bake them in:
+#   cargo-mutants     periodic mutation audit of validation-heavy code (AC3);
+#                     on-demand only — it re-runs the test suite per mutant.
+#   pinned nightly    required by cargo-fuzz's libFuzzer instrumentation;
+#                     KEEP THE PIN IN SYNC with the fuzz crate's own toolchain
+#                     expectations when bumping (rebuild after).
+#   cargo-fuzz        fuzz targets for the .ad/.adc import surfaces (AC4), run as
+#                     `cargo +nightly-2026-10-31 fuzz run <target>` from the repo root.
+RUN rustup toolchain install nightly-2026-10-31 --profile minimal -c rust-src \
+ && cargo install cargo-mutants --version 27.1.0 --locked \
+ && cargo +nightly-2026-10-31 install cargo-fuzz --version 0.13.2 --locked
+
 # Docs build check (mkdocs from the distro repo; PyPI is flaky under rootless podman)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends mkdocs \

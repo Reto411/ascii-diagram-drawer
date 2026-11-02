@@ -22,3 +22,13 @@ ATTENTION.md
 
 # python bytecode from .agents/skills/gui-testing/scripts tooling
 __pycache__/
+
+# Fuzzing + mutation testing (S-043 / ADR 018): all local run state stays out of
+# git — crash artifacts, minimized testcases, the accumulated corpus (~21 MB of
+# incompressible seeds; the workspace volume persists it between sessions), and
+# cargo-mutants' scratch dirs.
+fuzz/artifacts/
+fuzz/testcases/
+fuzz/corpus/
+mutants.out/
+mutants.out.old/
