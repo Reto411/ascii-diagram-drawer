@@ -37,20 +37,24 @@ pub enum HitTarget {
         prev: CellPos,
         next: CellPos,
     },
-    /// A cell of a connector's body — not an anchor or bend (CR-007 AC4/AC5) — where
-    /// a drag adds a new bend. `segment` is the index of the polyline segment the
-    /// cell lies on, i.e. the position the new bend would be inserted at; `prev`/
-    /// `next` are that segment's endpoints.
+    /// A cell of a connector's body — not an anchor or bend (CR-020 AC1/AC3): pressing
+    /// selects the connector and starts moving the whole arrow; double-clicking a
+    /// segment inserts a bend there. `segment` is the index of the polyline segment
+    /// the cell lies on, i.e. the position a new bend would be inserted at; `prev`/
+    /// `next` are that segment's endpoints; `from_cell`/`to_cell` the route's resolved
+    /// endpoint cells (the move gesture's snapshot).
     ConnectorBody {
         id: ObjectId,
         segment: usize,
         prev: CellPos,
         next: CellPos,
+        from_cell: CellPos,
+        to_cell: CellPos,
     },
     /// A connector's endpoint cell or its visible tip's glyph cell (CR-010): pressing
-    /// starts an endpoint drag (attach/detach/move); a press without movement cycles
-    /// that end's tip style (S-029 behavior preserved). `end` is which endpoint the
-    /// cell belongs to, `at` the endpoint's own cell — the gesture detaches/moves
+    /// starts an endpoint drag (attach/detach/move); a press without movement opens
+    /// the in-canvas tip dropdown for that end (CR-020 AC4). `end` is which endpoint
+    /// the cell belongs to, `at` the endpoint's own cell — the gesture detaches/moves
     /// relative to it. The tip cells follow the pipeline's stamping rule (ADR 013 v5).
     Endpoint {
         id: ObjectId,
@@ -106,6 +110,30 @@ pub fn anchor_cell(
         shape.pos.x + map_proportional(anchor.position.x, template.size.width, shape.size.width),
         shape.pos.y + map_proportional(anchor.position.y, template.size.height, shape.size.height),
     ))
+}
+
+/// The anchor reference sitting at exactly this cell, if any shape exposes one here
+/// (CR-020 AC1) — the re-attach scan run when a moved connector's free end is
+/// released. Document order decides on overlap, mirroring z-order.
+pub fn anchor_ref_at(
+    diagram: &Diagram,
+    catalog: &dyn ShapeCatalog,
+    cell: (u32, u32),
+) -> Option<AnchorRef> {
+    for object in diagram.objects() {
+        let Object::Shape(shape) = object else {
+            continue;
+        };
+        let Some(anchors) = catalog.anchors(&shape.type_id) else {
+            continue;
+        };
+        for anchor in &anchors {
+            if anchor_cell(shape, catalog, anchor).is_some_and(|c| c == cell) {
+                return AnchorRef::new(shape.id.clone(), &anchor.name).ok();
+            }
+        }
+    }
+    None
 }
 
 /// The interactive target under a model cell (S-013).
@@ -304,6 +332,8 @@ pub fn hit_target(
                     segment,
                     prev: a,
                     next: b,
+                    from_cell: from,
+                    to_cell: to,
                 };
             }
         }
@@ -414,30 +444,46 @@ pub enum Overlay {
     /// Small square at a waypoint of the selected connector (CR-007 AC7) — the same
     /// cell [`hit_target`] answers with [`HitTarget::Bend`].
     BendHandle((u32, u32)),
+    /// Small square at a resolved endpoint of the selected connector (CR-020 AC2) —
+    /// the same cell [`hit_target`] answers with [`HitTarget::Endpoint`]; pressing
+    /// starts the endpoint-drag gesture.
+    EndpointHandle((u32, u32)),
 }
 
 /// The overlay primitives for the current model + view state (S-013 AC1/AC2, CR-007
-/// AC7): anchor dots on every selected shape — or on every shape while connecting /
-/// drawing an arrow / dragging an endpoint (S-031) — the resize handle of a
-/// single-shape selection (S-035 AC5), and bend handles on each selected connector.
-/// Empty when nothing is selected and no gesture is in flight.
+/// AC7, CR-020 AC2): anchor dots on every selected shape — or on every shape while
+/// connecting / drawing an arrow / dragging an endpoint (S-031) — the resize handle
+/// of a single-shape selection (S-035 AC5), and, on each selected connector, square
+/// handles at both resolved endpoints and every declared bend. Empty when nothing is
+/// selected and no gesture is in flight.
 #[must_use]
 pub fn overlays(
     diagram: &Diagram,
     catalog: &dyn ShapeCatalog,
     selection: &BTreeSet<ObjectId>,
     exposure: AnchorExposure<'_>,
+    connector_routes: &[(ObjectId, Vec<CellPos>)],
 ) -> Vec<Overlay> {
     let mut out = Vec::new();
 
-    // Each selected connector shows a handle at each declared waypoint (CR-007 AC7;
-    // S-035 extends the single selection to the whole set).
+    // Each selected connector shows handles at its resolved endpoints (CR-020 AC2)
+    // and each declared waypoint (CR-007 AC7; S-035 extends the single selection to
+    // the whole set). Endpoint cells come from the same routes hit-testing uses, so
+    // marker and gesture target coincide — bound ends sit on their anchor cell.
     if matches!(exposure, AnchorExposure::SelectionOnly) {
         for id in selection {
-            if let Some(Object::Connector(connector)) = diagram.get(id) {
-                for bend in &connector.bends {
-                    out.push(Overlay::BendHandle((bend.x, bend.y)));
-                }
+            let Some(Object::Connector(connector)) = diagram.get(id) else {
+                continue; // stale read-model entry or a non-connector member
+            };
+            if let Some(route) = connector_routes.iter().find(|(rid, _)| rid == id)
+                && route.1.len() >= 2
+            {
+                out.push(Overlay::EndpointHandle((route.1[0].x, route.1[0].y)));
+                let last = route.1.last().expect("length checked above");
+                out.push(Overlay::EndpointHandle((last.x, last.y)));
+            }
+            for bend in &connector.bends {
+                out.push(Overlay::BendHandle((bend.x, bend.y)));
             }
         }
     }
@@ -955,7 +1001,13 @@ mod tests {
         let s2 = ObjectId::new("s2").expect("valid id");
 
         // Single selection: anchors + one resize handle.
-        let single = overlays(&diagram, &catalog, &sel(&s1), AnchorExposure::SelectionOnly);
+        let single = overlays(
+            &diagram,
+            &catalog,
+            &sel(&s1),
+            AnchorExposure::SelectionOnly,
+            &[],
+        );
         assert!(single.iter().any(|o| matches!(o, Overlay::ResizeHandle(_))));
         let single_anchors = single
             .iter()
@@ -965,7 +1017,13 @@ mod tests {
 
         // Multi selection: both shapes' anchors (8 dots), no resize handle.
         let both: BTreeSet<ObjectId> = [s1.clone(), s2.clone()].into_iter().collect();
-        let multi = overlays(&diagram, &catalog, &both, AnchorExposure::SelectionOnly);
+        let multi = overlays(
+            &diagram,
+            &catalog,
+            &both,
+            AnchorExposure::SelectionOnly,
+            &[],
+        );
         assert!(!multi.iter().any(|o| matches!(o, Overlay::ResizeHandle(_))));
         let multi_anchors = multi
             .iter()
@@ -1110,7 +1168,13 @@ mod tests {
             ),
             HitTarget::Body(a1.clone())
         );
-        let ov = overlays(&diagram, &catalog, &sel(&a1), AnchorExposure::SelectionOnly);
+        let ov = overlays(
+            &diagram,
+            &catalog,
+            &sel(&a1),
+            AnchorExposure::SelectionOnly,
+            &[],
+        );
         assert!(!ov.iter().any(|o| matches!(o, Overlay::ResizeHandle(_))));
         assert_eq!(ov.len(), 1, "just the single anchor dot");
 
@@ -1131,7 +1195,13 @@ mod tests {
             }
         );
         // …and the overlay carries its handle marker.
-        let ov = overlays(&diagram, &catalog, &sel(&s1), AnchorExposure::SelectionOnly);
+        let ov = overlays(
+            &diagram,
+            &catalog,
+            &sel(&s1),
+            AnchorExposure::SelectionOnly,
+            &[],
+        );
         assert!(ov.contains(&Overlay::ResizeHandle((14, 2))));
     }
 
@@ -1148,14 +1218,21 @@ mod tests {
                 &diagram,
                 &catalog,
                 &BTreeSet::new(),
-                AnchorExposure::SelectionOnly
+                AnchorExposure::SelectionOnly,
+                &[]
             )
             .is_empty()
         );
 
         // Selection: s1's four anchor dots + its bottom-right corner handle.
         let s1 = ObjectId::new("s1").expect("valid id");
-        let sel = overlays(&diagram, &catalog, &sel(&s1), AnchorExposure::SelectionOnly);
+        let sel = overlays(
+            &diagram,
+            &catalog,
+            &sel(&s1),
+            AnchorExposure::SelectionOnly,
+            &[],
+        );
         assert_eq!(
             sel.iter()
                 .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
@@ -1182,6 +1259,7 @@ mod tests {
             &catalog,
             &BTreeSet::new(),
             AnchorExposure::Connect { source: &source },
+            &[],
         );
         assert_eq!(
             connecting
@@ -1531,7 +1609,13 @@ mod tests {
             HitTarget::Anchor(ObjectId::new("s2").expect("valid"), "e".to_owned())
         );
         // …and the overlay layer shows all their snap markers.
-        let all = overlays(&diagram, &catalog, &BTreeSet::new(), AnchorExposure::All);
+        let all = overlays(
+            &diagram,
+            &catalog,
+            &BTreeSet::new(),
+            AnchorExposure::All,
+            &[],
+        );
         assert_eq!(
             all.iter()
                 .filter(|o| matches!(o, Overlay::AnchorArrow { .. }))
@@ -1559,6 +1643,7 @@ mod tests {
                 segment,
                 prev,
                 next,
+                ..
             } => {
                 assert_eq!(id, c);
                 assert_eq!(segment, 0);
@@ -1580,6 +1665,7 @@ mod tests {
                 segment,
                 prev,
                 next,
+                ..
             } => {
                 assert_eq!(id, c);
                 assert_eq!(segment, 1);
@@ -1650,20 +1736,74 @@ mod tests {
                 &diagram,
                 &catalog,
                 &BTreeSet::new(),
-                AnchorExposure::SelectionOnly
+                AnchorExposure::SelectionOnly,
+                &[]
             )
             .iter()
             .all(|o| !matches!(o, Overlay::BendHandle(_)))
         );
         // Selected: one handle at the declared waypoint — same cell `hit_target`
         // answers with a Bend.
-        let handles = overlays(&diagram, &catalog, &sel(&c), AnchorExposure::SelectionOnly);
+        let handles = overlays(
+            &diagram,
+            &catalog,
+            &sel(&c),
+            AnchorExposure::SelectionOnly,
+            &[],
+        );
         assert_eq!(
             handles
                 .iter()
                 .filter(|o| matches!(o, Overlay::BendHandle((11, 6))))
                 .count(),
             1
+        );
+    }
+
+    /// CR-020 AC2 — a selected connector shows square endpoint handles at BOTH resolved
+    /// endpoints (the same cells `hit_target` answers with `Endpoint`), in addition to
+    /// its bend handles; nothing is shown while it is not selected.
+    #[test]
+    fn overlays_show_endpoint_handles_for_the_selected_connector() {
+        let (diagram, catalog, c, route) = bent_connector_scene();
+        // Not selected: no endpoint handles.
+        assert!(
+            overlays(
+                &diagram,
+                &catalog,
+                &BTreeSet::new(),
+                AnchorExposure::SelectionOnly,
+                &[]
+            )
+            .iter()
+            .all(|o| !matches!(o, Overlay::EndpointHandle(_)))
+        );
+
+        // Selected: one handle per resolved endpoint — first and last route cell.
+        let handles = overlays(
+            &diagram,
+            &catalog,
+            &sel(&c),
+            AnchorExposure::SelectionOnly,
+            &[(c.clone(), route)],
+        );
+        let endpoints: Vec<(u32, u32)> = handles
+            .iter()
+            .filter_map(|o| match o {
+                Overlay::EndpointHandle(cell) => Some(*cell),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            endpoints,
+            vec![(8, 2), (14, 2)],
+            "handles at both resolved ends"
+        );
+        // The bend handle coexists with the endpoint handles.
+        assert!(
+            handles
+                .iter()
+                .any(|o| matches!(o, Overlay::BendHandle((11, 6))))
         );
     }
 }

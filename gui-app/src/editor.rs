@@ -108,6 +108,14 @@ pub enum EditOutcome {
         end: ConnectorEnd,
         tip: TipStyle,
     },
+    /// A press without movement on a selected connector's endpoint opened the
+    /// in-canvas tip dropdown for that end (CR-020 AC4) — replacing S-029's
+    /// press-to-cycle.
+    TipDropdownOpened { id: ObjectId, end: ConnectorEnd },
+    /// A body drag moved the whole connector (CR-020 AC1): endpoints and bends were
+    /// translated live, bound ends detached along the way. The caller now re-attaches
+    /// any free end that landed exactly on an anchor.
+    ConnectorMoved { id: ObjectId },
     /// The selected object (and its connectors) left the model.
     Deleted { id: ObjectId, removed: usize },
     /// A multi-selection delete (S-035 FR20): `count` is the selection set's size and
@@ -129,6 +137,15 @@ struct GrabbedMember {
     id: ObjectId,
     offset_x: u32,
     offset_y: u32,
+}
+
+/// The in-canvas tip dropdown opened by pressing onto a selected endpoint (CR-020
+/// AC4) — which connector end it offers styles for. Any canvas press, Escape or
+/// right-click closes it without change; picking a style applies it.
+#[derive(Debug, Clone)]
+struct TipDropdown {
+    id: ObjectId,
+    end: ConnectorEnd,
 }
 
 /// An in-flight primary-button gesture (S-013).
@@ -154,16 +171,21 @@ enum Gesture {
         next: CellPos,
         moved: bool,
     },
-    /// Dragging from a connector's body to add a new bend (CR-007 AC5): the bend is
-    /// created at the first displacement (inserted at `segment`) and moved live after;
-    /// a drop on the straight line between its neighbors removes it again (AC6).
-    BendAdd {
+    /// Dragging a connector's body moves the whole arrow (CR-020 AC1): both endpoints
+    /// and every declared bend translate by one delta. `from_cell`/`to_cell` are the
+    /// resolved endpoint cells and `bends` the waypoints at press time — the snapshot
+    /// the translation is applied to, so partial model rejections (e.g. both free ends
+    /// on one cell) retry next frame instead of drifting. Bound ends detach in place
+    /// on the first movement; release re-attaches them only exactly on an anchor.
+    /// `moved` flips once the pointer has crossed a cell, so a press without movement
+    /// only selects.
+    ConnectorMove {
         id: ObjectId,
-        segment: usize,
-        prev: CellPos,
-        next: CellPos,
         pressed: CellPos,
-        added: bool,
+        from_cell: CellPos,
+        to_cell: CellPos,
+        bends: Vec<CellPos>,
+        moved: bool,
     },
     /// The arrow tool is drawing a connector (CR-010): `from` was resolved at press
     /// time (attached when the press landed on an anchor), `from_cell` its cell for
@@ -218,6 +240,64 @@ pub struct EditorState {
     /// directly; committed or discarded by [`Self::commit_edit`] / [`Self::cancel_edit`].
     pub edit_draft: String,
     gesture: Option<Gesture>,
+    /// The open tip dropdown (CR-020 AC4), if any — the canvas draws it near the
+    /// endpoint cell and offers the four styles for that end.
+    tip_dropdown: Option<TipDropdown>,
+}
+
+impl EditorState {
+    /// The open tip dropdown (CR-020 AC4) — the canvas anchors its menu at the
+    /// endpoint cell of `(id, end)`.
+    #[must_use]
+    pub fn tip_dropdown(&self) -> Option<(&ObjectId, ConnectorEnd)> {
+        self.tip_dropdown.as_ref().map(|d| (&d.id, d.end))
+    }
+
+    /// Closes an open tip dropdown without change (CR-020 AC4). Returns whether one
+    /// was open — the canvas calls this for presses that did not pick a style.
+    pub fn close_tip_dropdown(&mut self) -> bool {
+        self.tip_dropdown.take().is_some()
+    }
+
+    /// Applies the style picked in the tip dropdown to that end (CR-020 AC4) and
+    /// closes the menu. The press without movement that opened it already selected
+    /// the connector, so the change is visible in context.
+    pub fn apply_tip(
+        &mut self,
+        id: &ObjectId,
+        end: ConnectorEnd,
+        tip: TipStyle,
+        diagram: &mut Diagram,
+    ) -> EditOutcome {
+        self.tip_dropdown = None;
+        match diagram.set_tip(id, end, tip) {
+            Ok(()) => EditOutcome::TipChanged {
+                id: id.clone(),
+                end,
+                tip,
+            },
+            Err(_) => EditOutcome::Nothing, // defensive: the dropdown only opens for live ends
+        }
+    }
+
+    /// Re-attaches a free endpoint dropped exactly on an anchor (CR-020 AC1) — the
+    /// model op behind [`EditOutcome::ConnectorMoved`]: the caller resolves which
+    /// anchor sits at the end's cell and hands it over.
+    pub fn reattach_endpoint(
+        &mut self,
+        id: &ObjectId,
+        end: ConnectorEnd,
+        reference: AnchorRef,
+        diagram: &mut Diagram,
+    ) -> EditOutcome {
+        match diagram.set_endpoint(id, end, ConnectorEndpoint::Attached(reference)) {
+            Ok(()) => EditOutcome::EndpointAttached {
+                id: id.clone(),
+                end,
+            },
+            Err(_) => EditOutcome::Nothing, // defensive: the caller just hit-tested it
+        }
+    }
 }
 
 impl EditorState {
@@ -296,6 +376,11 @@ impl EditorState {
         // Escape inside an inline edit cancels the edit (AC1) — before anything else.
         if self.editing.is_some() {
             return self.cancel_edit();
+        }
+        // CR-020 AC4 — Escape closes an open tip dropdown without change; it never
+        // coexists with a gesture (the menu opens at release), so this comes first.
+        if self.tip_dropdown.take().is_some() {
+            return EditOutcome::Cancelled;
         }
         let had_gesture = self.gesture.take().is_some();
         let was_placing = self.placing.take().is_some();
@@ -397,6 +482,9 @@ impl EditorState {
         if self.editing.is_some() {
             return self.commit_edit(diagram);
         }
+        // Any canvas press closes an open tip dropdown first (CR-020 AC4) — the press
+        // then proceeds normally (a press on the same endpoint reopens it at release).
+        self.tip_dropdown = None;
         match self.placing.clone() {
             Some(Placing::Shape(info)) => return self.place(col, row, *info, diagram),
             Some(Placing::Text) => return self.place_text(col, row, diagram),
@@ -451,23 +539,26 @@ impl EditorState {
                 });
                 self.press_outcome(additive, id)
             }
+            // CR-020 AC1 — pressing a connector's body selects it and starts moving
+            // the WHOLE arrow (endpoints + bends translate together); bend creation
+            // moved to double-click (AC3).
             HitTarget::ConnectorBody {
                 id,
-                segment,
-                prev,
-                next,
+                from_cell,
+                to_cell,
+                ..
             } => {
-                let Some(Object::Connector(_)) = diagram.get(&id) else {
+                let Some(Object::Connector(connector)) = diagram.get(&id) else {
                     return EditOutcome::Nothing; // defensive: stale hit
                 };
                 self.select_for_gesture(id.clone(), additive);
-                self.gesture = Some(Gesture::BendAdd {
+                self.gesture = Some(Gesture::ConnectorMove {
                     id: id.clone(),
-                    segment,
-                    prev,
-                    next,
                     pressed: CellPos::new(col, row),
-                    added: false,
+                    from_cell,
+                    to_cell,
+                    bends: connector.bends.clone(),
+                    moved: false,
                 });
                 self.press_outcome(additive, id)
             }
@@ -549,30 +640,6 @@ impl EditorState {
         EditOutcome::Nothing
     }
 
-    /// Cycles the pressed tip end through bare → hollow arrow → empty rhombus →
-    /// filled rhombus → bare (CR-008 AC2) and selects the connector so the change is
-    /// visible in context.
-    fn cycle_tip(&mut self, id: ObjectId, end: ConnectorEnd, diagram: &mut Diagram) -> EditOutcome {
-        let Some(Object::Connector(connector)) = diagram.get(&id) else {
-            return EditOutcome::Nothing; // defensive: stale hit
-        };
-        let current = match end {
-            ConnectorEnd::Source => connector.from_tip,
-            ConnectorEnd::Target => connector.to_tip,
-        };
-        let next = match current {
-            TipStyle::Bare => TipStyle::HollowArrow,
-            TipStyle::HollowArrow => TipStyle::EmptyRhombus,
-            TipStyle::EmptyRhombus => TipStyle::FilledRhombus,
-            TipStyle::FilledRhombus => TipStyle::Bare,
-        };
-        self.replace_selection(&id);
-        match diagram.set_tip(&id, end, next) {
-            Ok(()) => EditOutcome::TipChanged { id, end, tip: next },
-            Err(_) => EditOutcome::Nothing, // defensive: the hit was just computed
-        }
-    }
-
     /// Replaces the selection set with exactly this object — the plain-click
     /// semantics every non-modifier press uses (S-035 FR20).
     fn replace_selection(&mut self, id: &ObjectId) {
@@ -641,29 +708,49 @@ impl EditorState {
     }
 
     /// Double click (S-018 AC1): opens inline editing of the text object under the
-    /// pointer. v1: only free text is editable in place; double-clicking shapes or empty
-    /// space does nothing.
+    /// pointer; CR-020 AC3: double-clicking a connector's body segment inserts a bend
+    /// at the clicked cell. Double-clicking shapes opens their region editor (FR19);
+    /// anything else does nothing.
     fn on_double_click(
         &mut self,
-        _cell: (u32, u32),
+        cell: (u32, u32),
         target: HitTarget,
         diagram: &mut Diagram,
     ) -> EditOutcome {
-        let HitTarget::Body(id) = target else {
-            return EditOutcome::Nothing;
-        };
-        match diagram.get(&id) {
+        // CR-020 AC3 — a double-click on a segment inserts a waypoint there (Visio);
+        // the two single clicks of the pair only selected (no movement).
+        if let HitTarget::ConnectorBody { id, segment, .. } = &target {
+            let Some(Object::Connector(_)) = diagram.get(id) else {
+                return EditOutcome::Nothing; // defensive: stale hit
+            };
+            self.replace_selection(id);
+            let at = CellPos::new(cell.0, cell.1);
+            match diagram.add_bend(id, *segment, at) {
+                Ok(()) => EditOutcome::BendAdded { id: id.clone(), at },
+                Err(_) => EditOutcome::Nothing, // defensive: the hit was just computed
+            }
+        } else {
+            let HitTarget::Body(id) = target else {
+                return EditOutcome::Nothing;
+            };
+            self.handle_double_click_body(&id, diagram)
+        }
+    }
+
+    /// The body half of [`Self::on_double_click`] (S-018 AC1 / FR19).
+    fn handle_double_click_body(&mut self, id: &ObjectId, diagram: &mut Diagram) -> EditOutcome {
+        match diagram.get(id) {
             Some(Object::Text(text)) => {
-                if self.editing.as_ref() != Some(&id) {
+                if self.editing.as_ref() != Some(id) {
                     self.editing = Some(id.clone());
                     self.edit_draft = text.text.clone();
-                    self.replace_selection(&id);
+                    self.replace_selection(id);
                 }
-                EditOutcome::Editing { id }
+                EditOutcome::Editing { id: id.clone() }
             }
             // FR19 (CR-016): double-clicking a shape opens its region-content editor
             // (the app decides whether it has regions; empty ones get a hint).
-            Some(Object::Shape(_)) => EditOutcome::DoubleClickShape { id },
+            Some(Object::Shape(_)) => EditOutcome::DoubleClickShape { id: id.clone() },
             _ => EditOutcome::Nothing,
         }
     }
@@ -805,42 +892,73 @@ impl EditorState {
                     EditOutcome::Nothing
                 }
             }
-            Gesture::BendAdd {
+            // CR-020 AC1 — whole-arrow move: every part (both endpoints + all bends)
+            // translates by the pointer's delta from the press cell. Targets are
+            // derived from the press-time snapshot, so a frame where one mutation is
+            // refused (e.g. clamping at the canvas edge) retries next frame without
+            // drift. A bound end is released by setting it free at its target in one
+            // step — "detaches at its anchor cell" on the first movement.
+            Gesture::ConnectorMove {
                 id,
-                segment,
-                prev,
-                next,
                 pressed,
-                added,
+                from_cell,
+                to_cell,
+                bends,
+                moved,
             } => {
-                // AC5 — see the BendMove arm: on a cell grid the axis-snap rule is
-                // exact, so the waypoint lands where the pointer is.
-                let snapped = CellPos::new(col, row);
-                if !added && snapped == pressed {
-                    // Still on the pressed cell — nothing moved yet (AC6). Once the bend
-                    // exists, moving back over the press point is a normal live move.
+                let cur = CellPos::new(col, row);
+                if !moved && cur == pressed {
+                    // Still on the pressed cell — a press without movement only selects.
                     return EditOutcome::Nothing;
                 }
-                if !added {
-                    match diagram.add_bend(&id, segment, snapped) {
-                        Ok(()) => {
-                            self.gesture = Some(Gesture::BendAdd {
-                                id: id.clone(),
-                                segment,
-                                prev,
-                                next,
-                                pressed,
-                                added: true,
-                            });
-                            EditOutcome::BendAdded { id, at: snapped }
-                        }
-                        Err(_) => EditOutcome::Nothing,
+                let dx = i64::from(cur.x) - i64::from(pressed.x);
+                let dy = i64::from(cur.y) - i64::from(pressed.y);
+                let shift = |p: CellPos| -> CellPos {
+                    CellPos::new(
+                        (i64::from(p.x) + dx).clamp(0, i64::from(u32::MAX)) as u32,
+                        (i64::from(p.y) + dy).clamp(0, i64::from(u32::MAX)) as u32,
+                    )
+                };
+                let mut detached = None;
+                for (end, cell) in [
+                    (ConnectorEnd::Source, from_cell),
+                    (ConnectorEnd::Target, to_cell),
+                ] {
+                    let Some(Object::Connector(connector)) = diagram.get(&id) else {
+                        return EditOutcome::Nothing; // defensive: stale hit
+                    };
+                    let attached = match end {
+                        ConnectorEnd::Source => connector.from.is_attached(),
+                        ConnectorEnd::Target => connector.to.is_attached(),
+                    };
+                    let to = shift(cell);
+                    if diagram
+                        .set_endpoint(&id, end, ConnectorEndpoint::Free(to))
+                        .is_ok()
+                        && attached
+                        && detached.is_none()
+                    {
+                        detached = Some(end);
                     }
-                } else if diagram.move_bend(&id, segment, snapped).is_ok() {
-                    // The inserted bend sits at `segment` for the rest of the gesture.
-                    EditOutcome::BendMoved { id, to: snapped }
-                } else {
-                    EditOutcome::Nothing
+                }
+                for (index, bend) in bends.iter().enumerate() {
+                    let to = shift(*bend);
+                    if to != *bend {
+                        // Rejection leaves the part where it is; next frame retries.
+                        let _ = diagram.move_bend(&id, index, to);
+                    }
+                }
+                self.gesture = Some(Gesture::ConnectorMove {
+                    id: id.clone(),
+                    pressed,
+                    from_cell,
+                    to_cell,
+                    bends: bends.clone(),
+                    moved: true,
+                });
+                match detached {
+                    Some(end) => EditOutcome::EndpointDetached { id, end },
+                    None => EditOutcome::Nothing,
                 }
             }
             // CR-010 — arrow drag: pure hover until release; remember that the pointer
@@ -938,9 +1056,10 @@ impl EditorState {
                 }
             }
             (Some(Gesture::ArrowDrag { .. }), None, _) => EditOutcome::Nothing,
-            // CR-010 — endpoint drag: a press without movement cycles the tip style
-            // (S-029); otherwise the end attaches when released on an anchor and stays
-            // free at the release cell.
+            // CR-010/CR-020 — endpoint drag: a press without movement opens the
+            // in-canvas tip dropdown for that end (AC4, replacing S-029's cycle);
+            // otherwise the end attaches when released on an anchor and stays free at
+            // the release cell.
             (
                 Some(Gesture::EndpointDrag {
                     id, end, at, moved, ..
@@ -949,7 +1068,11 @@ impl EditorState {
                 target,
             ) => {
                 if !moved {
-                    return self.cycle_tip(id, end, diagram);
+                    self.tip_dropdown = Some(TipDropdown {
+                        id: id.clone(),
+                        end,
+                    });
+                    return EditOutcome::TipDropdownOpened { id, end };
                 }
                 match target {
                     HitTarget::Anchor(object_id, name) => {
@@ -1006,29 +1129,12 @@ impl EditorState {
                     EditOutcome::Nothing
                 }
             }
-            // Same rule for a bend added by the drag: dropped on the line between its
-            // neighbors it is removed again; a press without movement added nothing.
-            (
-                Some(Gesture::BendAdd {
-                    id,
-                    segment,
-                    prev,
-                    next,
-                    added,
-                    ..
-                }),
-                _,
-                _,
-            ) => {
-                if added
-                    && let Some(Object::Connector(connector)) = diagram.get(&id)
-                    && let Some(bend) = connector.bends.get(segment)
-                    && crate::canvas::on_segment(prev, next, *bend)
-                {
-                    match diagram.remove_bend(&id, segment) {
-                        Ok(()) => EditOutcome::BendRemoved { id, index: segment },
-                        Err(_) => EditOutcome::Nothing,
-                    }
+            // CR-020 AC1 — release ends the whole-arrow move; the parts are already
+            // wherever they last translated to. The caller (app) now re-attaches any
+            // free end dropped exactly on an anchor.
+            (Some(Gesture::ConnectorMove { id, moved, .. }), _, _) => {
+                if moved {
+                    EditOutcome::ConnectorMoved { id }
                 } else {
                     EditOutcome::Nothing
                 }
@@ -1194,6 +1300,31 @@ mod tests {
         editor.on_pointer(
             PointerEvent::Up {
                 cell: Some((col, row)),
+                target,
+            },
+            diagram,
+        )
+    }
+
+    /// A double click at a cell (S-018 / CR-020 AC3).
+    fn double_click(
+        editor: &mut EditorState,
+        diagram: &mut Diagram,
+        col: u32,
+        row: u32,
+        routes: &[(ObjectId, Vec<CellPos>)],
+    ) -> EditOutcome {
+        let target = hit_target(
+            diagram,
+            &catalog(),
+            &editor.selection,
+            editor.anchor_exposure(),
+            (col, row),
+            routes,
+        );
+        editor.on_pointer(
+            PointerEvent::DoubleClick {
+                cell: (col, row),
                 target,
             },
             diagram,
@@ -2151,7 +2282,7 @@ mod tests {
     }
 
     #[test]
-    fn pressing_a_free_endpoint_without_moving_cycles_its_tip() {
+    fn pressing_an_endpoint_without_moving_opens_the_tip_dropdown() {
         let (mut editor, mut diagram, c) = free_endpoint_scene();
         let routes = free_endpoint_routes(&c);
 
@@ -2160,15 +2291,91 @@ mod tests {
             down(&mut editor, &mut diagram, 14, 7, &routes),
             EditOutcome::Selected(c.clone())
         );
-        // …and a release without movement cycles the tip style (S-029 preserved):
-        // the default hollow arrow advances to the empty rhombus.
+        // …and a release without movement changes nothing (CR-020 AC2: the tip is no
+        // longer cycled by press-without-move)…
         assert_eq!(
             up(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::TipDropdownOpened {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+            }
+        );
+        let connector = connector_of(&diagram);
+        assert_eq!(
+            connector.to_tip,
+            TipStyle::HollowArrow,
+            "the tip is untouched"
+        );
+        // …but it opens the in-canvas dropdown for exactly that end (AC4).
+        let (id, end) = editor.tip_dropdown().expect("the dropdown is open");
+        assert_eq!(id, &c);
+        assert_eq!(end, ConnectorEnd::Target);
+    }
+
+    #[test]
+    fn applying_a_tip_from_the_dropdown_changes_only_that_end() {
+        let (mut editor, mut diagram, c) = free_endpoint_scene();
+        let routes = free_endpoint_routes(&c);
+
+        down(&mut editor, &mut diagram, 14, 7, &routes);
+        assert_eq!(
+            up(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::TipDropdownOpened {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+            }
+        );
+
+        let outcome = editor.apply_tip(
+            &c,
+            ConnectorEnd::Target,
+            TipStyle::FilledRhombus,
+            &mut diagram,
+        );
+        assert_eq!(
+            outcome,
             EditOutcome::TipChanged {
                 id: c.clone(),
                 end: ConnectorEnd::Target,
-                tip: TipStyle::EmptyRhombus,
+                tip: TipStyle::FilledRhombus,
             }
+        );
+        assert!(
+            editor.tip_dropdown().is_none(),
+            "the menu closes after a pick"
+        );
+        let connector = connector_of(&diagram);
+        assert_eq!(connector.to_tip, TipStyle::FilledRhombus);
+        assert_eq!(
+            connector.from_tip,
+            TipStyle::Bare,
+            "the other end keeps its default (bare) tip"
+        );
+    }
+
+    /// CR-020 AC4 — Escape closes an open tip dropdown without any model change.
+    /// Right-click routes through the same `on_escape`, so this covers both exits.
+    #[test]
+    fn escape_closes_the_tip_dropdown_without_mutation() {
+        let (mut editor, mut diagram, c) = free_endpoint_scene();
+        let routes = free_endpoint_routes(&c);
+
+        down(&mut editor, &mut diagram, 14, 7, &routes);
+        assert_eq!(
+            up(&mut editor, &mut diagram, 14, 7, &routes),
+            EditOutcome::TipDropdownOpened {
+                id: c.clone(),
+                end: ConnectorEnd::Target,
+            }
+        );
+
+        assert_eq!(editor.on_escape(), EditOutcome::Cancelled);
+        assert!(editor.tip_dropdown().is_none(), "the menu is closed");
+        let connector = connector_of(&diagram);
+        assert_eq!(
+            connector.to_tip,
+            TipStyle::HollowArrow,
+            "no tip was changed"
         );
     }
 
@@ -2703,79 +2910,113 @@ mod tests {
     }
 
     #[test]
-    fn pressing_a_connector_body_and_dragging_adds_a_bend_at_the_drop() {
-        let (mut diagram, c, route) = bent_scene(None); // single segment (8,2)-(20,2)
+    fn pressing_a_connector_body_and_dragging_moves_the_whole_arrow() {
+        let (mut diagram, c, route) = bent_scene(Some(CellPos::new(14, 6)));
         let mut editor = EditorState::default();
         let routes = [(c.clone(), route)];
 
-        // Press a body cell on the segment: selects + BendAdd gesture.
+        // Press a body cell on segment 0: selects + starts the whole-arrow move.
         assert_eq!(
-            down(&mut editor, &mut diagram, 11, 2, &routes),
+            down(&mut editor, &mut diagram, 9, 3, &routes),
             EditOutcome::Selected(c.clone())
         );
-        // Still on the pressed cell: nothing added yet (AC6).
+        // Still on the pressed cell: nothing moved yet (CR-020 AC3 — a press without
+        // movement only selects).
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 11, 2, &routes),
+            move_to(&mut editor, &mut diagram, 9, 3, &routes),
             EditOutcome::Nothing
         );
-        assert!(bends_of(&diagram, &c).is_empty());
+        let connector = connector_of(&diagram);
+        assert!(connector.from.is_attached() && connector.to.is_attached());
 
-        // First displacement creates the bend; later moves drag it live.
+        // First displacement translates EVERYTHING by the delta (+3, +1) (AC1): both
+        // ends detach in place and follow; the bend rides along.
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 11, 6, &routes),
-            EditOutcome::BendAdded {
+            move_to(&mut editor, &mut diagram, 12, 4, &routes),
+            EditOutcome::EndpointDetached {
                 id: c.clone(),
-                at: CellPos::new(11, 6)
+                end: ConnectorEnd::Source,
             }
         );
-        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(11, 6)]);
+        let connector = connector_of(&diagram);
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 13, 8, &routes),
-            EditOutcome::BendMoved {
-                id: c.clone(),
-                to: CellPos::new(13, 8)
-            }
+            connector.from,
+            ConnectorEndpoint::Free(CellPos::new(11, 3)) // (8,2)+(3,1)
         );
-        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(13, 8)]);
-
-        // Drop off the neighbor line: stays.
         assert_eq!(
-            up(&mut editor, &mut diagram, 13, 8, &routes),
+            connector.to,
+            ConnectorEndpoint::Free(CellPos::new(23, 3)) // (20,2)+(3,1)
+        );
+        assert_eq!(connector.bends, vec![CellPos::new(17, 7)]); // (14,6)+(3,1)
+
+        // Later moves keep translating from the press-time snapshot (+4, +2).
+        assert_eq!(
+            move_to(&mut editor, &mut diagram, 13, 5, &routes),
             EditOutcome::Nothing
         );
-        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(13, 8)]);
+        let connector = connector_of(&diagram);
+        assert_eq!(
+            connector.from,
+            ConnectorEndpoint::Free(CellPos::new(12, 4)) // (8,2)+(4,2)
+        );
+        assert_eq!(
+            connector.to,
+            ConnectorEndpoint::Free(CellPos::new(24, 4)) // (20,2)+(4,2)
+        );
+        assert_eq!(connector.bends, vec![CellPos::new(18, 8)]); // (14,6)+(4,2)
+
+        // Drop off every anchor: the ends stay free and the gesture is over (AC1).
+        assert_eq!(
+            up(&mut editor, &mut diagram, 13, 5, &routes),
+            EditOutcome::ConnectorMoved { id: c.clone() }
+        );
     }
 
     #[test]
-    fn dragging_from_a_body_and_dropping_back_on_the_line_adds_nothing() {
-        let (mut diagram, c, route) = bent_scene(None);
+    fn double_clicking_a_connector_body_inserts_a_bend_there() {
+        let (mut diagram, c, route) = bent_scene(None); // straight (8,2)-(20,2)
         let mut editor = EditorState::default();
         let routes = [(c.clone(), route)];
 
-        down(&mut editor, &mut diagram, 11, 2, &routes);
+        // Double-click a body cell on the segment: inserts the waypoint there (AC3).
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 11, 5, &routes),
+            double_click(&mut editor, &mut diagram, 11, 2, &routes),
             EditOutcome::BendAdded {
                 id: c.clone(),
-                at: CellPos::new(11, 5)
+                at: CellPos::new(11, 2),
             }
         );
-        // Drag it back onto the straight segment and drop: removed again (AC6).
+        assert_eq!(bends_of(&diagram, &c), vec![CellPos::new(11, 2)]);
+        // The double-click's press selected the connector.
+        assert!(editor.selection.contains(&c));
+    }
+
+    /// CR-020 AC3 — double-clicking a bend, an endpoint, or empty space inserts
+    /// nothing (only body segments take waypoints).
+    #[test]
+    fn double_clicking_a_bend_endpoint_or_empty_space_inserts_nothing() {
+        let (mut diagram, c, route) = bent_scene(Some(CellPos::new(14, 6)));
+        let mut editor = EditorState::default();
+        let routes = [(c.clone(), route)];
+
+        // On the existing bend's cell: no second bend appears.
         assert_eq!(
-            move_to(&mut editor, &mut diagram, 11, 2, &routes),
-            EditOutcome::BendMoved {
-                id: c.clone(),
-                to: CellPos::new(11, 2)
-            }
+            double_click(&mut editor, &mut diagram, 14, 6, &routes),
+            EditOutcome::Nothing
         );
+        // On an endpoint cell (the route ends at (8,2) and (20,2)).
         assert_eq!(
-            up(&mut editor, &mut diagram, 11, 2, &routes),
-            EditOutcome::BendRemoved {
-                id: c.clone(),
-                index: 0
-            }
+            double_click(&mut editor, &mut diagram, 8, 2, &routes),
+            EditOutcome::Nothing
         );
-        assert!(bends_of(&diagram, &c).is_empty());
+        // On empty space.
+        assert_eq!(
+            double_click(&mut editor, &mut diagram, 3, 9, &routes),
+            EditOutcome::Nothing
+        );
+
+        let bends = bends_of(&diagram, &c);
+        assert_eq!(bends, vec![CellPos::new(14, 6)], "no bend was inserted");
     }
 
     #[test]

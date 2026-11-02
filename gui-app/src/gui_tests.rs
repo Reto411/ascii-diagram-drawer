@@ -145,6 +145,18 @@ impl Gui {
         self.pump(Vec::new())
     }
 
+    /// Pump `frames` idle frames, advancing the harness clock that many ticks
+    /// (1/60 s each). Needed before a double-click when an earlier click landed
+    /// within egui's 0.3 s double-click window: otherwise the pair's second click
+    /// is classified as a *triple* click and `button_double_clicked` stays false.
+    fn settle(&mut self, frames: usize) -> egui::FullOutput {
+        let mut out = self.frame();
+        for _ in 1..frames {
+            out = self.frame();
+        }
+        out
+    }
+
     /// Pump one frame reporting a `(w, h)` viewport — for the resize grips'
     /// degenerate-window guard (FR14 / ADR 017).
     fn pump_screen(&mut self, w: f32, h: f32, events: Vec<Event>) -> egui::FullOutput {
@@ -215,6 +227,26 @@ impl Gui {
             pressed: false,
             modifiers: Modifiers::default(),
         }]
+    }
+
+    /// A full right click: Secondary press + release at `pos`, plus one settle frame.
+    fn right_click_at(&mut self, pos: Pos2) -> egui::FullOutput {
+        let _ = self.pump(vec![
+            Event::PointerMoved(pos),
+            Event::PointerButton {
+                pos,
+                button: PointerButton::Secondary,
+                pressed: true,
+                modifiers: Modifiers::default(),
+            },
+        ]);
+        let _ = self.pump(vec![Event::PointerButton {
+            pos,
+            button: PointerButton::Secondary,
+            pressed: false,
+            modifiers: Modifiers::default(),
+        }]);
+        self.frame()
     }
 
     /// A full click (press frame + release frame). Returns the last frame's output.
@@ -1395,11 +1427,12 @@ fn anchor_drag_creates_a_connector_between_two_shapes() {
     );
 }
 
-/// CR-008 AC2/AC3: pressing the target tip cell of a straight connector cycles its
-/// style — hollow arrow → empty rhombus → filled rhombus → bare — and the canvas glyph
-/// follows each step.
+/// CR-020 AC2/AC4: pressing the target tip cell of a straight connector opens an
+/// in-canvas dropdown ("Tip — obj-N (target)") instead of cycling; picking a row
+/// applies that style to exactly that end, closes the menu, and the canvas glyph
+/// follows. Pressing the tip again reopens the menu for further picks.
 #[test]
-fn pressing_the_connector_tip_cycles_its_style() {
+fn pressing_the_connector_tip_opens_a_dropdown_that_applies_styles() {
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let min = gui.canvas_min();
     gui.place_box_via_ui(min, 2, 1); // A: east anchor at (10, 3)
@@ -1416,41 +1449,121 @@ fn pressing_the_connector_tip_cycles_its_style() {
     let to = gui.cell_center(min, 20, 1 + 5 / 2);
     let _ = gui.drag(from, to);
 
-    let tip_cell = gui.cell_center(min, 19, 3); // one cell before B's west anchor (20, 3)
-    // The connector starts with the default hollow arrow; each press advances it.
-    let expected_after_presses = [
-        TipStyle::EmptyRhombus,
-        TipStyle::FilledRhombus,
-        TipStyle::Bare,
-    ];
-
-    for next in &expected_after_presses {
-        let out = gui.click_at(tip_cell);
-        // The status bar names the new style.
-        assert_status(&out, &format!("target tip set to {next}"));
-        // The model follows.
-        let connector: &ConnectorInstance = gui
-            .app
+    /// The connector's target tip, read from the model.
+    fn target_tip(gui: &Gui) -> TipStyle {
+        gui.app
             .diagram
             .objects()
             .iter()
             .find_map(|o| match o {
-                Object::Connector(c) => Some(c),
+                Object::Connector(c) => Some(c.to_tip),
                 _ => None,
             })
-            .expect("the connector exists");
-        assert_eq!(connector.to_tip, *next, "target tip cycled to {next}");
+            .expect("the connector exists")
     }
 
-    // The glyph on the canvas follows: bare stamps nothing, so the last press left no
-    // rhombus/arrow content on the tip cell — the row is plain dashes again.
+    let tip_cell = gui.cell_center(min, 19, 3); // the target's glyph cell (one before B's west anchor)
+
+    // Press-without-move on the tip cell: opens the dropdown for that end (AC2/AC4).
+    let out = gui.click_at(tip_cell);
+    assert_status(&out, "pick the target tip style");
+    assert!(
+        find_text_exact(&out, "Tip — obj-3 (target)").is_some(),
+        "the dropdown is drawn at the endpoint"
+    );
+
+    // Pick “Empty rhombus”: applies to the target end only and closes the menu.
+    let row = find_text_exact(&out, "Empty rhombus").expect("menu lists empty rhombus");
+    let out = gui.click_at(row.center());
+    assert_status(&out, "target tip set to empty rhombus");
+    assert_eq!(target_tip(&gui), TipStyle::EmptyRhombus);
+    // The glyph on the canvas follows.
+    let out = gui.frame();
+    assert!(texts(&out).iter().any(|(t, _)| t.contains('◇')));
+
+    // Press the tip again: the menu reopens; pick “Filled rhombus”.
+    let out = gui.click_at(tip_cell);
+    assert_status(&out, "pick the target tip style");
+    let row = find_text_exact(&out, "Filled rhombus").expect("menu lists filled rhombus");
+    let out = gui.click_at(row.center());
+    assert_status(&out, "target tip set to filled rhombus");
+    assert_eq!(target_tip(&gui), TipStyle::FilledRhombus);
+    let out = gui.frame();
+    assert!(texts(&out).iter().any(|(t, _)| t.contains('◆')));
+
+    // Press again and pick “None” → bare: the glyph disappears.
+    let out = gui.click_at(tip_cell);
+    assert_status(&out, "pick the target tip style");
+    let row = find_text_exact(&out, "None").expect("menu lists none");
+    let _ = gui.click_at(row.center());
+    assert_eq!(target_tip(&gui), TipStyle::Bare);
+    // The click frame painted before the apply — re-render to see the bare tip.
     let out = gui.frame();
     assert!(
         !texts(&out)
             .iter()
             .any(|(t, _)| t.contains('◇') || t.contains('◆')),
-        "no rhombus glyph remains after cycling to bare"
+        "no rhombus glyph remains after picking none"
     );
+}
+
+/// CR-020 AC4 — closing the tip dropdown: right-click cancels it without any
+/// change (keeping its S-013 cancel role), and a press on the canvas outside the
+/// menu closes it first, then acts on the canvas (deselects here).
+#[test]
+fn the_tip_dropdown_closes_on_right_click_and_outside_press() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+    gui.place_box_via_ui(min, 2, 1); // A: east anchor at (10, 3)
+    let out = gui.frame();
+    let label = find_text_exact(&out, "box").expect("sidebar lists box");
+    let _ = gui.click_at(label.center());
+    let _ = gui.click_at(gui.cell_center(min, 20, 1)); // B at (20, 1)
+
+    // Drag A's east anchor onto B's west edge → straight connector on row 3.
+    let (ax, ay, aw, ah) = gui.first_box();
+    let _ = gui.click_at(gui.cell_center(min, ax + aw / 2, ay + ah / 2));
+    let from = gui.cell_center(min, ax + aw - 1, ay + ah / 2);
+    let to = gui.cell_center(min, 20, 3);
+    let _ = gui.drag(from, to);
+
+    fn target_tip(gui: &Gui) -> TipStyle {
+        gui.app
+            .diagram
+            .objects()
+            .iter()
+            .find_map(|o| match o {
+                Object::Connector(c) => Some(c.to_tip),
+                _ => None,
+            })
+            .expect("the connector exists")
+    }
+
+    let tip_cell = gui.cell_center(min, 19, 3); // the target's glyph cell
+
+    // Open the dropdown, then right-click: it closes, nothing is touched.
+    let out = gui.click_at(tip_cell);
+    assert_status(&out, "pick the target tip style");
+    assert!(find_text_exact(&out, "Tip — obj-3 (target)").is_some());
+    let out = gui.right_click_at(gui.cell_center(min, 5, 10));
+    assert_status(&out, "Action cancelled");
+    assert!(
+        texts(&out).iter().all(|(t, _)| !t.starts_with("Tip —")),
+        "the menu is gone after right-click"
+    );
+    assert_eq!(target_tip(&gui), TipStyle::HollowArrow, "no tip changed");
+
+    // Reopen the dropdown, then press an empty canvas cell outside the menu:
+    // the press closes the menu first and still acts (clears the selection).
+    let out = gui.click_at(tip_cell);
+    assert_status(&out, "pick the target tip style");
+    let out = gui.click_at(gui.cell_center(min, 5, 10));
+    assert_status(&out, "Selection cleared");
+    assert!(
+        texts(&out).iter().all(|(t, _)| !t.starts_with("Tip —")),
+        "the menu is gone after the outside press"
+    );
+    assert_eq!(target_tip(&gui), TipStyle::HollowArrow, "no tip changed");
 }
 
 #[test]
@@ -3813,6 +3926,129 @@ fn ui_decomposition_window_controls() {
         minimize.min.x < fullscreen.min.x && fullscreen.min.x < close.min.x,
         "app bar order intact after a full editing session"
     );
+}
+
+/// Feature bar (AGENTS.md) — the representative arrow diagram decomposed purely through
+/// the user interface: sidebar → place two boxes → connect them; then every CR-020
+/// gesture on the resulting arrow — whole-body drag detaching both ends (AC1),
+/// double-click bend insertion (AC3), bend-handle drag (AC2), endpoint-handle drag with
+/// re-attach onto a shape anchor (AC2/AC1), and the tip dropdown on press (AC4) — plus
+/// a standalone arrow variant drawn with the sidebar tool (AC5).
+#[test]
+fn ui_decomposition_arrow_handles() {
+    use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
+    use diagram_model::geometry::CellPos;
+    use diagram_model::objects::{ConnectorInstance, TipStyle};
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+
+    /// All connectors in the model, in object order.
+    fn connectors(g: &Gui) -> Vec<&ConnectorInstance> {
+        g.app
+            .diagram
+            .objects()
+            .iter()
+            .filter_map(|o| match o {
+                Object::Connector(c) => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // --- Decomposition: sidebar → place → connect (pure UI gestures). ---
+    gui.place_box_via_ui(min, 2, 1); // A at (2,1): east anchor (10,3), size 9×5
+    let out = gui.frame();
+    let label = find_text_exact(&out, "box").expect("sidebar lists the box template");
+    let _ = gui.click_at(label.center());
+    let _ = gui.click_at(gui.cell_center(min, 20, 1)); // B at (20,1): west (20,3), south (24,5)
+    assert_eq!(gui.object_count(), 2);
+
+    // Selecting A again: anchors are only offered for the selected shape, and
+    // placing B replaced the selection.
+    let _ = gui.click_at(gui.cell_center(min, 6, 3));
+
+    let _ = gui.drag(gui.cell_center(min, 10, 3), gui.cell_center(min, 20, 3));
+    let out = gui.frame(); // settle: the release frame paints pre-release status
+    assert_status(&out, "Connector added as");
+    assert_eq!(connectors(&gui).len(), 1, "the connection exists");
+
+    // AC1 — grab the arrow's BODY at its midpoint and move it down three rows: both
+    // endpoints shift by the same delta and detach from their anchors (release off-
+    // anchor leaves them free).
+    let _ = gui.drag(gui.cell_center(min, 15, 3), gui.cell_center(min, 15, 6));
+    let out = gui.frame();
+    assert_status(&out, "moved");
+    let c = &connectors(&gui)[0];
+    assert_eq!(c.from, ConnectorEndpoint::Free(CellPos::new(10, 6)));
+    assert_eq!(c.to, ConnectorEndpoint::Free(CellPos::new(20, 6)));
+    assert!(c.bends.is_empty());
+
+    // AC3 — double-click the body segment: a bend is inserted at the clicked cell.
+    let _ = gui.settle(20); // clear egui's 0.3 s double-click window
+    gui.double_click_at(gui.cell_center(min, 15, 6));
+    let out = gui.frame();
+    assert_status(&out, "Bend added to obj-3 at (15, 6)");
+    assert_eq!(connectors(&gui)[0].bends, vec![CellPos::new(15, 6)]);
+
+    // AC2 — drag the bend handle: it moves live and stays off the neighbors' row.
+    let _ = gui.drag(gui.cell_center(min, 15, 6), gui.cell_center(min, 15, 9));
+    let out = gui.frame();
+    assert_status(&out, "Bend of obj-3 moved to (15, 9)");
+    assert_eq!(connectors(&gui)[0].bends, vec![CellPos::new(15, 9)]);
+
+    // AC2/AC1 — drag the target ENDPOINT handle and drop it exactly on B's south
+    // anchor: the end follows the pointer live, then re-attaches on release.
+    let _ = gui.drag(gui.cell_center(min, 20, 6), gui.cell_center(min, 24, 5));
+    let out = gui.frame();
+    assert_status(&out, "target end re-attached to its shape");
+    let b_id = gui
+        .app
+        .diagram
+        .objects()
+        .iter()
+        .find_map(|o| match o {
+            Object::Shape(s) if s.pos == CellPos::new(20, 1) => Some(s.id.clone()),
+            _ => None,
+        })
+        .expect("box B exists");
+    assert_eq!(
+        connectors(&gui)[0].to,
+        ConnectorEndpoint::Attached(AnchorRef::new(b_id, "s").expect("valid anchor"))
+    );
+
+    // AC4 — press the source ENDPOINT handle without moving: the tip dropdown opens;
+    // picking a row applies it to that end only.
+    let out = gui.click_at(gui.cell_center(min, 10, 6));
+    assert_status(&out, "pick the source tip style");
+    let row = find_text_exact(&out, "Filled rhombus").expect("menu lists filled rhombus");
+    let out = gui.click_at(row.center());
+    assert_status(&out, "source tip set to filled rhombus");
+    assert_eq!(connectors(&gui)[0].from_tip, TipStyle::FilledRhombus);
+
+    // AC5 — the same gestures work on a standalone arrow drawn with the sidebar tool.
+    let out = gui.frame();
+    let label = find_text_exact(&out, "↘  Arrow").expect("sidebar lists the arrow tool");
+    let _ = gui.click_at(label.center());
+    let _ = gui.drag(gui.cell_center(min, 32, 2), gui.cell_center(min, 40, 2));
+    let out = gui.frame();
+    assert_status(&out, "Connector added as");
+    let arrow = &connectors(&gui)[1];
+    assert_eq!(arrow.from, ConnectorEndpoint::Free(CellPos::new(32, 2)));
+    assert_eq!(arrow.to, ConnectorEndpoint::Free(CellPos::new(40, 2)));
+
+    // Disarm the tool (it stays armed for further drags), then double-click the
+    // standalone arrow's body → bend insertion there too.
+    let _ = gui.key(Key::Escape);
+    let _ = gui.settle(20); // clear egui's 0.3 s double-click window
+    gui.double_click_at(gui.cell_center(min, 36, 2));
+    let out = gui.frame();
+    assert_status(&out, "Bend added to obj-4 at (36, 2)");
+    assert_eq!(connectors(&gui)[1].bends, vec![CellPos::new(36, 2)]);
+
+    // …and its endpoint handle opens the same dropdown.
+    let out = gui.click_at(gui.cell_center(min, 40, 2));
+    assert_status(&out, "pick the target tip style");
 }
 
 /// AC2 — the app bar is painted with the active Material palette's surface color:

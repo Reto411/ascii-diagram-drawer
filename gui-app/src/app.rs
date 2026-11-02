@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use core_services::{RgbaImage, Services};
-use diagram_model::geometry::CellSize;
+use diagram_model::anchors::ConnectorEndpoint;
+use diagram_model::geometry::{CellPos, CellSize};
+use diagram_model::objects::{ConnectorEnd, ObjectId, TipStyle};
 use diagram_model::{Diagram, objects::Object};
 use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Key, Pos2, RichText, Sense, Vec2};
 use ui_api::ShapeInfo;
@@ -245,6 +247,9 @@ pub struct DrawingApp {
     /// AC5 (S-039) — the in-app format choice is showing (`Save As…` / `Export…`
     /// on a host without system dialogs); `None` when closed.
     format_choice: Option<FormatChoice>,
+    /// CR-020 AC4 — the screen rect of the open tip dropdown (stored from the frame
+    /// that drew it): a primary press inside it belongs to the menu, not the canvas.
+    tip_menu_rect: Option<egui::Rect>,
 }
 
 /// Builds the app from services, the loaded user options (FR13 / CR-005), an
@@ -322,6 +327,7 @@ impl DrawingApp {
             filter_query: String::new(),
             dialog_backend: default_dialog_backend(),
             format_choice: None,
+            tip_menu_rect: None,
         }
     }
 }
@@ -991,6 +997,42 @@ impl DrawingApp {
         outcome
     }
 
+    /// CR-020 AC1 — after a whole-arrow move, re-attach each free end that landed
+    /// exactly on an anchor (the model op behind [`EditOutcome::ConnectorMoved`]).
+    /// Returns the last re-attach's status message, if any.
+    fn reattach_moved_ends(&mut self, id: &ObjectId) -> Option<String> {
+        let Some(Object::Connector(connector)) = self.diagram.get(id) else {
+            return None; // defensive: the outcome was just produced for this id
+        };
+        // Snapshot the free ends' cells first — the re-attach mutates the diagram.
+        let mut free_ends: Vec<(ConnectorEnd, CellPos)> = Vec::new();
+        if let ConnectorEndpoint::Free(cell) = &connector.from {
+            free_ends.push((ConnectorEnd::Source, *cell));
+        }
+        if let ConnectorEndpoint::Free(cell) = &connector.to {
+            free_ends.push((ConnectorEnd::Target, *cell));
+        }
+        let mut last = None;
+        for (end, cell) in free_ends {
+            let Some(reference) = crate::canvas::anchor_ref_at(
+                &self.diagram,
+                self.services.catalog.as_ref(),
+                (cell.x, cell.y),
+            ) else {
+                continue; // dropped off-anchor: stays free (AC1)
+            };
+            if let Some(message) =
+                status_for(
+                    self.editor
+                        .reattach_endpoint(id, end, reference, &mut self.diagram),
+                )
+            {
+                last = Some(message);
+            }
+        }
+        last
+    }
+
     /// Keyboard edges for one frame, with dialog priority: while an inline text edit
     /// is open only Escape applies (it cancels the edit); while a path prompt is open
     /// Delete/Backspace belong to the field and Escape closes it; while the template
@@ -1330,8 +1372,8 @@ impl DrawingApp {
             );
         }
 
-        // Anchor dots, resize handle and the connect drag line (S-013).
-        draw_overlays(&painter, self, &vp, cursor, rect.min);
+        // Anchor dots, resize/endpoint/bend handles and the connect drag line.
+        draw_overlays(&painter, self, &vp, cursor, rect.min, &routes);
 
         // Pointer edges → editor events (AC3/AC4); report the outcome in the status bar.
         // Right-click cancels placement/gestures/selection.
@@ -1340,21 +1382,46 @@ impl DrawingApp {
             self.status = "Action cancelled".to_owned();
         }
 
+        // CR-020 AC4 — while the tip dropdown is open, a primary press inside its rect
+        // (stored from the frame that drew it) belongs to the menu, whose rows are
+        // laid out later this frame: skip canvas pointer handling so the click
+        // reaches the menu and not the canvas beneath it.
+        let press_in_tip_menu = self.editor.tip_dropdown().is_some()
+            && ctx.input(|i| {
+                i.pointer.button_pressed(egui::PointerButton::Primary)
+                    && self
+                        .tip_menu_rect
+                        .is_some_and(|r| i.pointer.hover_pos().is_some_and(|p| r.contains(p)))
+            });
         // S-035 FR20 — Ctrl/Shift held at the press frame make a body click additive
         // (extend/toggle the selection instead of replacing it).
         let additive = ctx.input(|i| i.modifiers.ctrl || i.modifiers.shift);
-        if let Some(message) =
-            status_for(self.handle_pointer_frame_additive(held, hit.clone(), additive))
-        {
+        let outcome = if press_in_tip_menu {
+            EditOutcome::Nothing
+        } else {
+            self.handle_pointer_frame_additive(held, hit.clone(), additive)
+        };
+        // CR-020 AC1 — a released whole-arrow move: any free end dropped exactly on
+        // an anchor is re-attached; its message wins the status bar.
+        let reattach_message = match &outcome {
+            EditOutcome::ConnectorMoved { id } => self.reattach_moved_ends(id),
+            _ => None,
+        };
+        if let Some(message) = status_for(outcome) {
+            self.status = message;
+        }
+        if let Some(message) = reattach_message {
             self.status = message;
         }
 
         // Double click (S-018 AC1): open inline editing of a text object under the
         // pointer; shapes open their region-content editor (FR19 / CR-016, S-037).
-        if ctx.input(|i| {
-            i.pointer
-                .button_double_clicked(egui::PointerButton::Primary)
-        }) {
+        if !press_in_tip_menu
+            && ctx.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            })
+        {
             match self.handle_pointer_double(hit) {
                 EditOutcome::DoubleClickShape { id } => {
                     self.open_shape_text_edit(&id);
@@ -1440,6 +1507,88 @@ impl DrawingApp {
                         }
                     });
             }
+        }
+
+        // CR-020 AC4 — the in-canvas tip dropdown: opened by a press without movement
+        // on a selected endpoint, anchored at that endpoint's resolved cell. Picking a
+        // style applies it; any other press closes the menu (canvas presses already
+        // closed it in `on_down`; UI presses never reach the editor and are handled
+        // here — the menu is still drawn on the press frame so its own rows can be
+        // clicked).
+        if let Some((id, end)) = self
+            .editor
+            .tip_dropdown()
+            .map(|(id, end)| (id.clone(), end))
+            && let Some(route) = routes.iter().find(|(rid, _)| rid == &id)
+            && route.1.len() >= 2
+        {
+            let cell = match end {
+                ConnectorEnd::Source => route.1[0],
+                ConnectorEnd::Target => *route.1.last().expect("length checked above"),
+            };
+            let (cx, cy) = vp.center_of(cell.x, cell.y);
+            let mut pos = Pos2::new(cx + rect.min.x + 12.0, cy + rect.min.y - 8.0);
+            // Flip to the left of the endpoint when it would run off-screen.
+            const MENU_WIDTH: f32 = 160.0;
+            if pos.x + MENU_WIDTH > ctx.viewport_rect().max.x {
+                pos.x -= MENU_WIDTH + 24.0;
+            }
+            let mut picked = false;
+            let response = egui::Area::new(egui::Id::unique("tip-dropdown"))
+                .fixed_pos(pos)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    let current = match self.diagram.get(&id) {
+                        Some(Object::Connector(connector)) => match end {
+                            ConnectorEnd::Source => connector.from_tip,
+                            ConnectorEnd::Target => connector.to_tip,
+                        },
+                        _ => TipStyle::Bare, // defensive: the menu only opens for live ends
+                    };
+                    ui.vertical_centered(|ui| {
+                        ui.strong(format!(
+                            "Tip — {id} ({})",
+                            match end {
+                                ConnectorEnd::Source => "source",
+                                ConnectorEnd::Target => "target",
+                            }
+                        ));
+                        for (tip, label) in [
+                            (TipStyle::Bare, "None"),
+                            (TipStyle::HollowArrow, "Hollow arrow"),
+                            (TipStyle::EmptyRhombus, "Empty rhombus"),
+                            (TipStyle::FilledRhombus, "Filled rhombus"),
+                        ] {
+                            if ui.selectable_label(current == tip, label).clicked() {
+                                picked = true;
+                                if let Some(message) = status_for(self.editor.apply_tip(
+                                    &id,
+                                    end,
+                                    tip,
+                                    &mut self.diagram,
+                                )) {
+                                    self.status = message;
+                                }
+                            }
+                        }
+                    });
+                });
+            // Remember where the menu sits so next frame's press gate can route
+            // clicks to it (CR-020 AC4).
+            self.tip_menu_rect = Some(response.response.rect);
+            // A press OUTSIDE the menu closes it; a press inside waits for the
+            // release — that is what completes a row click (`clicked()` fires on
+            // release, so closing on the press frame would swallow the pick). The
+            // release frame that OPENS the menu also sees no press, so it survives.
+            if !picked
+                && ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
+                && !press_in_tip_menu
+            {
+                self.editor.close_tip_dropdown();
+            }
+        } else {
+            // No menu this frame — drop the stale rect so it can't swallow presses.
+            self.tip_menu_rect = None;
         }
     }
 
@@ -1975,6 +2124,7 @@ fn draw_overlays(
     vp: &Viewport,
     cursor: Option<Pos2>,
     origin: Pos2,
+    routes: &[(ObjectId, Vec<CellPos>)],
 ) {
     // Canvas-relative → screen coordinates (the painter draws in screen space).
     let off = |p: Pos2| p + origin.to_vec2();
@@ -1990,6 +2140,7 @@ fn draw_overlays(
         app.services.catalog.as_ref(),
         &app.editor.selection,
         app.editor.anchor_exposure(),
+        routes,
     ) {
         match overlay {
             crate::canvas::Overlay::AnchorArrow {
@@ -2037,6 +2188,19 @@ fn draw_overlays(
                 // CR-007 AC7 — the marker sits on the bend cell's CENTER, exactly the
                 // cell `hit_target` answers with a Bend (same convention as the resize
                 // handle).
+                let c = center_of(col, row);
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        Pos2::new(c.x - 3.0, c.y - 3.0),
+                        Pos2::new(c.x + 3.0, c.y + 3.0),
+                    ),
+                    0.0,
+                    SELECTION_COLOR,
+                );
+            }
+            crate::canvas::Overlay::EndpointHandle((col, row)) => {
+                // CR-020 AC2 — same square as a bend handle (Visio draws one visual
+                // language for all line handles), on the resolved endpoint cell.
                 let c = center_of(col, row);
                 painter.rect_filled(
                     egui::Rect::from_min_max(
@@ -2872,6 +3036,10 @@ fn status_for(outcome: EditOutcome) -> Option<String> {
         }
         EditOutcome::BendRemoved { id, .. } => Some(format!("Bend removed from {id}")),
         EditOutcome::TipChanged { id, end, tip } => Some(format!("{id}: {end} tip set to {tip}")),
+        EditOutcome::TipDropdownOpened { id, end } => {
+            Some(format!("{id}: pick the {end} tip style"))
+        }
+        EditOutcome::ConnectorMoved { id } => Some(format!("{id} moved")),
         EditOutcome::Deleted { id, removed } => {
             let connectors = removed.saturating_sub(1);
             Some(if connectors == 0 {
@@ -2983,6 +3151,98 @@ mod tests {
             .expect("placement");
         let err = app.canvas_frame().expect_err("renderer is failing");
         assert!(err.contains("mystery"), "{err:?}");
+    }
+
+    // ── Whole-arrow move re-attach (CR-020 AC1) ─────────────────────────────
+
+    /// After a whole-arrow move, only the free ends that landed EXACTLY on an anchor
+    /// are re-attached; ends off anchors stay free. The re-attach message (if any)
+    /// wins the status bar.
+    #[test]
+    fn reattach_moved_ends_reattaches_only_ends_on_anchors() {
+        let mut app = app();
+        // Two 9×5 boxes in a row; A's north anchor sits at (4,0).
+        let a = app.diagram.new_object_id();
+        app.diagram
+            .place_shape(
+                ShapeInstance::new(
+                    a.clone(),
+                    "box",
+                    "",
+                    CellPos::new(0, 0),
+                    CellSize::new(9, 5).unwrap(),
+                )
+                .expect("valid"),
+            )
+            .expect("placement");
+        let b = app.diagram.new_object_id();
+        app.diagram
+            .place_shape(
+                ShapeInstance::new(
+                    b.clone(),
+                    "box",
+                    "",
+                    CellPos::new(20, 0),
+                    CellSize::new(9, 5).unwrap(),
+                )
+                .expect("valid"),
+            )
+            .expect("placement");
+        let c = app.diagram.new_object_id();
+        app.diagram
+            .connect(diagram_model::objects::ConnectorInstance::between(
+                c.clone(),
+                diagram_model::anchors::AnchorRef::new(a.clone(), "e").expect("valid"),
+                diagram_model::anchors::AnchorRef::new(b.clone(), "w").expect("valid"),
+                diagram_model::objects::ConnectorStyle::Solid,
+            ))
+            .expect("connects");
+
+        // Simulate a released whole-arrow move: the source end sits exactly on A's
+        // north anchor, the target end on an empty cell.
+        app.diagram
+            .set_endpoint(
+                &c,
+                ConnectorEnd::Source,
+                ConnectorEndpoint::Free(CellPos::new(4, 0)),
+            )
+            .expect("detach is valid");
+        app.diagram
+            .set_endpoint(
+                &c,
+                ConnectorEnd::Target,
+                ConnectorEndpoint::Free(CellPos::new(16, 3)),
+            )
+            .expect("detach is valid");
+
+        let message = app.reattach_moved_ends(&c).expect("one end re-attached");
+        assert!(message.contains(&c.to_string()), "{message:?}");
+        let connector = match app.diagram.get(&c).expect("exists") {
+            diagram_model::objects::Object::Connector(connector) => connector,
+            _ => panic!("expected a connector"),
+        };
+        assert_eq!(
+            connector.from,
+            ConnectorEndpoint::Attached(
+                diagram_model::anchors::AnchorRef::new(a.clone(), "n").expect("valid")
+            ),
+            "the end on the anchor is re-attached"
+        );
+        assert_eq!(
+            connector.to,
+            ConnectorEndpoint::Free(CellPos::new(16, 3)),
+            "the off-anchor end stays free"
+        );
+
+        // Nothing on an anchor → no message, no mutation.
+        app.diagram
+            .set_endpoint(
+                &c,
+                ConnectorEnd::Source,
+                ConnectorEndpoint::Free(CellPos::new(3, 9)),
+            )
+            .expect("detach is valid");
+        assert!(app.reattach_moved_ends(&c).is_none());
     }
 
     // ── SVG preview pane (S-026 / CR-004) ────────────────────────────────────
