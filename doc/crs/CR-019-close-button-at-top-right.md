@@ -2,7 +2,7 @@
 title: CR-019 - close-button-at-top-right
 description: the window close button sits at the left end of the app-bar control group; it shall be the rightmost control (top-right corner), per KDE/Windows convention
 scope: gui
-status: accepted
+status: implemented
 priority: low
 updated: 2026-11-01
 ---
@@ -50,4 +50,4 @@ User feedback (2026-11-01): "It is unusual to have it [the close button] at the 
 
 > Filled when the story implementing it lands: S-NNN + commit hash; CR → implemented, board row → Closed. Empty until then.
 
--
+Landed as **S-040** (2026-11-02): `window_controls` in `gui-app/src/appbar.rs` now adds the three buttons in reverse code order (close first) inside its `Layout::right_to_left` scope, so the visual order is minimize ─ → fullscreen □ → close × with close at the top-right corner; commands and glyphs unchanged. Pinned by new tier-0b test `window_controls_render_minimize_fullscreen_close_left_to_right` + feature-bar decomposition `ui_decomposition_window_controls`; goldens regenerated (diff confined to the control glyph row).

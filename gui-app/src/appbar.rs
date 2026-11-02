@@ -257,6 +257,12 @@ pub fn show(ui: &mut Ui, title: &str) {
 
 /// The minimize / fullscreen / close controls, right-aligned in the bar.
 ///
+/// Visual order is left-to-right **minimize ─, fullscreen □, close ×** — close
+/// at the window's top-right corner (FR14 / ADR 017 v2). The buttons are added
+/// in the *reverse* order below because they live in a `Layout::right_to_left`
+/// scope: egui places the first-added widget rightmost, so adding close first
+/// puts it at the right end and minimize (added last) at the left.
+///
 /// Glyphs are monospace by design: the bundled proportional font lacks
 /// box-drawing glyphs (verified by `gui_tests::window_control_glyphs_are_in_the_font`),
 /// while Hack covers all three.
@@ -265,17 +271,17 @@ fn window_controls(ui: &mut Ui) {
     // No live `ctx` may be held across the `ui.add_sized` calls below (borrow
     // rules): fetch each command through a fresh `ui.ctx()` at the point of use.
 
-    // Minimize: the small horizontal line (U+2500).
+    // Close: the app exits after this frame (eframe's winit handling).
+    // Added first → rightmost under `right_to_left` (top-right corner, FR14).
     if ui
         .add_sized(
             [APP_BAR_HEIGHT - 8.0; 2],
-            egui::Button::new(RichText::new("─").monospace()),
+            egui::Button::new(RichText::new("×").monospace()),
         )
-        .on_hover_text("Minimize")
+        .on_hover_text("Close")
         .clicked()
     {
-        ui.ctx()
-            .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     // Fullscreen toggle: reads the current state from the viewport info
@@ -297,16 +303,18 @@ fn window_controls(ui: &mut Ui) {
             .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen));
     }
 
-    // Close: the app exits after this frame (eframe's winit handling).
+    // Minimize: the small horizontal line (U+2500).
+    // Added last → leftmost of the trio.
     if ui
         .add_sized(
             [APP_BAR_HEIGHT - 8.0; 2],
-            egui::Button::new(RichText::new("×").monospace()),
+            egui::Button::new(RichText::new("─").monospace()),
         )
-        .on_hover_text("Close")
+        .on_hover_text("Minimize")
         .clicked()
     {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
 }
 

@@ -3685,6 +3685,136 @@ fn window_controls_queue_viewport_commands() {
     }
 }
 
+/// CR-019 AC1 — the window controls render in left-to-right visual order
+/// minimize ─ → fullscreen □ → close ×, with close at the window's top-right
+/// corner (rightmost, right-aligned to the bar's edge margin).
+#[test]
+fn window_controls_render_minimize_fullscreen_close_left_to_right() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let out = gui.frame();
+
+    let minimize = find_text_exact(&out, "─").expect("minimize control in the app bar");
+    let fullscreen = find_text_exact(&out, "□").expect("fullscreen control in the app bar");
+    let close = find_text_exact(&out, "×").expect("close control in the app bar");
+
+    // All three sit inside the app-bar strip.
+    for (glyph, rect) in [("─", minimize), ("□", fullscreen), ("×", close)] {
+        assert!(
+            rect.max.y < crate::appbar::APP_BAR_HEIGHT,
+            "{glyph} sits in the app bar strip: {rect:?}"
+        );
+    }
+
+    // Left-to-right visual order: minimize, fullscreen, close.
+    assert!(
+        minimize.min.x < fullscreen.min.x && fullscreen.min.x < close.min.x,
+        "visual order must be minimize → fullscreen → close; got x(─)={}, x(□)={}, x(×)={}",
+        minimize.min.x,
+        fullscreen.min.x,
+        close.min.x
+    );
+
+    // Close is anchored to the top-right corner: its glyph sits within the bar's
+    // right-edge margin (panel inner margin + button padding ≈ 20 pt) — never
+    // floating in the middle of the bar.
+    assert!(
+        WIN_W - close.max.x <= 30.0,
+        "close is right-aligned to the window edge; got max.x={} (WIN_W={})",
+        close.max.x,
+        WIN_W
+    );
+}
+
+/// Feature bar (S-040): a representative diagram drawn purely through the real UI —
+/// two boxes via sidebar click + canvas placement, one anchor→anchor connector
+/// drag, one typed text object — then the reordered app bar verified in the same
+/// live session: the chrome change coexists with a fully usable editor.
+#[test]
+fn ui_decomposition_window_controls() {
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+
+    // 1. Two boxes through the sidebar → canvas.
+    gui.place_box_via_ui(min, 2, 1); // A at (2,1), 9 wide × 5 tall
+    let out = gui.frame();
+    let label = find_text_exact(&out, "box").expect("sidebar lists box");
+    let _ = gui.click_at(label.center());
+    let _ = gui.click_at(gui.cell_center(min, 20, 1)); // B at (20,1)
+    assert_eq!(gui.object_count(), 2, "two boxes placed");
+
+    // 2. Connector: drag A's east anchor onto B's west edge.
+    let (ax, ay, aw, ah) = gui.first_box();
+    let _ = gui.click_at(gui.cell_center(min, ax + aw / 2, ay + ah / 2)); // re-select A
+    let from = gui.cell_center(min, ax + aw - 1, ay + ah / 2); // A's east anchor cell
+    let to = gui.cell_center(min, 20, 1 + 5 / 2); // B's west edge
+    let _ = gui.drag(from, to);
+
+    // 3. Text object through the text tool, typed content, Enter commits.
+    let out = gui.frame();
+    let tlabel = find_text_exact(&out, "T  Text").expect("sidebar lists the text tool");
+    let _ = gui.click_at(tlabel.center());
+    let _ = gui.click_at(gui.cell_center(min, 10, 8));
+    assert!(gui.app.is_editing(), "placing opens the inline editor");
+    // The draft starts as the placeholder content "text": click its right edge to
+    // put the cursor at the end, clear it, then type the real content.
+    let out = gui.frame();
+    let draft = find_text_exact(&out, "text").expect("the draft shows its default content");
+    let _ = gui.click_at(Pos2::new(draft.max.x + 3.0, draft.center().y));
+    for _ in 0..4 {
+        let _ = gui.key(Key::Backspace);
+    }
+    let _ = gui.type_text("hello!");
+    let _ = gui.key(Key::Enter);
+
+    // Model state: exactly two shapes, one connector, one text with typed content.
+    let objects: Vec<_> = gui.app.diagram.objects().to_vec();
+    assert_eq!(
+        objects.len(),
+        4,
+        "two shapes + connector + text; got {objects:?}"
+    );
+    assert_eq!(
+        objects
+            .iter()
+            .filter(|o| matches!(o, Object::Shape(_)))
+            .count(),
+        2
+    );
+    assert_eq!(
+        objects
+            .iter()
+            .filter(|o| matches!(o, Object::Connector(_)))
+            .count(),
+        1,
+        "the anchor drag created a connector"
+    );
+    let text = objects
+        .iter()
+        .find_map(|o| match o {
+            Object::Text(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .expect("a text object exists");
+    assert_eq!(text, "hello!", "typed content committed to the model");
+
+    // Rendered canvas: the connector's route line is drawn between the shapes.
+    let out = gui.frame();
+    assert!(
+        !line_points(&out).is_empty(),
+        "canvas renders diagram lines"
+    );
+
+    // App bar in the same live session: order still minimize → fullscreen → close,
+    // close rightmost at the top-right corner.
+    let minimize = find_text_exact(&out, "─").expect("minimize control");
+    let fullscreen = find_text_exact(&out, "□").expect("fullscreen control");
+    let close = find_text_exact(&out, "×").expect("close control");
+    assert!(
+        minimize.min.x < fullscreen.min.x && fullscreen.min.x < close.min.x,
+        "app bar order intact after a full editing session"
+    );
+}
+
 /// AC2 — the app bar is painted with the active Material palette's surface color:
 /// dark by default (Native resolves to dark headlessly), light after a switch.
 #[test]
