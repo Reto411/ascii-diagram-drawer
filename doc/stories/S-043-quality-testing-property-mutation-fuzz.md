@@ -32,7 +32,7 @@ Q5 ("testable core") and the QS family are currently guarded by hand-written uni
 
 ### Handoff resolved — 2026-11-01
 
-The planning agent's WIP (testgen module, the three property suites, `set_endpoint` fix B-005, two-phase parse + `from_parts` for B-006) was resumed and completed in one session: all open handoff items closed, the two found bugs filed as [B-005](../bugs/B-005-set-endpoint-mutates-on-rejection.md) / [B-006](../bugs/B-006-ad-forward-reference-lossiness.md), and the fuzz campaign (AC4) found two more round-trip bugs — [B-007](../bugs/B-007-unknown-statement-trim-breaks-roundtrip.md) and [B-008](../bugs/B-008-cr-run-normalization-breaks-roundtrip.md) / [B-009](../bugs/B-009-lone-cr-masks-keyword-silent-preservation.md) — all fixed with regression tests. See the Verification section for final evidence.
+The planning agent's WIP (testgen module, the three property suites, `set_endpoint` fix B-005, two-phase parse + `from_parts` for B-006) was resumed and completed in one session: all open handoff items closed, the two found bugs filed as [B-005](../bugs/B-005-set-endpoint-mutates-on-rejection.md) / [B-006](../bugs/B-006-ad-forward-reference-lossiness.md), and the fuzz campaign (AC4) found three more round-trip bugs — [B-007](../bugs/B-007-unknown-statement-trim-breaks-roundtrip.md), [B-008](../bugs/B-008-cr-run-normalization-breaks-roundtrip.md) and [B-009](../bugs/B-009-lone-cr-masks-keyword-silent-preservation.md) — all fixed with regression tests. See the Verification section for final evidence.
 
 
 
