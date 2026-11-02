@@ -256,3 +256,31 @@ proptest! {
         prop_assert_eq!(parsed, d);
     }
 }
+
+/// S-020 AC3 — scheduled heavy check: the same lossless round-trip property as
+/// [`round_trip_is_lossless`] at 10× proptest's default iteration count (256 → 2560
+/// cases). Runs in ordinary `cargo test` on every target.
+#[test]
+fn round_trip_heavy_2560_cases() {
+    use proptest::test_runner::{Config, TestRunner};
+
+    let mut runner = TestRunner::new(Config {
+        cases: 2560,
+        max_shrink_iters: 10_000,
+        ..Config::default()
+    });
+    runner
+        .run(&diagram_strategy(), |d: Diagram| {
+            let text = ad_format::serialize(&d);
+            let parsed = ad_format::parse(&text)
+                .unwrap_or_else(|err| panic!("canonical serialization must parse: {err}\n{text}"));
+            assert_eq!(
+                ad_format::serialize(&parsed),
+                text,
+                "re-save must be byte-stable"
+            );
+            assert_eq!(parsed, d, "round-trip must be lossless");
+            Ok(())
+        })
+        .expect("lossless round-trip holds at 2560 cases");
+}

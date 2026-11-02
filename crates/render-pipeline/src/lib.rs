@@ -14,6 +14,7 @@
 //!
 //! The resolved grid is a derived intermediate: it is never stored as source data.
 
+pub mod bench_fixtures;
 mod connectors;
 mod edges;
 mod ellipse;

@@ -11,9 +11,15 @@ shape-registry = { path = "../shape-registry" }
 
 # proptest's default `fork`/`timeout` features need rusty-fork (process forking),
 # which does not compile for wasm — the wasm32 test runs (S-019 AC2) use in-process
-# execution; native keeps the full defaults.
+# execution; native keeps the full defaults. Criterion pulls rayon and friends, none
+# of which build for wasm — benchmarks are a native-only concern (S-020).
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1.12.0"
+criterion = "0.8"
+
+[[bench]]
+name = "render_500"
+harness = false
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }

@@ -19,11 +19,19 @@ tiny-skia = { version = "0.12", optional = true }
 usvg = { version = "0.49", optional = true }
 
 # Golden tests build `Diagram`s through the public API (dev-only; the T5 dependency
-# audit excludes dev-dependencies from the runtime DAG).
+# audit excludes dev-dependencies from the runtime DAG). Criterion is native-only —
+# it pulls rayon, which does not build for wasm (S-020).
 [dev-dependencies]
 diagram-model = { path = "../diagram-model" }
 png = "0.17"
 shape-registry = { path = "../shape-registry" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.8"
+
+[[bench]]
+name = "export_scaling"
+harness = false
 
 [lints]
 workspace = true
