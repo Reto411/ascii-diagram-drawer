@@ -21,7 +21,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Closed | Resolution |
 |----|--------|--------|------------|
-| CR-019 | Window close button at the top right (rightmost of the app-bar controls) | 2026-11-02 | implemented — S-040 (FR14; `window_controls` added in reverse code order under `right_to_left`) |
+| CR-019 | Window close button at the top right (rightmost of the app-bar controls) | 2026-11-02 | implemented — S-040, commit `a507e44` (FR14; app-bar control order) |
 | CR-001 | Native file dialogs for Open, Save and Export | 2026-11-01 | implemented — S-039, commit `5f3edd1` (FR2/FR4/FR5; rfd + xdg-portal seam) |
 | CR-015 | UML shape set in the built-in catalog (requires CR-003; compartmented shapes need CR-016) | 2026-11-01 | implemented — S-036, commit `6327c3d` (FR18) |
 | CR-018 | Resize symbol on the shape's resize hook | 2026-11-01 | implemented — S-038, commit `0c05452` (FR21) |
