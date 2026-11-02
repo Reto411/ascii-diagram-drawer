@@ -123,7 +123,7 @@ Pixel-exact diffs only work if the app renders identically on every run. The sof
 - Deterministic state: each dump state is reached by an explicit event sequence (no timing, no idle sleep needed); the last pumped frame is captured directly.
 - Font atlas comes from the image's fontconfig + epaint's rasterizer — stable within one image build; regenerate goldens on eframe/epaint bumps or font package changes.
 
-Known rasterizer conventions (why the PNGs match what a GPU would show): epaint vertex colors are straight sRGBA, untextured vertices sample `uv=(0,0)` which egui keeps as an opaque white texel in the font atlas, and blending is straight-alpha "over". If you change any of this in `screenshot.rs`, re-run the synthetic check (`dbg_raster_synth` pattern: two known rects must land on their exact pixel bounds).
+Known rasterizer conventions (why the PNGs match what a GPU would show): epaint vertex colors are straight sRGBA; the font atlas (`TextureId::Managed(0)`) is sampled straight from the context, while any *other* managed texture (e.g. the S-026 preview raster) must be passed to `rasterize`/`capture_to_png` in a `HashMap<TextureId, ColorImage>` accumulated across frames from each frame's `FullOutput::textures_delta` — the harness does this via `Gui::pump` → `Gui::textures()` (the texture manager itself keeps only metadata; pixels flow through the delta); a quad referencing a missing texture renders flat (vertex color only); blending is straight-alpha "over". If you change any of this in `screenshot.rs`, re-run the synthetic check (`dbg_raster_synth` pattern: two known rects must land on their exact pixel bounds).
 
 ## wasm target
 

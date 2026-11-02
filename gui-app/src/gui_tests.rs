@@ -23,7 +23,10 @@ use core_services::Services;
 use diagram_model::objects::{ConnectorInstance, Object, TipStyle};
 // The app depends on eframe only; egui is reached through its re-export.
 use eframe::egui;
-use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Vec2};
+use egui::{
+    Color32, ColorImage, Event, Key, Modifiers, PointerButton, Pos2, Rect, TextureId, Vec2,
+};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 const WIN_W: f32 = 1024.0;
@@ -85,6 +88,10 @@ struct Gui {
     ts: f64,
     /// S-039 — the fake dialog backend installed on `app` (deterministic dialogs).
     dialogs: std::sync::Arc<FakeDialogs>,
+    /// Managed textures uploaded so far, accumulated from each frame's
+    /// `textures_delta` — passed to the software rasterizer (`screenshot.rs`) so
+    /// textured quads (e.g. the S-026 preview) render their real pixels.
+    textures: HashMap<TextureId, ColorImage>,
 }
 
 impl Gui {
@@ -110,7 +117,37 @@ impl Gui {
             app,
             ts: 1.0,
             dialogs,
+            textures: HashMap::new(),
         }
+    }
+
+    /// Absorb this frame's texture uploads into [`Self::textures`] (headless: no
+    /// GPU to apply them to — the software rasterizer samples them instead) and
+    /// drop the frees. Must run before `out.textures_delta` is dropped unapplied.
+    ///
+    /// Only whole-texture deltas are tracked: partial patches exist for the font
+    /// atlas (`Managed(0)`), which [`crate::screenshot`] samples directly from the
+    /// context, so a reconstructed copy would be stale by design.
+    fn absorb_textures(&mut self, out: &mut egui::FullOutput) {
+        use egui::epaint::ImageData;
+        for (id, deltas) in out.textures_delta.set.drain() {
+            for delta in deltas {
+                // `ImageData` has a single (`Color`) variant as of egui 0.37.
+                let ImageData::Color(img) = delta.image;
+                if delta.pos.is_none() {
+                    self.textures.insert(id, (*img).clone());
+                }
+            }
+        }
+        for id in out.textures_delta.free.drain() {
+            self.textures.remove(&id);
+        }
+        out.textures_delta.clear();
+    }
+
+    /// Textures uploaded so far — for the software rasterizer.
+    fn textures(&self) -> &HashMap<TextureId, ColorImage> {
+        &self.textures
     }
 
     /// S-039 — queue the result the next dialog request will return.
@@ -134,9 +171,10 @@ impl Gui {
         self.ts += 1.0 / 60.0;
         let app = &mut self.app;
         let mut out = self.ctx.run_ui(raw, |ui| app.show(ui));
-        // Headless: there is no GPU to upload glyph textures to — clear the pending
-        // deltas or egui panics when they are dropped unapplied.
-        out.textures_delta.clear();
+        // Headless: there is no GPU to upload glyph textures to — absorb the
+        // pending deltas into `self.textures` (the rasterizer samples them) or
+        // egui panics when they are dropped unapplied.
+        self.absorb_textures(&mut out);
         out
     }
 
@@ -169,7 +207,7 @@ impl Gui {
         self.ts += 1.0 / 60.0;
         let app = &mut self.app;
         let mut out = self.ctx.run_ui(raw, |ui| app.show(ui));
-        out.textures_delta.clear();
+        self.absorb_textures(&mut out);
         out
     }
 
@@ -202,7 +240,7 @@ impl Gui {
         self.ts += 1.0 / 60.0;
         let app = &mut self.app;
         let mut out = self.ctx.run_ui(raw, |ui| app.show(ui));
-        out.textures_delta.clear();
+        self.absorb_textures(&mut out);
         out
     }
 
@@ -2321,9 +2359,16 @@ fn visual_dump() {
     let dir = std::path::PathBuf::from("/tmp/gui-dump");
     std::fs::create_dir_all(&dir).unwrap();
 
-    let shot = |ctx: &egui::Context, out: &egui::FullOutput, name: &str| {
-        crate::screenshot::capture_to_png(ctx, out, WIN_W as u32, WIN_H as u32, &dir.join(name))
-            .unwrap_or_else(|e| panic!("rasterize {name}: {e}"));
+    let shot = |gui: &Gui, out: &egui::FullOutput, name: &str| {
+        crate::screenshot::capture_to_png(
+            &gui.ctx,
+            out,
+            WIN_W as u32,
+            WIN_H as u32,
+            gui.textures(),
+            &dir.join(name),
+        )
+        .unwrap_or_else(|e| panic!("rasterize {name}: {e}"));
     };
 
     let load_fixture = |name: &str| -> DrawingApp {
@@ -2342,20 +2387,20 @@ fn visual_dump() {
     // 1. Empty canvas.
     let mut gui = Gui::new(DrawingApp::new(Services::native()));
     let out = gui.frame();
-    shot(&gui.ctx, &out, "01-empty.png");
+    shot(&gui, &out, "01-empty.png");
 
     // 2. Text fixture (shape + single/multi-line text).
     {
         let mut gui = Gui::new(load_fixture("text-sample.ad"));
         let out = gui.frame();
-        shot(&gui.ctx, &out, "02-text-sample.png");
+        shot(&gui, &out, "02-text-sample.png");
     }
 
     // 3. Two boxes with a connector.
     {
         let mut gui = Gui::new(load_fixture("two-boxes-connector.ad"));
         let out = gui.frame();
-        shot(&gui.ctx, &out, "03-two-boxes.png");
+        shot(&gui, &out, "03-two-boxes.png");
     }
 
     // 4. Box selected: outline, anchor dots, resize handle.
@@ -2365,7 +2410,7 @@ fn visual_dump() {
         gui.place_box_via_ui(min, 2, 1);
         gui.select_first_box(min);
         let out = gui.frame();
-        shot(&gui.ctx, &out, "04-selected.png");
+        shot(&gui, &out, "04-selected.png");
     }
 
     // 5. Connect drag in progress (line from anchor to cursor).
@@ -2378,7 +2423,7 @@ fn visual_dump() {
         let e_anchor = gui.cell_center(min, x + w - 1, y + h / 2);
         let cursor = gui.cell_center(min, x + w + 4, y);
         let out = gui.press_and_hold_to(e_anchor, cursor);
-        shot(&gui.ctx, &out, "05-connect-drag.png");
+        shot(&gui, &out, "05-connect-drag.png");
     }
 
     // 6. Template editor window open (name typed, pattern cells painted).
@@ -2394,7 +2439,7 @@ fn visual_dump() {
         let _ = gui.click_at(Pos2::new(name_label.max.x + 10.0, name_label.center().y));
         let _ = gui.type_text("star");
         let out = gui.frame();
-        shot(&gui.ctx, &out, "06-template-editor.png");
+        shot(&gui, &out, "06-template-editor.png");
     }
 
     // 7. Path prompt open with a typed path.
@@ -2403,7 +2448,7 @@ fn visual_dump() {
         let _ = gui.open_prompt("Open…");
         let _ = gui.type_text("/tmp/diagrams/next.ad");
         let out = gui.frame();
-        shot(&gui.ctx, &out, "07-path-prompt.png");
+        shot(&gui, &out, "07-path-prompt.png");
     }
 
     // 8. Inline text editing (floating editor over the object).
@@ -2412,7 +2457,7 @@ fn visual_dump() {
         let min = gui.canvas_min();
         place_text_object(&mut gui, min);
         let out = gui.frame();
-        shot(&gui.ctx, &out, "08-inline-edit.png");
+        shot(&gui, &out, "08-inline-edit.png");
     }
 
     // 9. File menu open (FR6 / CR-002): the grouped dropdown over the canvas.
@@ -2420,7 +2465,7 @@ fn visual_dump() {
         let mut gui = Gui::new(DrawingApp::new(Services::native()));
         let _ = gui.click_topbar_button("File ▾");
         let out = gui.frame();
-        shot(&gui.ctx, &out, "09-file-menu.png");
+        shot(&gui, &out, "09-file-menu.png");
     }
 
     // 10. Material dark palette (FR14 / CR-006): app bar + themed chrome.
@@ -2444,7 +2489,7 @@ fn visual_dump() {
         }
         let mut gui = Gui::new(app);
         let out = gui.frame();
-        shot(&gui.ctx, &out, "10-material-dark.png");
+        shot(&gui, &out, "10-material-dark.png");
     }
 
     // 11. Material light palette: same fixture under Light (AC2/AC5 — only the
@@ -2469,14 +2514,14 @@ fn visual_dump() {
         }
         let mut gui = Gui::new(app);
         let out = gui.frame();
-        shot(&gui.ctx, &out, "11-material-light.png");
+        shot(&gui, &out, "11-material-light.png");
     }
 
     // 12. Diagram colors dialog: all roles at the medium default (FR15 / CR-009).
     {
         let mut gui = Gui::new(DrawingApp::new(Services::native()));
         let out = gui.open_color_dialog();
-        shot(&gui.ctx, &out, "12-color-dialog-default.png");
+        shot(&gui, &out, "12-color-dialog-default.png");
     }
 
     // 13. Diagram colors dialog with two roles set — swatches + recent strip.
@@ -2491,7 +2536,7 @@ fn visual_dump() {
         let _ = gui.type_text("#3c6ef5");
         let out = gui.frame();
         let out = gui.click_color_row_action(&out, 0, "Set");
-        shot(&gui.ctx, &out, "13-color-dialog-filled.png");
+        shot(&gui, &out, "13-color-dialog-filled.png");
     }
 
     // 14. Multi-selection (S-035 FR20): two boxes selected via Ctrl+click — one
@@ -2505,7 +2550,7 @@ fn visual_dump() {
         let _ = gui.click_at(label.center());
         let _ = gui.click_at(gui.cell_center(min, 15, 2));
         let out = gui.ctrl_click_at(gui.cell_center(min, 6, 4));
-        shot(&gui.ctx, &out, "14-multi-select.png");
+        shot(&gui, &out, "14-multi-select.png");
     }
 
     eprintln!("visual dump written to {dir:?}");
@@ -4255,7 +4300,13 @@ fn canvas_is_pixel_identical_under_both_palettes() {
             .map(|(r, _)| r)
             .expect("the canvas background is drawn");
         (
-            crate::screenshot::rasterize(&gui.ctx, &out, WIN_W as u32, WIN_H as u32),
+            crate::screenshot::rasterize(
+                &gui.ctx,
+                &out,
+                WIN_W as u32,
+                WIN_H as u32,
+                gui.textures(),
+            ),
             canvas,
         )
     };
@@ -4310,7 +4361,13 @@ fn material_theme_goldens_match_committed_pngs() {
         }
         let mut gui = Gui::new(app);
         let out = gui.frame();
-        let fresh = crate::screenshot::rasterize(&gui.ctx, &out, WIN_W as u32, WIN_H as u32);
+        let fresh = crate::screenshot::rasterize(
+            &gui.ctx,
+            &out,
+            WIN_W as u32,
+            WIN_H as u32,
+            gui.textures(),
+        );
 
         let golden_path = goldens.join(name);
         if std::env::var("GOLDEN_UPDATE").is_ok() {
@@ -4319,6 +4376,7 @@ fn material_theme_goldens_match_committed_pngs() {
                 &out,
                 WIN_W as u32,
                 WIN_H as u32,
+                gui.textures(),
                 &golden_path,
             )
             .unwrap_or_else(|e| panic!("write golden {name}: {e}"));

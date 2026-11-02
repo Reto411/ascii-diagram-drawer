@@ -34,10 +34,12 @@ Draw ASCII diagrams **visually**: place, move, and resize shapes on a grid canva
 
 ## Status
 
-Early development, driven by user stories — see the [board](doc/stories/BOARD.md):
+Feature-complete for the v1 scope — all 43 user stories are done; see the [board](doc/stories/BOARD.md):
 
-- ✅ done: headless core (diagram model, plain-text `.ad` format, shape catalog + custom templates/collections, deterministic render pipeline with anchor-bound connectors, text/SVG/PNG export) and the full native GUI — canvas, editing gestures, file I/O, export/scale control, collections, template editor, free text
-- ⏳ next: web/wasm milestone (S-019), performance benchmarks (S-020), documentation completion (S-021)
+- ✅ headless core: diagram model, plain-text `.ad` format, shape catalog + custom templates/collections (incl. a UML set), deterministic render pipeline with anchor-bound connectors, text/SVG/PNG export
+- ✅ full GUI in egui — canvas, editing gestures, file I/O, export/scale control, collections, template editor, free text, diagram colors, multi-select, arrow handles — on native desktop **and** in the browser (wasm)
+- ✅ measured performance baseline + render-determinism invariants; complete arc42 documentation (v1.0)
+- ⏳ next: cut the 1.0 release; confirm the proposed P1–P3 performance budgets ([quality model §5.3](doc/arc42/06-quality-model.md))
 
 ## Local LLMs only
 
@@ -64,6 +66,8 @@ A layered Rust workspace: headless core (model → format → shapes → render 
 cargo build --workspace
 cargo test --workspace
 cargo run -p gui-app   # open the editor window (native desktop)
+
+cd gui-app && trunk build --release   # browser bundle in gui-app/dist/ (Trunk 0.22; baked into the devcontainer image)
 ```
 
 Rust is pinned in [rust-toolchain.toml](rust-toolchain.toml). The architecture, decisions, and progress all live in the repo:

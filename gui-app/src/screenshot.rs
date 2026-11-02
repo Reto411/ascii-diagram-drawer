@@ -18,17 +18,35 @@
 //! and more accurate than the GPU backend's approximation for translucent
 //! ones. Feathering is disabled (fewer triangles; text anti-aliasing comes
 //! from the glyph atlas anyway).
+//!
+//! Textures: the font atlas (`TextureId::Managed(0)`, always allocated first)
+//! is sampled directly from the context, so it is current even though egui
+//! grows it via partial updates. Any *other* managed texture (e.g. the S-026
+//! preview raster) must be passed in `textures` — a map the caller accumulates
+//! across frames from each frame's `FullOutput::textures_delta` (the texture
+//! manager itself keeps only metadata, pixels flow through the delta). A quad
+//! referencing a texture missing from the map renders flat (vertex color only).
 
 use eframe::egui;
 use egui::epaint::tessellator::{TessellationOptions, Tessellator};
 use egui::epaint::{Mesh, Primitive, TextureId, Vertex};
 use egui::{Color32, ColorImage, FullOutput};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Rasterize `out` (the last pumped frame of `ctx`) into a straight-alpha RGBA8
 /// buffer, row-major. Exposed separately from [`capture_to_png`] so tests can
 /// compare regions pixel-for-pixel without writing files.
-pub fn rasterize(ctx: &egui::Context, out: &FullOutput, width: u32, height: u32) -> Vec<[u8; 4]> {
+///
+/// `textures` — managed textures uploaded so far (see the module docs) — lets
+/// textured quads render their actual content instead of flat vertex color.
+pub fn rasterize(
+    ctx: &egui::Context,
+    out: &FullOutput,
+    width: u32,
+    height: u32,
+    textures: &HashMap<TextureId, ColorImage>,
+) -> Vec<[u8; 4]> {
     let font_image = ctx.fonts(|f| f.image());
     let font_size = ctx.fonts(|f| f.font_image_size());
 
@@ -43,7 +61,15 @@ pub fn rasterize(ctx: &egui::Context, out: &FullOutput, width: u32, height: u32)
     let mut buf: Vec<[u8; 4]> = vec![[0, 0, 0, 0]; (width * height) as usize];
     for prim in &meshes {
         if let Primitive::Mesh(mesh) = &prim.primitive {
-            rasterize_mesh(&mut buf, width, height, prim.clip_rect, mesh, &font_image);
+            rasterize_mesh(
+                &mut buf,
+                width,
+                height,
+                prim.clip_rect,
+                mesh,
+                &font_image,
+                textures,
+            );
         }
     }
     buf
@@ -57,9 +83,10 @@ pub fn capture_to_png(
     out: &FullOutput,
     width: u32,
     height: u32,
+    textures: &HashMap<TextureId, ColorImage>,
     path: &Path,
 ) -> Result<(u32, u32), String> {
-    let buf = rasterize(ctx, out, width, height);
+    let buf = rasterize(ctx, out, width, height, textures);
 
     // The framebuffer is already straight-alpha — write it out directly.
     let mut bytes = Vec::with_capacity(buf.len() * 4);
@@ -83,8 +110,16 @@ fn rasterize_mesh(
     clip: egui::Rect,
     mesh: &Mesh,
     font_image: &ColorImage,
+    textures: &HashMap<TextureId, ColorImage>,
 ) {
-    let textured = matches!(mesh.texture_id, TextureId::Managed(0));
+    // The font atlas is always `Managed(0)` (egui allocates it first) and is
+    // sampled straight from the context; any other managed texture comes from
+    // the caller's accumulated map. A missing texture falls back to flat color.
+    let image = match mesh.texture_id {
+        TextureId::Managed(0) => Some(font_image),
+        id @ TextureId::Managed(_) => textures.get(&id),
+        _ => None,
+    };
     let n = mesh.indices.len();
     for t in (0..n).step_by(3) {
         let v0 = &mesh.vertices[mesh.indices[t] as usize];
@@ -129,14 +164,28 @@ fn rasterize_mesh(
                 if src_a <= 0.0 {
                     continue;
                 }
-                let (r, g, b) = if textured {
-                    let u = lerp(v0.uv.x, v1.uv.x, v2.uv.x, l);
-                    let v = lerp(v0.uv.y, v1.uv.y, v2.uv.y, l);
-                    // White glyph: alpha channel is the coverage.
-                    src_a *= f32::from(sample(font_image, u, v)[3]) / 255.0;
-                    (f32::from(c[0]), f32::from(c[1]), f32::from(c[2]))
-                } else {
-                    (f32::from(c[0]), f32::from(c[1]), f32::from(c[2]))
+                let (r, g, b) = match image {
+                    Some(img) if mesh.texture_id == TextureId::Managed(0) => {
+                        let u = lerp(v0.uv.x, v1.uv.x, v2.uv.x, l);
+                        let v = lerp(v0.uv.y, v1.uv.y, v2.uv.y, l);
+                        // White glyph: alpha channel is the coverage.
+                        src_a *= f32::from(sample(img, u, v)[3]) / 255.0;
+                        (f32::from(c[0]), f32::from(c[1]), f32::from(c[2]))
+                    }
+                    Some(img) => {
+                        // Straight-alpha texture (e.g. the preview raster): modulate
+                        // the texel by the vertex color, multiply the alphas.
+                        let u = lerp(v0.uv.x, v1.uv.x, v2.uv.x, l);
+                        let v = lerp(v0.uv.y, v1.uv.y, v2.uv.y, l);
+                        let t = sample(img, u, v);
+                        src_a *= f32::from(t[3]) / 255.0;
+                        (
+                            f32::from(t[0]) * f32::from(c[0]) / 255.0,
+                            f32::from(t[1]) * f32::from(c[1]) / 255.0,
+                            f32::from(t[2]) * f32::from(c[2]) / 255.0,
+                        )
+                    }
+                    None => (f32::from(c[0]), f32::from(c[1]), f32::from(c[2])),
                 };
 
                 // Straight-alpha "over" compositing.
