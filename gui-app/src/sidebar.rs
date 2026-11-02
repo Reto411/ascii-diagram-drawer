@@ -1,7 +1,10 @@
-//! Sidebar view model (S-016 AC1, CR-011, CR-012, CR-013): groups a flat catalog
-//! listing into collapsible groups with subcategory nesting, filters it by shape
-//! name, and renders each shape as a pre-rendered WYSIWYG preview (FR16) of the
-//! same pattern bytes the renderer stamps on placement. The grouping/filtering/
+//! Sidebar view model (S-016 AC1, CR-011, CR-012, CR-013, CR-021): groups a flat
+//! catalog listing into collapsible groups with subcategory nesting — built-ins,
+//! the UML family in its own group with per-diagram subcategories (CR-021), and
+//! one group per user collection — filters it by shape name, and renders each
+//! shape as a whole-row grabable entry (name + pre-rendered WYSIWYG preview,
+//! FR6/FR16) of the same pattern bytes the renderer stamps on placement, with a
+//! separator line between adjacent entries (CR-021). The grouping/filtering/
 //! sizing is pure data; the egui drawing in [`draw_shape_groups`] is driven by
 //! plain inputs plus [`SidebarActions`] callbacks so it can be exercised
 //! headlessly (tier 0b) without a full app — the app glue in `app.rs` stays thin.
@@ -15,22 +18,51 @@ use ui_api::ShapeInfo;
 /// unknown built-ins default here).
 pub const OTHER_CATEGORY: &str = "Other";
 
-/// The static default category set for built-in shapes (CR-011). Extending the
-/// built-in catalog (e.g. the UML shape set, S-036) extends this table — one
-/// entry per shape name.
+/// The static default category set for non-UML built-in shapes (CR-011).
 const BUILTIN_CATEGORIES: &[(&str, &str)] = &[("box", "Basic"), ("ellipse", "Basic")];
 
-/// The default category of one shape (CR-011): built-in shapes follow the static
-/// set in [`BUILTIN_CATEGORIES`]; user/imported (collection) templates and
-/// unknown built-ins land in [`OTHER_CATEGORY`].
-#[must_use]
-pub fn category_for(info: &ShapeInfo) -> &'static str {
-    if info.collection.is_some() {
-        return OTHER_CATEGORY;
-    }
+/// The top-level sidebar group for the UML shape family (CR-021): rendered after
+/// [`BUILTIN_GROUP`] and before any user collection.
+pub const UML_GROUP: &str = "UML";
+
+/// The label of the built-in group (the non-UML built-ins: box, ellipse, …).
+pub const BUILTIN_GROUP: &str = "Built-in";
+
+/// The subcategory of each UML built-in inside the [`UML_GROUP`] group (CR-021):
+/// Class / Component / Activity — one per supported diagram type. `None` keeps
+/// the shape in the UML group's [`OTHER_CATEGORY`] subcategory (actor, activation:
+/// UML shapes that belong to none of the three diagram families). Built-ins not
+/// listed here are not UML and stay in the "Built-in" group.
+const UML_SUBCATEGORIES: &[(&str, Option<&str>)] = &[
+    ("class", Some("Class")),
+    ("lollipop", Some("Component")),
+    ("component", Some("Component")),
+    ("port", Some("Component")),
+    ("deployment", Some("Component")),
+    ("artifact", Some("Component")),
+    ("state", Some("Activity")),
+    ("decision", Some("Activity")),
+    ("initial", Some("Activity")),
+    ("final", Some("Activity")),
+    ("actor", None),
+    ("activation", None),
+];
+
+/// The subcategory a UML built-in lands in inside the [`UML_GROUP`] group.
+fn uml_subcategory(type_id: &str) -> &'static str {
+    UML_SUBCATEGORIES
+        .iter()
+        .find(|(id, _)| *id == type_id)
+        .map(|(_, sub)| sub.unwrap_or(OTHER_CATEGORY))
+        .unwrap_or(OTHER_CATEGORY)
+}
+
+/// The category of a non-UML built-in (CR-011): the static set in
+/// [`BUILTIN_CATEGORIES`], unknown built-ins fall back to [`OTHER_CATEGORY`].
+fn builtin_category(type_id: &str) -> &'static str {
     BUILTIN_CATEGORIES
         .iter()
-        .find(|(type_id, _)| *type_id == info.type_id)
+        .find(|(id, _)| *id == type_id)
         .map(|(_, category)| *category)
         .unwrap_or(OTHER_CATEGORY)
 }
@@ -49,7 +81,9 @@ pub struct SidebarSubgroup {
 pub struct SidebarGroup {
     /// Group heading ("Built-in" or the collection name).
     pub label: String,
-    /// True for the built-in group (rendered first, no collection identity).
+    /// True for built-in families (the "Built-in" and "UML" groups) as opposed
+    /// to user collections — built-ins render before collections and are not a
+    /// writable template collection.
     pub builtins: bool,
     /// The group's subcategories: non-"Other" categories in first-appearance
     /// order, [`OTHER_CATEGORY`] always last.
@@ -57,54 +91,71 @@ pub struct SidebarGroup {
 }
 
 /// Groups a flat catalog listing into sidebar groups with subcategories (S-016
-/// AC1 + CR-011 AC2): the built-in group (label "Built-in") always comes first,
-/// then one group per collection in the order the collections appear in the
-/// listing; category and within-category template order follow the listing.
+/// AC1 + CR-011 AC2 + CR-021 AC1): the built-in group (label "Built-in") always
+/// comes first, then the UML group ([`UML_GROUP`]) when the catalog holds any
+/// UML shape, then one group per collection in the order the collections appear
+/// in the listing; category and within-category template order follow the
+/// listing.
 #[must_use]
 pub fn group_templates(infos: &[ShapeInfo]) -> Vec<SidebarGroup> {
     let mut builtins: Option<SidebarGroup> = None;
+    let mut uml: Option<SidebarGroup> = None;
     let mut collections: Vec<SidebarGroup> = Vec::new();
 
     for info in infos {
-        let (label, is_builtin) = match &info.collection {
-            None => ("Built-in".to_owned(), true),
-            Some(collection) => (collection.clone(), false),
-        };
-        let group = if is_builtin {
-            builtins.get_or_insert_with(|| SidebarGroup {
-                label: "Built-in".to_owned(),
-                builtins: true,
-                subgroups: Vec::new(),
-            })
-        } else {
-            let index = collections
-                .iter()
-                .position(|g| g.label == label)
-                .unwrap_or_else(|| {
-                    collections.push(SidebarGroup {
-                        label: label.clone(),
-                        builtins: false,
-                        subgroups: Vec::new(),
+        // (group, subcategory) — CR-021 splits the flat built-in set into the
+        // UML family group and the remaining "Built-in" group.
+        let (group, category): (&mut SidebarGroup, &'static str) = match &info.collection {
+            Some(collection) => {
+                let index = collections
+                    .iter()
+                    .position(|g| g.label == *collection)
+                    .unwrap_or_else(|| {
+                        collections.push(SidebarGroup {
+                            label: collection.clone(),
+                            builtins: false,
+                            subgroups: Vec::new(),
+                        });
+                        collections.len() - 1
                     });
-                    collections.len() - 1
-                });
-            &mut collections[index]
+                (&mut collections[index], OTHER_CATEGORY)
+            }
+            None if UML_SUBCATEGORIES.iter().any(|(id, _)| *id == info.type_id) => (
+                uml.get_or_insert_with(|| SidebarGroup {
+                    label: UML_GROUP.to_owned(),
+                    builtins: true,
+                    subgroups: Vec::new(),
+                }),
+                uml_subcategory(&info.type_id),
+            ),
+            None => (
+                builtins.get_or_insert_with(|| SidebarGroup {
+                    label: BUILTIN_GROUP.to_owned(),
+                    builtins: true,
+                    subgroups: Vec::new(),
+                }),
+                builtin_category(&info.type_id),
+            ),
         };
-        push_subgroup(group, info);
+        push_subgroup(group, category, info);
     }
 
-    let mut groups = Vec::with_capacity(collections.len() + usize::from(builtins.is_some()));
+    let mut groups = Vec::with_capacity(
+        collections.len() + usize::from(builtins.is_some()) + usize::from(uml.is_some()),
+    );
     if let Some(group) = builtins {
+        groups.push(group);
+    }
+    if let Some(group) = uml {
         groups.push(group);
     }
     groups.extend(collections);
     groups
 }
 
-/// Appends `info` to its category inside `group`: non-"Other" subcategories keep
+/// Appends `info` to `category` inside `group`: non-"Other" subcategories keep
 /// first-appearance order, [`OTHER_CATEGORY`] always stays last.
-fn push_subgroup(group: &mut SidebarGroup, info: &ShapeInfo) {
-    let category = category_for(info);
+fn push_subgroup(group: &mut SidebarGroup, category: &'static str, info: &ShapeInfo) {
     let is_other = category == OTHER_CATEGORY;
 
     match group.subgroups.iter().position(|s| s.label == category) {
@@ -281,15 +332,13 @@ pub fn draw_shape_groups(
                                     salt_suffix,
                                 ))
                                 .show(ui, |ui| {
-                                    for info in &sub.shapes {
-                                        draw_shape_row(
-                                            ui,
-                                            info,
-                                            preview_color,
-                                            base_advance,
-                                            actions,
-                                        );
-                                    }
+                                    draw_shape_rows(
+                                        ui,
+                                        &sub.shapes,
+                                        preview_color,
+                                        base_advance,
+                                        actions,
+                                    );
                                 });
                             // `body_response` follows the *animation* (still Some while
                             // the body animates shut), so report the logical state:
@@ -302,9 +351,7 @@ pub fn draw_shape_groups(
                         }
                     } else {
                         for sub in &group.subgroups {
-                            for info in &sub.shapes {
-                                draw_shape_row(ui, info, preview_color, base_advance, actions);
-                            }
+                            draw_shape_rows(ui, &sub.shapes, preview_color, base_advance, actions);
                         }
                     }
                 });
@@ -315,9 +362,30 @@ pub fn draw_shape_groups(
     toggles
 }
 
-/// One shape row: selectable name, the pre-rendered glyph preview (FR16 — the
-/// same bytes and rendering as what the canvas stamps), and — for collection
-/// templates only — the edit button.
+/// One run of shape rows (CR-021 AC4): a separator line divides every pair of
+/// adjacent entries — the first row of a run has no leading line because its
+/// group/subcategory header already separates it from what is above.
+fn draw_shape_rows(
+    ui: &mut egui::Ui,
+    shapes: &[ShapeInfo],
+    preview_color: egui::Color32,
+    base_advance: f32,
+    actions: &mut dyn SidebarActions,
+) {
+    for (i, info) in shapes.iter().enumerate() {
+        if i > 0 {
+            ui.separator();
+        }
+        draw_shape_row(ui, info, preview_color, base_advance, actions);
+    }
+}
+
+/// One shape entry (CR-021 AC3): the name label, the pre-rendered glyph preview
+/// (FR16 — the same bytes and rendering as what the canvas stamps), and the
+/// padding out to the sidebar edge form one grabable unit — pressing anywhere on
+/// it starts placing the shape, and while a shape is being placed the selection
+/// highlight spans the full width of the entry. Collection templates additionally
+/// carry an edit button (topmost, so it wins clicks over the row).
 fn draw_shape_row(
     ui: &mut egui::Ui,
     info: &ShapeInfo,
@@ -326,52 +394,152 @@ fn draw_shape_row(
     actions: &mut dyn SidebarActions,
 ) {
     let selected = actions.is_placing(&info.type_id);
-    if ui.selectable_label(selected, &info.name).clicked() {
-        actions.select_shape(info.clone());
-    }
-    draw_preview_block(ui, &info.preview, preview_color, base_advance);
-    if info.collection.is_some()
-        && ui
-            .add_sized([24.0, 18.0], egui::Button::new("✎"))
-            .on_hover_text(format!("Edit {}", info.name))
-            .clicked()
-    {
-        actions.edit_shape(info.type_id.clone());
-    }
-}
+    let base_font = egui::FontId::new(crate::app::FONT_SIZE, egui::FontFamily::Monospace);
 
-/// The pre-rendered preview block (FR16 / CR-013): the pattern rows drawn exactly
-/// the way the canvas stamps them — monospace, one `painter.text` per row at
-/// LEFT_TOP packed at line height — at the canvas font size when the natural width
-/// fits the available width, uniformly scaled down otherwise so a template of any
-/// size stays legible within the sidebar (AC3). The block reserves its layout space
-/// via [`egui::Ui::allocate_rect`]; the painting itself goes straight to the painter
-/// so rows pack at exactly line height (no widget spacing between them).
-fn draw_preview_block(
-    ui: &mut egui::Ui,
-    preview: &[String],
-    color: egui::Color32,
-    base_advance: f32,
-) {
-    if preview.is_empty() {
-        return;
-    }
-    let max_cols = preview
+    // Entry metrics — everything is painted inside one full-width row rect.
+    let label_size = ui
+        .painter()
+        .layout(
+            info.name.clone(),
+            base_font.clone(),
+            egui::Color32::TRANSPARENT,
+            f32::INFINITY,
+        )
+        .size();
+    let has_edit_button = info.collection.is_some();
+    // The preview gets whatever width is left after the name and (if present)
+    // the edit button — the same fit rule as before the row rework.
+    let preview_avail = ui.available_width()
+        - label_size.x
+        - ROW_GAP
+        - f32::from(has_edit_button) * EDIT_BUTTON_WIDTH;
+    let max_cols = info
+        .preview
         .iter()
         .map(|row| row.chars().count())
         .max()
         .unwrap_or(0);
-    let size = preview_font_size(
-        max_cols as u32,
-        ui.available_width(),
-        crate::app::FONT_SIZE,
-        base_advance,
+    // One fit computation for the whole entry: the reserved space and the
+    // painting below both use these numbers (WYSIWYG — same bytes, same scale).
+    let (preview_size, preview_row_h) = if info.preview.is_empty() {
+        (crate::app::FONT_SIZE, 1.0)
+    } else {
+        let size = preview_font_size(
+            max_cols as u32,
+            preview_avail.max(0.0),
+            crate::app::FONT_SIZE,
+            base_advance,
+        );
+        (size, line_height(ui, size))
+    };
+    let preview_h = info.preview.len() as f32 * preview_row_h;
+    let row_h = label_size.y.max(preview_h).max(1.0);
+    let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), row_h));
+
+    // The whole entry is one clickable unit (AC3) — the rect spans to the sidebar
+    // edge, so the padding after the preview is grabable too.
+    let response = ui.allocate_rect(rect, egui::Sense::click());
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if selected {
+        // Full-width selection highlight — the entry, not just its label.
+        let visuals = ui.visuals();
+        ui.painter().rect(
+            rect,
+            0.0,
+            visuals.selection.bg_fill,
+            visuals.selection.stroke,
+            egui::StrokeKind::Middle,
+        );
+    }
+
+    // Name label at the left edge, vertically centered in the row.
+    let name_pos = egui::pos2(rect.min.x, rect.center().y - label_size.y / 2.0);
+    ui.painter().text(
+        name_pos,
+        egui::Align2::LEFT_TOP,
+        &info.name,
+        base_font.clone(),
+        ui.visuals().text_color(),
     );
+
+    // The pre-rendered preview after the name, vertically centered.
+    if !info.preview.is_empty() {
+        let preview_origin = egui::pos2(
+            rect.min.x + label_size.x + ROW_GAP,
+            rect.center().y - preview_h / 2.0,
+        );
+        paint_preview(
+            ui.painter(),
+            preview_origin,
+            &info.preview,
+            preview_color,
+            preview_size,
+        );
+    }
+
+    // The edit button (collection templates only) sits at the right edge; added
+    // after the row's interaction rect, so it wins clicks over the row.
+    if has_edit_button {
+        let button_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.max.x - EDIT_BUTTON_WIDTH / 2.0, rect.center().y),
+            egui::vec2(EDIT_BUTTON_WIDTH, 18.0),
+        );
+        if ui
+            .put(button_rect, egui::Button::new("✎"))
+            .on_hover_text(format!("Edit {}", info.name))
+            .clicked()
+        {
+            actions.edit_shape(info.type_id.clone());
+        }
+    }
+
+    if response.clicked() {
+        actions.select_shape(info.clone());
+    }
+}
+
+/// Gap between the name label and the preview inside one entry row.
+const ROW_GAP: f32 = 8.0;
+
+/// Width of the collection-template edit button (its height is set by egui's
+/// button layout within the fixed 18 pt slot).
+const EDIT_BUTTON_WIDTH: f32 = 24.0;
+
+/// The monospace line height at `size` (FR16 / CR-013): rows pack exactly like
+/// the canvas does (row index × line height), so blank rows keep their slot when
+/// skipped.
+fn line_height(ui: &egui::Ui, size: f32) -> f32 {
+    ui.painter()
+        .layout(
+            "M".to_owned(),
+            egui::FontId::new(size, egui::FontFamily::Monospace),
+            egui::Color32::TRANSPARENT,
+            f32::INFINITY,
+        )
+        .size()
+        .y
+        .max(1.0)
+}
+
+/// Paints the pre-rendered preview block (FR16 / CR-013): the pattern rows drawn
+/// exactly the way the canvas stamps them — monospace, one `painter.text` per
+/// row at LEFT_TOP packed at line height, at the caller's fitted `size`. Pure
+/// painting at an explicit origin; layout space is the caller's concern (the
+/// entry row owns it).
+fn paint_preview(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    preview: &[String],
+    color: egui::Color32,
+    size: f32,
+) {
+    if preview.is_empty() {
+        return;
+    }
     let font_id = egui::FontId::new(size, egui::FontFamily::Monospace);
-    // Line height at the fitted size — rows pack exactly like the canvas does
-    // (row index × line height), so blank rows keep their slot when skipped.
-    let row_h = ui
-        .painter()
+    let row_h = painter
         .layout(
             "M".to_owned(),
             font_id.clone(),
@@ -381,21 +549,12 @@ fn draw_preview_block(
         .size()
         .y
         .max(1.0);
-    // Monospace advance scales linearly with font size; the allocation only reserves
-    // layout space for what follows (the text is painted at `rect.min` regardless).
-    let advance = base_advance * size / crate::app::FONT_SIZE;
-    let rect = egui::Rect::from_min_size(
-        ui.cursor().min,
-        egui::vec2(max_cols as f32 * advance, preview.len() as f32 * row_h),
-    );
-    ui.allocate_rect(rect, egui::Sense::hover());
-    let painter = ui.painter();
     for (i, row) in preview.iter().enumerate() {
         if row.is_empty() {
             continue; // like the canvas — positions come from the row index
         }
         painter.text(
-            rect.min + egui::vec2(0.0, i as f32 * row_h),
+            origin + egui::vec2(0.0, i as f32 * row_h),
             egui::Align2::LEFT_TOP,
             row.as_str(),
             font_id.clone(),
@@ -524,23 +683,97 @@ mod tests {
         );
     }
 
-    /// AC2 — the static default category set: known built-ins get their table
-    /// category; everything else (collection templates, unknown built-ins) lands
-    /// in "Other".
+    /// AC2 (CR-011) — the static default category set: known non-UML built-ins get
+    /// their table category; unknown built-ins and collection templates land in
+    /// "Other".
     #[test]
     fn category_assignment_follows_the_static_set() {
-        assert_eq!(category_for(&info("box", None)), "Basic");
-        assert_eq!(category_for(&info("ellipse", None)), "Basic");
+        assert_eq!(builtin_category("box"), "Basic");
+        assert_eq!(builtin_category("ellipse"), "Basic");
         assert_eq!(
-            category_for(&info("col/star", Some("col"))),
-            OTHER_CATEGORY,
-            "collection templates land in Other"
-        );
-        assert_eq!(
-            category_for(&info("mystery", None)),
+            builtin_category("mystery"),
             OTHER_CATEGORY,
             "unknown built-ins fall back to Other"
         );
+    }
+
+    /// AC1 (CR-021) — UML subcategory assignment: one per supported diagram type;
+    /// the UML shapes outside the three families stay in the group's "Other".
+    #[test]
+    fn uml_subcategory_assignment() {
+        assert_eq!(uml_subcategory("class"), "Class");
+        for id in ["lollipop", "component", "port", "deployment", "artifact"] {
+            assert_eq!(uml_subcategory(id), "Component", "{id}");
+        }
+        for id in ["state", "decision", "initial", "final"] {
+            assert_eq!(uml_subcategory(id), "Activity", "{id}");
+        }
+        assert_eq!(uml_subcategory("actor"), OTHER_CATEGORY);
+        assert_eq!(uml_subcategory("activation"), OTHER_CATEGORY);
+    }
+
+    /// AC1 (CR-021) — the full built-in catalog organizes into a top-level UML
+    /// group after "Built-in" and before any collection, with the Class /
+    /// Component / Activity subcategories in that order and the remaining UML
+    /// shapes last in "Other"; "Built-in" keeps Basic.
+    #[test]
+    fn group_templates_organizes_the_builtin_catalog_into_a_uml_category() {
+        let mut all = core_services::Services::native().catalog.list();
+        all.push(info("col/star", Some("col")));
+
+        let groups = group_templates(&all);
+
+        assert_eq!(groups.len(), 3);
+
+        // Built-in keeps only the non-UML shapes, flat under Basic.
+        assert_eq!(groups[0].label, BUILTIN_GROUP);
+        assert_eq!(
+            groups[0]
+                .subgroups
+                .iter()
+                .map(|s| s.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Basic"]
+        );
+        assert_eq!(
+            groups[0].subgroups[0]
+                .shapes
+                .iter()
+                .map(|s| s.type_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["box", "ellipse"]
+        );
+
+        // The UML group: per-diagram subcategories in order, Other last.
+        let uml = &groups[1];
+        assert_eq!(uml.label, UML_GROUP);
+        let subs: Vec<(&str, Vec<&str>)> = uml
+            .subgroups
+            .iter()
+            .map(|s| {
+                (
+                    s.label.as_str(),
+                    s.shapes.iter().map(|t| t.type_id.as_str()).collect(),
+                )
+            })
+            .collect();
+        // Subgroups in first-seen catalog order with "Other" pinned last
+        // (`push_subgroup`); shapes within a subgroup keep catalog order.
+        assert_eq!(
+            subs,
+            vec![
+                (
+                    "Component",
+                    vec!["artifact", "component", "deployment", "lollipop", "port"]
+                ),
+                ("Class", vec!["class"]),
+                ("Activity", vec!["decision", "final", "initial", "state"]),
+                (OTHER_CATEGORY, vec!["activation", "actor"]),
+            ]
+        );
+
+        // Collections still come after the UML group.
+        assert_eq!(groups[2].label, "col");
     }
 
     /// AC2 — subcategories keep first-appearance order and "Other" stays last,
@@ -603,13 +836,31 @@ mod tests {
 
     // ── draw_shape_groups: headless egui (tier 0b pattern, cf. gui_tests::Gui) ──
 
-    struct Noop;
-    impl SidebarActions for Noop {
+    /// Records the placements/edits the drawing reported (CR-021 AC3 evidence).
+    struct Recording {
+        placed: Vec<String>,
+        edited: Vec<String>,
+    }
+
+    impl Recording {
+        fn new() -> Self {
+            Self {
+                placed: Vec::new(),
+                edited: Vec::new(),
+            }
+        }
+    }
+
+    impl SidebarActions for Recording {
         fn is_placing(&self, _type_id: &str) -> bool {
             false
         }
-        fn select_shape(&mut self, _info: ShapeInfo) {}
-        fn edit_shape(&mut self, _type_id: String) {}
+        fn select_shape(&mut self, info: ShapeInfo) {
+            self.placed.push(info.type_id);
+        }
+        fn edit_shape(&mut self, type_id: String) {
+            self.edited.push(type_id);
+        }
     }
 
     /// A bare headless context pumping one frame of the sidebar groups — the
@@ -621,6 +872,9 @@ mod tests {
         expanded: BTreeMap<String, bool>,
         filter: String,
         last_toggles: Vec<(String, bool)>,
+        /// Type ids the drawing reported as placed/edited (via [`Recording`]).
+        placed: Vec<String>,
+        edited: Vec<String>,
     }
 
     impl Pump {
@@ -634,6 +888,8 @@ mod tests {
                 expanded,
                 filter: String::new(),
                 last_toggles: Vec::new(),
+                placed: Vec::new(),
+                edited: Vec::new(),
             }
         }
 
@@ -650,6 +906,7 @@ mod tests {
             self.ts += 1.0 / 60.0;
             let groups = &self.groups;
             let expanded = &self.expanded;
+            let mut rec = Recording::new();
             let mut out = self.ctx.run_ui(raw, |ui| {
                 ui.vertical(|ui| {
                     self.last_toggles = draw_shape_groups(
@@ -658,13 +915,41 @@ mod tests {
                         expanded,
                         egui::Color32::WHITE,
                         &mut self.filter,
-                        &mut Noop,
+                        &mut rec,
                     );
                 });
             });
+            self.placed.extend(rec.placed);
+            self.edited.extend(rec.edited);
             // Headless: no GPU to upload glyph textures — clear the pending deltas.
             out.textures_delta.clear();
             out
+        }
+
+        /// Clicks (press + release) at `pos`, one event per frame.
+        fn click(&mut self, pos: egui::Pos2) -> egui::FullOutput {
+            let button = |pressed: bool| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.pump(vec![egui::Event::PointerMoved(pos), button(true)]);
+            self.pump(vec![button(false)])
+        }
+
+        /// The rect of the first drawn text shape whose content is exactly `text`.
+        fn text_rect(&self, out: &egui::FullOutput, text: &str) -> egui::Rect {
+            out.shapes
+                .iter()
+                .filter_map(|cs| match &cs.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == text => {
+                        Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                    }
+                    _ => None,
+                })
+                .next()
+                .unwrap_or_else(|| panic!("text {text:?} not drawn"))
         }
 
         /// Clicks the filter input (located via its placeholder galley) and types
@@ -1092,6 +1377,80 @@ mod tests {
         assert!(
             !drawn_texts(&out).contains(&"a".to_owned()),
             "col collapsed after click"
+        );
+    }
+
+    // ── CR-021: whole-row grabable entries (AC3, tier 0b) ──
+
+    /// AC3 — pressing anywhere on an entry places its shape: the name label, the
+    /// preview area, and the padding out to the sidebar edge all start placement.
+    #[test]
+    fn clicking_the_preview_or_padding_of_an_entry_places_its_shape() {
+        let mut box_info = info("box", None);
+        box_info.preview = vec!["###".into(), "# #".into(), "###".into()];
+        let groups = group_templates(&[box_info]);
+        let mut pump = Pump::new(groups, BTreeMap::new());
+        let out = pump.pump(Vec::new());
+
+        // 1) The name label.
+        pump.click(pump.text_rect(&out, "box").center());
+        assert_eq!(pump.placed, vec!["box".to_owned()]);
+
+        // 2) The preview area (its middle row is unique).
+        let out = pump.frame();
+        pump.click(pump.text_rect(&out, "# #").center());
+        assert_eq!(pump.placed, vec!["box".to_owned(), "box".to_owned()]);
+
+        // 3) The padding to the right of the entry: past the preview, inside the
+        // row (the harness screen is 400 px wide with 8 px margins).
+        let out = pump.frame();
+        let preview_row = pump.text_rect(&out, "# #");
+        pump.click(egui::pos2(380.0, preview_row.center().y));
+        assert_eq!(pump.placed.len(), 3, "padding click also places");
+    }
+
+    // ── CR-021: separator lines between entries (AC4, tier 0b) ──
+
+    /// AC4 — a full-width horizontal separator line divides every pair of adjacent
+    /// entries within a run; the first row of a run has no leading line.
+    #[test]
+    fn separator_lines_divide_adjacent_entries() {
+        let groups = group_templates(&[info("box", None), info("ellipse", None)]);
+        let mut pump = Pump::new(groups, BTreeMap::new());
+        let out = pump.pump(Vec::new());
+
+        let box_row = pump.text_rect(&out, "box");
+        let ellipse_row = pump.text_rect(&out, "ellipse");
+        assert!(box_row.center().y < ellipse_row.center().y, "rows in order");
+
+        // Full-width horizontal line shapes: (y, x_start, x_end).
+        let lines: Vec<(f32, f32, f32)> = out
+            .shapes
+            .iter()
+            .filter_map(|cs| match &cs.shape {
+                egui::epaint::Shape::LineSegment { points, .. } => {
+                    let (a, b) = (points[0], points[1]);
+                    if a.y != b.y || (a.x - b.x).abs() <= 300.0 {
+                        None // keep only full-width horizontal lines
+                    } else {
+                        Some((a.y, a.x.min(b.x), a.x.max(b.x)))
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
+        // Exactly one line at the boundary between the two rows…
+        let between = lines
+            .iter()
+            .filter(|(y, _, _)| *y > box_row.center().y && *y < ellipse_row.center().y)
+            .count();
+        assert_eq!(between, 1, "one separator at the row boundary");
+        // …and nothing below the last entry (the header underline above the run is
+        // not a row separator and sits above both rows).
+        assert!(
+            lines.iter().all(|(y, _, _)| *y < ellipse_row.center().y),
+            "no separators below the last row"
         );
     }
 }

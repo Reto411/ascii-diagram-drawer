@@ -2709,12 +2709,15 @@ fn scroll_at(pos: Pos2, delta: Vec2) -> Vec<Event> {
 /// the sidebar's clip rect, and with the full built-in catalog (CR-015) collection
 /// groups sit below the 768 px fold — a real user reaches them by scrolling, and so
 /// do these tests. A label merely peeking above the status bar is not clickable
-/// (the panel owns that strip), so the row must clear it with margin. Point-unit
-/// deltas below 8 px apply in full on their own frame (no smoothing tail), so the
-/// scroll is deterministic and leaves no pending wheel to re-pan the canvas later.
+/// (the panel owns that strip), so the row must clear it with margin: the status
+/// bar's top edge sits ~25 px above the window bottom (its "Ready" text starts at
+/// y≈748 in a 768 px frame), so `safe_bottom` keeps rows 8 px clear of it.
+/// Point-unit deltas below 8 px apply in full on their own frame (no smoothing
+/// tail), so the scroll is deterministic and leaves no pending wheel to re-pan
+/// the canvas later.
 fn scroll_sidebar_until(gui: &mut Gui, label: &str) -> egui::FullOutput {
     let over_sidebar = Pos2::new(SIDEBAR / 2.0, 400.0);
-    let safe_bottom = WIN_H - 60.0;
+    let safe_bottom = WIN_H - 28.0;
     let mut out = gui.frame();
     for _ in 0..600 {
         if find_text_exact(&out, label).is_some_and(|r| r.max.y <= safe_bottom) {
@@ -4049,6 +4052,143 @@ fn ui_decomposition_arrow_handles() {
     // …and its endpoint handle opens the same dropdown.
     let out = gui.click_at(gui.cell_center(min, 40, 2));
     assert_status(&out, "pick the target tip style");
+}
+
+/// Feature bar (S-042) — a small class diagram drawn purely through the real UI:
+/// arm the UML ▸ Class entry by clicking its *preview area* (not the label — the
+/// whole entry is grabable, AC3), place two classes, connect them anchor→anchor,
+/// then double-click one and fill in its name/attributes/methods region text.
+#[test]
+fn ui_decomposition_class_diagram() {
+    use diagram_model::anchors::{AnchorRef, ConnectorEndpoint};
+    use diagram_model::geometry::CellPos;
+    use diagram_model::objects::Object;
+
+    let mut gui = Gui::new(DrawingApp::new(Services::native()));
+    let min = gui.canvas_min();
+
+    /// Arm the class template by clicking its PREVIEW area (past the name label +
+    /// the row gap) — the grabable part AC3 added.
+    fn arm_class_via_preview(gui: &mut Gui) {
+        // The UML group sits below the fold — scroll the class entry into view
+        // first (it is found via its galley even while off-screen, but clicks
+        // only land on visible pixels).
+        scroll_sidebar_until(gui, "class");
+        let out = gui.frame();
+        let label = find_text_exact(&out, "class").expect("sidebar lists the class template");
+        // 16 px right of the label's end: inside the preview block (it starts 8 px
+        // after the label and is ~110 px wide for the 13-column class art).
+        let _ = gui.click_at(egui::pos2(label.max.x + 16.0, label.center().y));
+    }
+
+    // --- Decomposition: sidebar → place → connect → text (pure UI gestures). ---
+    arm_class_via_preview(&mut gui);
+    let _ = gui.click_at(gui.cell_center(min, 2, 1)); // A at (2,1), 13×10: east anchor (14,5)
+    assert_eq!(
+        gui.object_count(),
+        1,
+        "clicking the canvas placed one class"
+    );
+
+    arm_class_via_preview(&mut gui);
+    let _ = gui.click_at(gui.cell_center(min, 20, 1)); // B at (20,1): west anchor (20,5)
+    assert_eq!(gui.object_count(), 2);
+
+    // Selecting A again: anchors are only offered for the selected shape, and
+    // placing B replaced the selection.
+    let _ = gui.click_at(gui.cell_center(min, 8, 5));
+
+    let _ = gui.drag(gui.cell_center(min, 14, 5), gui.cell_center(min, 20, 5));
+    let out = gui.frame(); // settle: the release frame paints pre-release status
+    assert_status(&out, "Connector added as");
+
+    // Double-click A: its region editor opens with one field per compartment.
+    let _ = gui.settle(25); // clear egui's 0.3 s multi-click window
+    gui.double_click_at(gui.cell_center(min, 8, 5));
+    assert!(
+        gui.app.shape_text_edit.is_some(),
+        "double-click opened the region editor"
+    );
+    let out = gui.frame(); // the window appears one frame after it opens
+    for field in ["name:", "attributes:", "methods:"] {
+        assert!(
+            find_text_exact(&out, field).is_some(),
+            "the {field} field is present"
+        );
+    }
+
+    // Fill in all three compartments, then Apply.
+    for (field, content) in [
+        ("name:", "Animal"),
+        ("attributes:", "+ legs: int"),
+        ("methods:", "move()"),
+    ] {
+        let out = gui.frame();
+        let rect = find_text_exact(&out, field).expect("the field is labelled");
+        let _ = gui.click_at(egui::pos2(rect.max.x + 30.0, rect.center().y));
+        let _ = gui.type_text(content);
+    }
+    let out = gui.frame();
+    let apply = find_text_exact(&out, "Apply").expect("the Apply button is drawn");
+    let _ = gui.click_at(apply.center());
+    assert!(gui.app.status.contains("Updated text regions"));
+
+    // Model state: two classes at the clicked cells, connected east→west, and A's
+    // compartments hold the typed content.
+    let shapes: Vec<_> = gui
+        .app
+        .diagram
+        .objects()
+        .iter()
+        .filter_map(|o| match o {
+            Object::Shape(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shapes.len(), 2);
+    let a = shapes
+        .iter()
+        .find(|s| s.pos == CellPos::new(2, 1))
+        .expect("class A exists");
+    let b = shapes
+        .iter()
+        .find(|s| s.pos == CellPos::new(20, 1))
+        .expect("class B exists");
+    assert_eq!(a.type_id, "class");
+    assert_eq!(b.type_id, "class");
+    assert_eq!(a.region_content("name"), Some("Animal"));
+    assert_eq!(a.region_content("attributes"), Some("+ legs: int"));
+    assert_eq!(a.region_content("methods"), Some("move()"));
+
+    let connector = gui
+        .app
+        .diagram
+        .objects()
+        .iter()
+        .find_map(|o| match o {
+            Object::Connector(c) => Some(c),
+            _ => None,
+        })
+        .expect("the connection exists");
+    assert_eq!(
+        connector.from,
+        ConnectorEndpoint::Attached(AnchorRef::new(a.id.clone(), "e").expect("valid anchor"))
+    );
+    assert_eq!(
+        connector.to,
+        ConnectorEndpoint::Attached(AnchorRef::new(b.id.clone(), "w").expect("valid anchor"))
+    );
+
+    // Rendered content: the typed compartment text is visible on the canvas.
+    let out = gui.frame();
+    assert!(
+        find_text(&out, "Animal").is_some(),
+        "the name compartment renders"
+    );
+    assert!(
+        find_text(&out, "+ legs: int").is_some(),
+        "the attributes compartment renders"
+    );
 }
 
 /// AC2 — the app bar is painted with the active Material palette's surface color:

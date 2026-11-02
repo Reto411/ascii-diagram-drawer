@@ -1729,6 +1729,9 @@ impl DrawingApp {
     /// in the window.
     pub fn open_new_template(&mut self) {
         let groups = crate::sidebar::group_templates(&self.services.catalog.list());
+        // The default collection is the first *user* group — both built-in
+        // families ("Built-in" and the UML group, CR-021) are not writable
+        // collections.
         let collection = groups
             .iter()
             .find(|g| !g.builtins)

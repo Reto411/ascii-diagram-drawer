@@ -174,7 +174,14 @@ fn scenarios() -> Vec<(&'static str, Diagram)> {
             "class-compartmented",
             diagram(
                 1,
-                vec![class_obj(0, 0, 0, "Animal", "+ legs: int\n- age: int", "move()")],
+                vec![class_obj(
+                    0,
+                    0,
+                    0,
+                    "Animal",
+                    "+ legs: int\n- age: int",
+                    "move()",
+                )],
             ),
         ),
         // Pattern art stamped verbatim with a label on its space cells (ADR 007).

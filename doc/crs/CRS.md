@@ -14,7 +14,7 @@ Filed via the **change-request skill** (`.agents/skills/change-request/SKILL.md`
 
 | ID | Title | Priority | Status | File |
 |----|-------|----------|--------|------|
-| CR-021 | UML category with per-diagram subcategories (Class/Component/Activity) and clearer template entries — whole-row grabable, separator lines | high | accepted | [CR-021-uml-category-and-template-row-clarity.md](CR-021-uml-category-and-template-row-clarity.md) |
+| CR-021 | UML category with per-diagram subcategories (Class/Component/Activity) and clearer template entries — whole-row grabable, separator lines | high | implemented | [CR-021-uml-category-and-template-row-clarity.md](CR-021-uml-category-and-template-row-clarity.md) |
 
 ## Closed
 

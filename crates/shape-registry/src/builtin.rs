@@ -633,11 +633,17 @@ mod tests {
         let names: Vec<&str> = shape.regions.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["attributes", "methods", "name"]);
         let rect = |r: Region| (r.x, r.y, r.width, r.height);
-        assert_eq!(rect(shape.regions.get("name").expect("name")), (1, 1, 11, 2));
+        assert_eq!(
+            rect(shape.regions.get("name").expect("name")),
+            (1, 1, 11, 2)
+        );
         assert_eq!(
             rect(shape.regions.get("attributes").expect("attributes")),
             (1, 4, 11, 2)
         );
-        assert_eq!(rect(shape.regions.get("methods").expect("methods")), (1, 7, 11, 2));
+        assert_eq!(
+            rect(shape.regions.get("methods").expect("methods")),
+            (1, 7, 11, 2)
+        );
     }
 }

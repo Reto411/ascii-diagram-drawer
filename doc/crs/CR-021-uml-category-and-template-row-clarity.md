@@ -2,7 +2,7 @@
 title: UML category with per-diagram subcategories and clearer template entries
 description: change request — UML shapes grouped under a UML category with Class/Component/Activity subcategories (each sufficient to draw that diagram type, incl. a new compartmented class shape), whole-row grabability in the template sidebar, and separator lines between entries; filed 2026-11-01
 scope: change request — built-in catalog organization (FR18) + template sidebar usability (FR6)
-status: accepted
+status: implemented
 filed: 2026-11-01
 priority: high
 format-compat: none
@@ -64,3 +64,7 @@ On acceptance: update §14 FR6 and FR18 to the proposed wording (this CR keeps t
 - [ ] **Reject** — <reason>
 
 Decided: accepted (2026-11-01) — blanket acceptance by the user: "Fix all bugs, implement all change requests and do extensive regression testing including End to end tests". Applied on acceptance: §14 FR6 + FR18 updated, skeleton story S-042 on the board; no ADR changes.
+
+## Implementation record
+
+Implemented by [S-042](../stories/S-042-uml-category-and-template-row-clarity.md) (done 2026-11-02): new compartmented `class` built-in (3 regions via S-037), UML top-level group with Class/Component/Activity subcategories in `group_templates` (two-level nesting; membership per item 2, display order = catalog order), full-width grabable template entries, separator lines between entries. Feature bar: `ui_decomposition_class_diagram`. Status → implemented.
